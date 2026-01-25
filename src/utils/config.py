@@ -1,0 +1,37 @@
+"""Configuration management using Pydantic settings."""
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Optional
+
+
+class Settings(BaseSettings):
+    """Application settings loaded from environment variables."""
+
+    # LLM API Keys
+    anthropic_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = None
+
+    # Mock Mode
+    mock_mode: bool = True
+
+    # Logging
+    log_level: str = "INFO"
+
+    # Memory paths
+    episodic_db_path: str = "data/memory/episodic.db"
+    procedural_json_path: str = "data/memory/workflows.json"
+
+    # Seed data paths
+    seed_startups_path: str = "data/seed/startups.json"
+    seed_vcs_path: str = "data/seed/vcs.json"
+    seed_knowledge_path: str = "data/seed/knowledge.json"
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore"
+    )
+
+
+# Global settings instance
+settings = Settings()

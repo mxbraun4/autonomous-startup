@@ -1,0 +1,102 @@
+[
+  {
+    "id": "vc_001",
+    "name": "TechVentures Capital",
+    "sectors": ["fintech", "ai_ml", "devtools"],
+    "stage_focus": "seed",
+    "check_size": "500K-2M",
+    "geography": ["US West Coast", "US East Coast"],
+    "portfolio_size": 45,
+    "recent_activity": "Led $1.5M seed round in AI startup"
+  },
+  {
+    "id": "vc_002",
+    "name": "HealthFirst Partners",
+    "sectors": ["healthtech", "biotech"],
+    "stage_focus": "series_a",
+    "check_size": "5M-10M",
+    "geography": ["US East Coast", "Europe"],
+    "portfolio_size": 28,
+    "recent_activity": "Closed $200M Fund III"
+  },
+  {
+    "id": "vc_003",
+    "name": "Sustainability Ventures",
+    "sectors": ["sustainability", "cleantech", "foodtech"],
+    "stage_focus": "series_a",
+    "check_size": "3M-8M",
+    "geography": ["Global"],
+    "portfolio_size": 32,
+    "recent_activity": "Impact report: Portfolio reduced 1M tons CO2"
+  },
+  {
+    "id": "vc_004",
+    "name": "Fintech Growth Fund",
+    "sectors": ["fintech", "blockchain"],
+    "stage_focus": "series_b",
+    "check_size": "10M-25M",
+    "geography": ["US", "Latin America"],
+    "portfolio_size": 22,
+    "recent_activity": "Led $15M Series B in payment processing startup"
+  },
+  {
+    "id": "vc_005",
+    "name": "Early Stage Ventures",
+    "sectors": ["ai_ml", "devtools", "cybersecurity"],
+    "stage_focus": "seed",
+    "check_size": "250K-1M",
+    "geography": ["US"],
+    "portfolio_size": 60,
+    "recent_activity": "100+ applications reviewed monthly"
+  },
+  {
+    "id": "vc_006",
+    "name": "EdTech Accelerator",
+    "sectors": ["edtech"],
+    "stage_focus": "seed",
+    "check_size": "500K-2M",
+    "geography": ["US", "Europe"],
+    "portfolio_size": 35,
+    "recent_activity": "Launched EdTech Innovation Lab"
+  },
+  {
+    "id": "vc_007",
+    "name": "Global Growth Partners",
+    "sectors": ["logistics", "marketplace", "saas"],
+    "stage_focus": "series_b",
+    "check_size": "15M-40M",
+    "geography": ["Global"],
+    "portfolio_size": 18,
+    "recent_activity": "2 portfolio companies IPO'd this year"
+  },
+  {
+    "id": "vc_008",
+    "name": "AI Innovation Fund",
+    "sectors": ["ai_ml", "robotics"],
+    "stage_focus": "series_a",
+    "check_size": "5M-12M",
+    "geography": ["US West Coast", "Asia"],
+    "portfolio_size": 25,
+    "recent_activity": "Partnership with Stanford AI Lab"
+  },
+  {
+    "id": "vc_009",
+    "name": "Cybersecurity Ventures",
+    "sectors": ["cybersecurity", "privacy"],
+    "stage_focus": "series_a",
+    "check_size": "4M-10M",
+    "geography": ["US", "Israel"],
+    "portfolio_size": 30,
+    "recent_activity": "Hosted Cybersecurity Summit 2024"
+  },
+  {
+    "id": "vc_010",
+    "name": "Consumer Tech Fund",
+    "sectors": ["consumer", "marketplace", "foodtech"],
+    "stage_focus": "seed",
+    "check_size": "1M-3M",
+    "geography": ["US", "Southeast Asia"],
+    "portfolio_size": 40,
+    "recent_activity": "Launched Southeast Asia expansion"
+  }
+]

@@ -1,0 +1,124 @@
+"""Quick test of CrewAI integration."""
+import sys
+from pathlib import Path
+
+# Add src to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+print("="*60)
+print("CREWAI INTEGRATION - QUICK TEST")
+print("="*60)
+print()
+
+# Test 1: Import modules
+print("Test 1: Importing modules...")
+try:
+    from src.crewai_agents import (
+        create_master_coordinator,
+        create_data_strategist,
+        create_product_strategist,
+        create_outreach_strategist
+    )
+    print("  [OK] All agent creation functions imported")
+except Exception as e:
+    print(f"  [FAIL] Import error: {e}")
+    sys.exit(1)
+
+# Test 2: Import tools
+print("\nTest 2: Importing tools...")
+try:
+    from src.crewai_agents.tools import (
+        scraper_tool,
+        content_generator_tool,
+        tool_builder_tool
+    )
+    print("  [OK] All tools imported")
+except Exception as e:
+    print(f"  [FAIL] Tool import error: {e}")
+    sys.exit(1)
+
+# Test 3: Create agents
+print("\nTest 3: Creating agents...")
+try:
+    coordinator = create_master_coordinator()
+    data_agent = create_data_strategist()
+    product_agent = create_product_strategist()
+    outreach_agent = create_outreach_strategist()
+
+    print(f"  [OK] Created {coordinator.role}")
+    print(f"  [OK] Created {data_agent.role}")
+    print(f"  [OK] Created {product_agent.role}")
+    print(f"  [OK] Created {outreach_agent.role}")
+except Exception as e:
+    print(f"  [FAIL] Agent creation error: {e}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+
+# Test 4: Verify agent properties
+print("\nTest 4: Verifying agent properties...")
+assert coordinator.allow_delegation == True, "Coordinator should allow delegation"
+assert len(data_agent.tools) > 0, "Data agent should have tools"
+assert len(outreach_agent.tools) > 0, "Outreach agent should have tools"
+# Memory is configured but not directly accessible as attribute in CrewAI
+print("  [OK] All agent properties correct")
+
+# Test 5: Create crew
+print("\nTest 5: Creating crew...")
+try:
+    from src.crewai_agents.crews import create_autonomous_startup_crew
+
+    crew = create_autonomous_startup_crew(verbose=0)
+    print(f"  [OK] Crew created with {len(crew.agents)} agents")
+    print(f"  [OK] Crew has {len(crew.tasks)} initial tasks")
+except Exception as e:
+    print(f"  [FAIL] Crew creation error: {e}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+
+# Test 6: Tool execution
+print("\nTest 6: Testing tool execution...")
+try:
+    import json
+    from src.crewai_agents.tools import scraper_tool
+
+    # Execute scraper tool
+    result_json = scraper_tool.func(sector="fintech", stage="all")
+    result = json.loads(result_json)
+
+    assert result['status'] == 'success', "Scraper should return success"
+    assert result['sector'] == 'fintech', "Should return correct sector"
+    print(f"  [OK] Scraper tool executed: collected {result['count']} startups")
+
+    # Execute content generator
+    from src.crewai_agents.tools import content_generator_tool
+
+    content_result = content_generator_tool.func(
+        startup_name="TestCo",
+        sector="fintech",
+        recent_news="Series A"
+    )
+    content_data = json.loads(content_result)
+
+    assert 'message' in content_data, "Should return message"
+    assert 'TestCo' in content_data['message'], "Message should mention startup"
+    print(f"  [OK] Content generator works (score: {content_data['personalization_score']:.2f})")
+
+except Exception as e:
+    print(f"  [FAIL] Tool execution error: {e}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+
+# Success!
+print()
+print("="*60)
+print("ALL TESTS PASSED - CREWAI INTEGRATION WORKING!")
+print("="*60)
+print()
+print("Next steps:")
+print("  1. Run: python scripts/run_crewai_simulation.py")
+print("  2. Compare with old: python scripts/run_simulation.py")
+print("  3. See CREWAI_MIGRATION.md for details")
+print()

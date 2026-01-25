@@ -1,0 +1,62 @@
+[
+  {
+    "topic": "Fintech Market Trends 2024",
+    "content": "The fintech sector continues strong growth with focus on embedded finance, real-time payments, and AI-powered financial planning. VCs invested $30B in fintech in 2023. Key areas: B2B payments, regulatory compliance automation, and decentralized finance infrastructure.",
+    "category": "market_intelligence",
+    "date": "2024-01"
+  },
+  {
+    "topic": "Healthtech Investment Landscape",
+    "content": "Digital health investments reached $15B in 2023. Remote patient monitoring and AI diagnostics are top funded categories. Regulatory approval remains key challenge. Average Series A: $8M. Top VCs: HealthFirst Partners, Wellness Ventures, MedTech Capital.",
+    "category": "market_intelligence",
+    "date": "2024-01"
+  },
+  {
+    "topic": "Effective Startup Outreach Strategies",
+    "content": "Successful outreach requires deep personalization. Reference recent product updates, funding news, or team changes. Keep messages under 150 words. Include specific value proposition. Best response rates: Tuesday-Thursday 9-11am. Follow-up after 3-4 days if no response.",
+    "category": "best_practices",
+    "date": "2024-01"
+  },
+  {
+    "topic": "VC Matching Best Practices",
+    "content": "Effective VC matching considers: 1) Sector alignment (must match), 2) Stage alignment (critical), 3) Check size compatibility, 4) Geographic focus, 5) Portfolio complementarity. Warm introductions 10x more effective than cold outreach. Highlight mutual connections.",
+    "category": "best_practices",
+    "date": "2024-01"
+  },
+  {
+    "topic": "AI/ML Startup Trends",
+    "content": "Foundation models and vertical AI applications dominate. Enterprise AI adoption accelerating. Key sectors: healthcare AI, financial AI, developer tools. Average seed round: $2-3M. Series A: $10-15M. VCs look for technical co-founders and proprietary data.",
+    "category": "market_intelligence",
+    "date": "2024-01"
+  },
+  {
+    "topic": "Sustainability & Climate Tech",
+    "content": "Climate tech funding: $40B in 2023. Focus areas: carbon capture, renewable energy, sustainable materials, circular economy. Longer development cycles than software. Average Series A: $10-20M. Strong regulatory tailwinds. ESG mandates driving corporate partnerships.",
+    "category": "market_intelligence",
+    "date": "2024-01"
+  },
+  {
+    "topic": "Data Collection Strategies",
+    "content": "Quality over quantity in startup data. Key data points: funding history, team background, traction metrics, market positioning. Update frequency: weekly for active fundraisers, monthly for others. Sources: Crunchbase, Product Hunt, company websites, LinkedIn, tech news.",
+    "category": "best_practices",
+    "date": "2024-01"
+  },
+  {
+    "topic": "Pitch Deck Analysis",
+    "content": "Essential slides: problem, solution, market size, business model, traction, team, competitive landscape, financial projections, ask. Red flags: no traction metrics, unclear business model, weak competitive analysis. Strong decks: clear narrative, visual storytelling, quantified impact.",
+    "category": "best_practices",
+    "date": "2024-01"
+  },
+  {
+    "topic": "Series A Fundraising Landscape",
+    "content": "Series A bar has risen significantly. Minimum traction: $1M ARR for B2B SaaS, 100K users for consumer. Average valuation: $20-40M. Time to close: 3-6 months. Success rate: 20-30% of attempts. Key: demonstrate product-market fit and clear path to $10M ARR.",
+    "category": "market_intelligence",
+    "date": "2024-01"
+  },
+  {
+    "topic": "Geographic Startup Ecosystems",
+    "content": "San Francisco remains #1 for tech startups but costs drive diversification. Rising hubs: Austin (no state tax), Miami (crypto/web3), Boulder (outdoor tech), Boston (biotech/healthtech). International: London, Berlin, Singapore, Tel Aviv, Bangalore. Remote-first enables global talent.",
+    "category": "market_intelligence",
+    "date": "2024-01"
+  }
+]
