@@ -2,27 +2,21 @@
 
 A production-ready hierarchical multi-agent system built with **CrewAI** that autonomously executes the Build-Measure-Learn cycle for a startup-VC matching platform.
 
-## 🎯 Two Implementations Available
-
-1. **CrewAI Version** (RECOMMENDED) - Production-ready with CrewAI framework
-2. **Custom Version** - Educational vanilla Python implementation
-
 ## Overview
 
 This system demonstrates:
-- **Hierarchical multi-agent coordination** (Manager → Specialists → Tools)
+- **Hierarchical multi-agent coordination** (Manager -> Specialists -> Tools)
 - **Build-Measure-Learn cycle** execution with learning
 - **Memory systems** for context and learning
 - **Simulated ecosystem** with startup and VC agents
 - **Autonomous improvement** across iterations
 
-## ✨ CrewAI Benefits
+## CrewAI Benefits
 
-- ✅ Production-ready framework
-- ✅ Built-in memory and delegation
-- ✅ Rich tool ecosystem
-- ✅ 47% less code
-- ✅ Better maintainability
+- Production-ready framework
+- Built-in memory and delegation
+- Rich tool ecosystem
+- Better maintainability
 
 ## Quick Start
 
@@ -66,46 +60,34 @@ python scripts/seed_memory.py
 
 ### Run Simulation
 
-**Option 1: CrewAI Version (RECOMMENDED)**
 ```bash
-# Run CrewAI simulation (3 iterations)
-python scripts/run_crewai_simulation.py
+# Run simulation (3 iterations by default)
+python scripts/run_simulation.py
 
 # Custom iterations with verbosity
-python scripts/run_crewai_simulation.py --iterations 5 --verbose 2
+python scripts/run_simulation.py --iterations 5 --verbose 2
 
 # Quick integration test
 python scripts/test_crewai_quick.py
 ```
-
-**Option 2: Custom Python Version (Educational)**
-```bash
-# Run custom implementation
-python scripts/run_simulation.py
-
-# Run demo scenarios
-python scripts/demo_scenarios.py
-```
-
-**See:** `CREWAI_MIGRATION.md` for detailed comparison
 
 ## Architecture
 
 ### Agent Hierarchy
 
 ```
-Master Planner (orchestrator)
-    │
-    ├─> Data Strategy Planner
-    │       └─> Scraper Actor (simulated)
-    │       └─> Validator Actor (simulated)
-    │
-    ├─> Product Strategy Planner
-    │       └─> Tool Builder Actor (simulated)
-    │
-    └─> Outreach Strategy Planner
-            └─> Content Generator Actor (simulated)
-            └─> Matcher Actor (simulated)
+Strategic Coordinator (manager)
+    |
+    |-> Data Strategy Expert
+    |       |-> scraper_tool
+    |       |-> data_validator_tool
+    |
+    |-> Product Strategy Expert
+    |       |-> tool_builder_tool
+    |
+    |-> Outreach Strategy Expert
+            |-> content_generator_tool
+            |-> analytics_tool
 ```
 
 ### Memory Systems
@@ -127,124 +109,44 @@ Master Planner (orchestrator)
 - **Startup Agents**: Respond to outreach based on personalization and VC match quality
 - **VC Agents**: Evaluate startups based on sector, stage, and geography alignment
 
-## Demo Scenarios
-
-### 1. Data Gap Identification
-
-Demonstrates autonomous data collection:
-- Data Strategy Planner identifies coverage gaps
-- Scraper Actor collects targeted data
-- Quality validation and memory updates
-
-```bash
-python scripts/demo_scenarios.py
-# Select option 1
-```
-
-### 2. Tool Building
-
-Demonstrates autonomous tool creation:
-- Product Strategy Planner detects user needs
-- Tool Builder Actor generates specifications and code
-- Testing and validation
-
-```bash
-python scripts/demo_scenarios.py
-# Select option 2
-```
-
-### 3. Outreach Campaign
-
-Demonstrates learning across iterations:
-- Baseline campaign with metrics
-- Analysis of what worked/didn't work
-- Adapted strategy with improved results
-
-```bash
-python scripts/demo_scenarios.py
-# Select option 3
-```
-
-### 4. Full Build-Measure-Learn Cycle
-
-Runs complete simulation showing:
-- All planners coordinating
-- Actors executing tasks
-- Memory systems evolving
-- Performance improving over iterations
-
-```bash
-python scripts/demo_scenarios.py
-# Select option 4
-```
-
-## Key Features
-
-### ✅ Hierarchical Coordination
-
-The Master Planner coordinates specialized planners, which delegate to actor agents. This creates a clear hierarchy with separation of planning and execution.
-
-### ✅ Memory-Based Learning
-
-Each iteration:
-1. Agents record experiences in episodic memory
-2. Successful workflows saved to procedural memory
-3. Next iteration uses learned patterns
-4. Demonstrable improvement in metrics
-
-### ✅ Simulated Ecosystem
-
-- 10 startups with different sectors and stages
-- 10 VCs with varying preferences
-- Realistic response behavior based on message quality
-
-### ✅ Mock Mode
-
-Runs entirely with pre-scripted LLM responses for:
-- Fast execution (no API latency)
-- Zero API costs
-- Deterministic testing
-
-Set `MOCK_MODE=false` in `.env` for real LLM calls.
-
 ## Project Structure
 
 ```
 autonomous-startup/
-├── src/
-│   ├── agents/           # Agent implementations
-│   │   ├── base.py       # Base classes
-│   │   ├── master_planner.py
-│   │   ├── planners/     # Specialized planners
-│   │   └── actors/       # Actor agents
-│   ├── memory/           # Memory systems
-│   │   ├── semantic.py
-│   │   ├── episodic.py
-│   │   └── procedural.py
-│   ├── simulation/       # Simulated agents
-│   │   ├── startup_agent.py
-│   │   ├── vc_agent.py
-│   │   └── scenarios.py
-│   ├── llm/             # LLM client
-│   │   ├── client.py
-│   │   └── prompts.py
-│   └── utils/           # Utilities
-│       ├── config.py
-│       └── logging.py
-├── data/
-│   ├── seed/            # Seed data
-│   │   ├── startups.json
-│   │   ├── vcs.json
-│   │   └── knowledge.json
-│   └── memory/          # Runtime data
-│       ├── episodic.db
-│       └── workflows.json
-├── scripts/
-│   ├── seed_memory.py   # Initialize memories
-│   ├── run_simulation.py # Main simulation
-│   └── demo_scenarios.py # Demo scenarios
-└── tests/
-    └── test_coordination.py
+|-- src/
+|   |-- crewai_agents/    # CrewAI implementation
+|   |   |-- tools.py      # @tool decorated functions
+|   |   |-- agents.py     # Agent definitions
+|   |   |-- crews.py      # Crew orchestration
+|   |   |-- __init__.py
+|   |-- memory/           # Memory systems
+|   |   |-- semantic.py
+|   |   |-- episodic.py
+|   |   |-- procedural.py
+|   |-- simulation/       # Simulated agents
+|   |   |-- startup_agent.py
+|   |   |-- vc_agent.py
+|   |   |-- scenarios.py
+|   |-- llm/              # LLM client
+|   |   |-- client.py
+|   |   |-- prompts.py
+|   |-- utils/            # Utilities
+|       |-- config.py
+|       |-- logging.py
+|-- data/
+|   |-- seed/             # Seed data
+|   |   |-- startups.json
+|   |   |-- vcs.json
+|   |   |-- knowledge.json
+|   |-- memory/           # Runtime data
+|       |-- episodic.db
+|       |-- workflows.json
+|-- scripts/
+|   |-- seed_memory.py    # Initialize memories
+|   |-- run_simulation.py # Main simulation
+|   |-- test_crewai_quick.py # Quick test
+|-- tests/
+    |-- test_crewai_integration.py
 ```
 
 ## Testing
@@ -255,8 +157,8 @@ Run tests:
 # Run all tests
 pytest tests/ -v
 
-# Run specific test
-pytest tests/test_coordination.py::test_semantic_memory_operations -v
+# Run CrewAI integration tests
+pytest tests/test_crewai_integration.py -v
 
 # Run with coverage
 pytest tests/ --cov=src --cov-report=html
@@ -331,7 +233,7 @@ To evolve this prototype into production:
 | Structured DB | SQLite | PostgreSQL |
 | Cache/Queue | Python dict | Redis |
 | LLM | Mock + Haiku | Multi-provider |
-| Orchestration | Direct Python | Temporal.io |
+| Orchestration | CrewAI | CrewAI + Temporal.io |
 | Deployment | Local | Kubernetes |
 
 ## Troubleshooting
@@ -354,22 +256,13 @@ export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 pip install pytest pytest-cov
 ```
 
-## Contributing
-
-This is a prototype for demonstration purposes. For production use:
-1. Review architecture decisions
-2. Implement production-grade components
-3. Add comprehensive error handling
-4. Expand test coverage
-5. Add monitoring and logging
-
 ## License
 
 MIT License - See LICENSE file for details
 
 ## Acknowledgments
 
-- Built using LangGraph for agent orchestration
+- Built using CrewAI for agent orchestration
 - Claude (Anthropic) and GPT (OpenAI) for LLM capabilities
 - Inspired by Build-Measure-Learn methodology
 

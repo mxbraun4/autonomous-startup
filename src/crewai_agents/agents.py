@@ -2,6 +2,21 @@
 from typing import Optional, List
 from crewai import Agent, LLM
 from src.crewai_agents.tools import (
+    # Web collection tools
+    web_search_startups,
+    web_search_vcs,
+    fetch_webpage,
+    save_startup,
+    save_vc,
+    # Database tools
+    get_startups_tool,
+    get_vcs_tool,
+    get_database_stats,
+    # Outreach tools
+    send_outreach_email,
+    get_outreach_history,
+    record_outreach_response,
+    # Analysis tools
     scraper_tool,
     data_validator_tool,
     content_generator_tool,
@@ -104,14 +119,29 @@ def create_data_strategist(llm: LLM = None) -> Agent:
 
         Your expertise:
         - Identifying data gaps by analyzing VC interests vs. startup coverage
+        - Searching the web to find and collect startup and VC data
         - Prioritizing collection efforts based on business impact
         - Ensuring data quality through validation
         - Tracking data freshness and completeness metrics
 
-        You use the scraper_tool to collect new startup data and data_validator_tool to ensure
-        quality before adding it to the database.
+        You use web search tools to find startups and VCs, save them to the database,
+        and validate data quality. Your workflow:
+        1. Check database stats to understand current coverage
+        2. Search web for startups/VCs in underrepresented sectors
+        3. Save found data to database
+        4. Validate data quality
         ''',
-        tools=[scraper_tool, data_validator_tool],
+        tools=[
+            web_search_startups,
+            web_search_vcs,
+            fetch_webpage,
+            save_startup,
+            save_vc,
+            get_startups_tool,
+            get_vcs_tool,
+            get_database_stats,
+            data_validator_tool
+        ],
         llm=llm or get_llm(),
         verbose=True,
         allow_delegation=True,
@@ -172,15 +202,25 @@ def create_outreach_strategist(llm: LLM = None) -> Agent:
         relevance, and clear value proposition.
 
         Your expertise:
+        - Accessing startup data from the database to find outreach targets
         - Crafting highly personalized messages that reference specific achievements
         - Timing campaigns for maximum engagement (Tuesday-Thursday mornings)
         - Learning from past campaign results to optimize future outreach
         - Understanding what VCs look for and how to position startups effectively
 
-        You analyze past campaigns to identify what worked, use content_generator_tool to create
-        personalized messages, and use analytics_tool to measure campaign performance.
+        You retrieve startups from the database, analyze past campaigns to identify what worked,
+        use content_generator_tool to create personalized messages, and use analytics_tool
+        to measure campaign performance.
         ''',
-        tools=[content_generator_tool, analytics_tool],
+        tools=[
+            get_startups_tool,
+            get_vcs_tool,
+            content_generator_tool,
+            send_outreach_email,
+            get_outreach_history,
+            record_outreach_response,
+            analytics_tool
+        ],
         llm=llm or get_llm(),
         verbose=True,
         allow_delegation=True,

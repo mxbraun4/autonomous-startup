@@ -1,4 +1,4 @@
-"""CrewAI Tools - Convert our Actors to Tools."""
+"""CrewAI Tools - Including web-enabled data collection tools."""
 import json
 import time
 from typing import Dict, Any, List
@@ -6,61 +6,453 @@ from pathlib import Path
 
 from crewai.tools import tool
 
-from src.memory import SemanticMemory, EpisodicMemory
+from src.data.database import StartupDatabase
 from src.utils.config import settings
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Global database instance
+_db = None
 
-def load_json_file(path: str) -> list:
-    """Load JSON file helper."""
-    try:
-        with open(path, 'r') as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Failed to load {path}: {e}")
-        return []
+def get_database() -> StartupDatabase:
+    """Get or create database instance."""
+    global _db
+    if _db is None:
+        _db = StartupDatabase()
+    return _db
 
 
-@tool("Scrape Startup Data")
-def scraper_tool(sector: str = "all", stage: str = "all") -> str:
-    """Collect startup data from various sources.
+# =============================================================================
+# WEB DATA COLLECTION TOOLS
+# =============================================================================
+
+@tool("Search Web for Startups")
+def web_search_startups(query: str, sector: str = "technology") -> str:
+    """Search the web for startup information.
+
+    Use this tool to find startups by searching for them online. The LLM will
+    process the search results and extract relevant startup information.
 
     Args:
-        sector: Target sector (fintech, healthtech, ai_ml, etc.) or 'all'
-        stage: Target stage (seed, series_a, series_b) or 'all'
+        query: Search query (e.g., "fintech startups funding 2024", "YC batch startups")
+        sector: Target sector to focus on
 
     Returns:
-        JSON string with scraped startup data and count
+        Instructions for the agent to perform web search and extract data
     """
-    logger.info(f"Scraper tool: Collecting {sector} startups at {stage} stage")
+    logger.info(f"Web search for startups: {query} (sector: {sector})")
 
-    # Simulate scraping time
-    time.sleep(0.5)
-
-    # Load seed data
-    all_startups = load_json_file(settings.seed_startups_path)
-
-    # Filter by sector
-    if sector != "all":
-        all_startups = [s for s in all_startups if s.get('sector') == sector]
-
-    # Filter by stage
-    if stage != "all":
-        all_startups = [s for s in all_startups if s.get('stage') == stage]
-
-    result = {
-        'status': 'success',
+    # This tool returns instructions for the LLM to use its web capabilities
+    return json.dumps({
+        'action': 'web_search',
+        'query': query,
         'sector': sector,
-        'stage': stage,
-        'count': len(all_startups),
-        'startups': all_startups
+        'instructions': f"""
+Search the web for: "{query}"
+
+From the search results, extract startup information including:
+- Company name
+- Description/what they do
+- Sector: {sector}
+- Funding stage (seed, series_a, series_b, etc.)
+- Recent news or achievements
+- Website URL if available
+- Location if mentioned
+
+After extracting, use the 'Save Startup to Database' tool to store each startup found.
+""",
+        'suggested_searches': [
+            f"{sector} startups funding 2024",
+            f"new {sector} companies launched",
+            f"Y Combinator {sector} startups",
+            f"Product Hunt {sector} launches",
+            f"TechCrunch {sector} funding news"
+        ]
+    }, indent=2)
+
+
+@tool("Search Web for VCs")
+def web_search_vcs(query: str, focus_sector: str = "technology") -> str:
+    """Search the web for VC and investor information.
+
+    Use this tool to find VCs and investors by searching online. The LLM will
+    process the results and extract relevant VC information.
+
+    Args:
+        query: Search query (e.g., "seed stage VCs fintech", "active VC firms 2024")
+        focus_sector: Sector focus to filter VCs
+
+    Returns:
+        Instructions for the agent to perform web search and extract data
+    """
+    logger.info(f"Web search for VCs: {query} (focus: {focus_sector})")
+
+    return json.dumps({
+        'action': 'web_search',
+        'query': query,
+        'focus_sector': focus_sector,
+        'instructions': f"""
+Search the web for: "{query}"
+
+From the search results, extract VC/investor information including:
+- Firm name
+- Investment sectors they focus on
+- Stage focus (seed, series_a, series_b, growth)
+- Check size range if mentioned
+- Recent investments or activity
+- Geographic focus
+- Website URL if available
+
+After extracting, use the 'Save VC to Database' tool to store each VC found.
+""",
+        'suggested_searches': [
+            f"{focus_sector} venture capital firms",
+            f"seed stage investors {focus_sector}",
+            f"active VCs investing in {focus_sector} 2024",
+            f"top {focus_sector} investors",
+            f"VC firms recent investments {focus_sector}"
+        ]
+    }, indent=2)
+
+
+@tool("Fetch and Parse Webpage")
+def fetch_webpage(url: str, extract_type: str = "startups") -> str:
+    """Fetch a webpage and extract startup or VC information.
+
+    Use this tool to fetch a specific URL and extract structured data from it.
+
+    Args:
+        url: The URL to fetch
+        extract_type: What to extract - 'startups' or 'vcs'
+
+    Returns:
+        Instructions for the agent to fetch and parse the page
+    """
+    logger.info(f"Fetch webpage: {url} (extract: {extract_type})")
+
+    extraction_fields = {
+        'startups': ['name', 'description', 'sector', 'stage', 'funding', 'website', 'location', 'recent_news'],
+        'vcs': ['name', 'sectors', 'stage_focus', 'check_size', 'geography', 'recent_activity', 'website']
     }
 
-    logger.info(f"Scraped {len(all_startups)} startups")
-    return json.dumps(result, indent=2)
+    return json.dumps({
+        'action': 'fetch_url',
+        'url': url,
+        'extract_type': extract_type,
+        'instructions': f"""
+Fetch the webpage at: {url}
 
+Extract {extract_type} information from the page content. Look for:
+{', '.join(extraction_fields.get(extract_type, extraction_fields['startups']))}
+
+For each {extract_type[:-1]} found, use the appropriate 'Save to Database' tool.
+""",
+        'fields_to_extract': extraction_fields.get(extract_type, extraction_fields['startups'])
+    }, indent=2)
+
+
+@tool("Save Startup to Database")
+def save_startup(
+    name: str,
+    description: str = "",
+    sector: str = "technology",
+    stage: str = "seed",
+    website: str = "",
+    location: str = "",
+    recent_news: str = "",
+    source: str = "web_search"
+) -> str:
+    """Save a startup to the database.
+
+    Args:
+        name: Startup name (required)
+        description: What the startup does
+        sector: Business sector (fintech, healthtech, ai_ml, devtools, etc.)
+        stage: Funding stage (seed, series_a, series_b, growth)
+        website: Company website URL
+        location: Company location
+        recent_news: Recent news or achievements
+        source: Where the data came from
+
+    Returns:
+        Confirmation of save status
+    """
+    logger.info(f"Saving startup: {name}")
+
+    db = get_database()
+    startup = {
+        'name': name,
+        'description': description,
+        'sector': sector.lower().replace(' ', '_'),
+        'stage': stage.lower().replace(' ', '_'),
+        'website': website,
+        'location': location,
+        'recent_news': recent_news,
+        'source': source,
+        'fundraising_status': 'unknown'
+    }
+
+    success = db.add_startup(startup)
+
+    return json.dumps({
+        'status': 'success' if success else 'failed',
+        'startup': name,
+        'message': f"Startup '{name}' saved to database" if success else f"Failed to save '{name}'"
+    }, indent=2)
+
+
+@tool("Save VC to Database")
+def save_vc(
+    name: str,
+    sectors: str = "technology",
+    stage_focus: str = "seed",
+    check_size: str = "",
+    geography: str = "",
+    recent_activity: str = "",
+    website: str = "",
+    source: str = "web_search"
+) -> str:
+    """Save a VC/investor to the database.
+
+    Args:
+        name: VC firm name (required)
+        sectors: Investment sectors (comma-separated, e.g., "fintech, ai_ml, saas")
+        stage_focus: Investment stage focus (seed, series_a, series_b, growth)
+        check_size: Typical check size (e.g., "500K-2M", "5M-15M")
+        geography: Geographic focus (e.g., "US, Europe")
+        recent_activity: Recent investments or news
+        website: Firm website URL
+        source: Where the data came from
+
+    Returns:
+        Confirmation of save status
+    """
+    logger.info(f"Saving VC: {name}")
+
+    db = get_database()
+
+    # Parse sectors into list
+    sector_list = [s.strip().lower().replace(' ', '_') for s in sectors.split(',')]
+
+    vc = {
+        'name': name,
+        'sectors': sector_list,
+        'stage_focus': stage_focus.lower().replace(' ', '_'),
+        'check_size': check_size,
+        'geography': geography,
+        'recent_activity': recent_activity,
+        'website': website,
+        'source': source
+    }
+
+    success = db.add_vc(vc)
+
+    return json.dumps({
+        'status': 'success' if success else 'failed',
+        'vc': name,
+        'message': f"VC '{name}' saved to database" if success else f"Failed to save '{name}'"
+    }, indent=2)
+
+
+# =============================================================================
+# DATA RETRIEVAL TOOLS
+# =============================================================================
+
+@tool("Get Startups from Database")
+def get_startups_tool(sector: str = "all", stage: str = "all", limit: int = 20) -> str:
+    """Retrieve startups from the database.
+
+    Args:
+        sector: Filter by sector (fintech, healthtech, ai_ml, etc.) or 'all'
+        stage: Filter by stage (seed, series_a, series_b) or 'all'
+        limit: Maximum number of results
+
+    Returns:
+        JSON with startups from database
+    """
+    logger.info(f"Getting startups: sector={sector}, stage={stage}")
+
+    db = get_database()
+    startups = db.get_startups(sector=sector, stage=stage, limit=limit)
+
+    return json.dumps({
+        'status': 'success',
+        'count': len(startups),
+        'sector': sector,
+        'stage': stage,
+        'startups': startups
+    }, indent=2)
+
+
+@tool("Get VCs from Database")
+def get_vcs_tool(sector: str = "all", stage_focus: str = "all", limit: int = 20) -> str:
+    """Retrieve VCs from the database.
+
+    Args:
+        sector: Filter by sector focus or 'all'
+        stage_focus: Filter by stage focus or 'all'
+        limit: Maximum number of results
+
+    Returns:
+        JSON with VCs from database
+    """
+    logger.info(f"Getting VCs: sector={sector}, stage={stage_focus}")
+
+    db = get_database()
+    vcs = db.get_vcs(sector=sector, stage_focus=stage_focus, limit=limit)
+
+    return json.dumps({
+        'status': 'success',
+        'count': len(vcs),
+        'sector': sector,
+        'stage_focus': stage_focus,
+        'vcs': vcs
+    }, indent=2)
+
+
+@tool("Get Database Stats")
+def get_database_stats() -> str:
+    """Get statistics about collected data.
+
+    Returns:
+        Database statistics including counts and sectors
+    """
+    db = get_database()
+    stats = db.get_stats()
+
+    return json.dumps({
+        'status': 'success',
+        'stats': stats,
+        'message': f"Database has {stats['total_startups']} startups and {stats['total_vcs']} VCs"
+    }, indent=2)
+
+
+# =============================================================================
+# OUTREACH TOOLS
+# =============================================================================
+
+@tool("Send Outreach Email")
+def send_outreach_email(
+    recipient_name: str,
+    recipient_email: str,
+    subject: str,
+    message: str,
+    recipient_type: str = "startup",
+    recipient_id: str = "",
+    campaign_id: str = "default"
+) -> str:
+    """Send a simulated outreach email and log it to the database.
+
+    This tool simulates sending an email and records the outreach attempt
+    in the database for tracking and analytics.
+
+    Args:
+        recipient_name: Name of the recipient (company or person)
+        recipient_email: Email address to send to
+        subject: Email subject line
+        message: Email body content
+        recipient_type: Type of recipient ('startup' or 'vc')
+        recipient_id: Database ID of the recipient (if known)
+        campaign_id: Campaign identifier for grouping outreach
+
+    Returns:
+        Confirmation with outreach ID
+    """
+    logger.info(f"Sending outreach email to {recipient_name} <{recipient_email}>")
+
+    db = get_database()
+
+    # Log the outreach attempt
+    outreach_id = db.log_outreach(
+        recipient_type=recipient_type,
+        recipient_id=recipient_id or recipient_name.lower().replace(' ', '_'),
+        recipient_name=recipient_name,
+        recipient_email=recipient_email,
+        subject=subject,
+        message=message,
+        channel="email",
+        campaign_id=campaign_id,
+        metadata={
+            'simulated': True,
+            'word_count': len(message.split()),
+            'subject_length': len(subject)
+        }
+    )
+
+    return json.dumps({
+        'status': 'sent',
+        'outreach_id': outreach_id,
+        'recipient': recipient_name,
+        'email': recipient_email,
+        'subject': subject,
+        'message_preview': message[:100] + '...' if len(message) > 100 else message,
+        'note': 'Email simulated - logged to database for tracking'
+    }, indent=2)
+
+
+@tool("Get Outreach History")
+def get_outreach_history(campaign_id: str = "", limit: int = 20) -> str:
+    """Get history of outreach attempts.
+
+    Args:
+        campaign_id: Filter by campaign (optional)
+        limit: Maximum number of records to return
+
+    Returns:
+        JSON with outreach history
+    """
+    logger.info(f"Getting outreach history (campaign: {campaign_id or 'all'})")
+
+    db = get_database()
+    history = db.get_outreach_history(
+        campaign_id=campaign_id if campaign_id else None,
+        limit=limit
+    )
+
+    # Calculate stats
+    total = len(history)
+    responded = sum(1 for h in history if h.get('status') == 'responded')
+    response_rate = responded / total if total > 0 else 0
+
+    return json.dumps({
+        'status': 'success',
+        'total_outreach': total,
+        'responded': responded,
+        'response_rate': response_rate,
+        'history': history
+    }, indent=2)
+
+
+@tool("Record Outreach Response")
+def record_outreach_response(outreach_id: int, response: str, interested: bool = False) -> str:
+    """Record a response to an outreach attempt.
+
+    Args:
+        outreach_id: ID of the outreach record
+        response: The response received
+        interested: Whether the recipient expressed interest
+
+    Returns:
+        Confirmation of update
+    """
+    logger.info(f"Recording response for outreach {outreach_id}")
+
+    db = get_database()
+    status = "interested" if interested else "responded"
+    success = db.update_outreach_response(outreach_id, response, status)
+
+    return json.dumps({
+        'status': 'success' if success else 'failed',
+        'outreach_id': outreach_id,
+        'new_status': status,
+        'message': f"Response recorded for outreach {outreach_id}" if success else "Failed to update"
+    }, indent=2)
+
+
+# =============================================================================
+# ANALYSIS AND CONTENT TOOLS
+# =============================================================================
 
 @tool("Validate Data Quality")
 def data_validator_tool(data_json: str) -> str:
@@ -84,8 +476,7 @@ def data_validator_tool(data_json: str) -> str:
                 'reason': 'No data to validate'
             })
 
-        # Check required fields
-        required_fields = ['id', 'name', 'sector', 'stage', 'description']
+        required_fields = ['name', 'sector', 'description']
         total_fields = 0
         present_fields = 0
 
@@ -97,15 +488,12 @@ def data_validator_tool(data_json: str) -> str:
 
         completeness = present_fields / total_fields if total_fields > 0 else 0
 
-        result = {
-            'status': 'pass' if completeness > 0.9 else 'warning',
+        return json.dumps({
+            'status': 'pass' if completeness > 0.8 else 'warning',
             'completeness_score': completeness,
             'total_records': len(startups),
-            'quality_issues': [] if completeness > 0.9 else ['Some records missing required fields']
-        }
-
-        logger.info(f"Validation: {completeness:.1%} complete")
-        return json.dumps(result, indent=2)
+            'quality_issues': [] if completeness > 0.8 else ['Some records missing required fields']
+        }, indent=2)
 
     except Exception as e:
         return json.dumps({
@@ -128,56 +516,39 @@ def content_generator_tool(startup_name: str, sector: str, recent_news: str = ""
     """
     logger.info(f"Content generator: Creating message for {startup_name}")
 
-    # Simulate content generation
-    time.sleep(0.3)
+    message_parts = [
+        f"Hi {startup_name} team,",
+        "",
+    ]
 
-    # Build personalized message
-    message_parts = []
-
-    # Opening
-    message_parts.append(f"Hi {startup_name} team,")
-    message_parts.append("")
-
-    # Personalization
     if recent_news:
         message_parts.append(f"Congratulations on {recent_news.lower()}!")
     else:
         message_parts.append(f"I came across {startup_name} and was impressed by your work in {sector}.")
 
-    message_parts.append("")
-
-    # Value proposition
-    message_parts.append(
-        "We're working with VCs who are actively looking for innovative "
-        f"{sector} startups. Based on your profile, I think there could be "
-        "some great matches."
-    )
-    message_parts.append("")
-
-    # Call to action
-    message_parts.append(
-        "Would you be open to a brief 15-minute call to explore potential "
-        "introductions?"
-    )
-    message_parts.append("")
-    message_parts.append("Best regards")
+    message_parts.extend([
+        "",
+        f"We're working with VCs who are actively looking for innovative {sector} startups. "
+        "Based on your profile, I think there could be some great matches.",
+        "",
+        "Would you be open to a brief 15-minute call to explore potential introductions?",
+        "",
+        "Best regards"
+    ])
 
     message = "\n".join(message_parts)
 
-    # Calculate personalization score
-    score = 0.5  # Base
+    score = 0.5
     if recent_news:
         score += 0.3
-    if len(message) < 600:  # Keep it concise
+    if len(message) < 600:
         score += 0.2
 
-    result = {
+    return json.dumps({
         'message': message,
         'personalization_score': min(score, 1.0),
         'word_count': len(message.split())
-    }
-
-    return json.dumps(result, indent=2)
+    }, indent=2)
 
 
 @tool("Build Tool Specification")
@@ -192,9 +563,6 @@ def tool_builder_tool(tool_idea: str, requirements: str = "") -> str:
         Tool specification with implementation approach
     """
     logger.info(f"Tool builder: Creating spec for {tool_idea}")
-
-    # Simulate design time
-    time.sleep(0.8)
 
     spec = {
         'tool_name': tool_idea.split()[0].lower() + '_tool',
@@ -214,12 +582,9 @@ def tool_builder_tool(tool_idea: str, requirements: str = "") -> str:
             '5. Integration testing',
             '6. Documentation'
         ],
-        'estimated_complexity': 'medium',
-        'dependencies': ['pydantic', 'typing'],
-        'test_coverage_target': 0.90
+        'estimated_complexity': 'medium'
     }
 
-    logger.info(f"Generated spec for {spec['tool_name']}")
     return json.dumps(spec, indent=2)
 
 
@@ -237,49 +602,68 @@ def analytics_tool(campaign_results: str) -> str:
 
     try:
         results = json.loads(campaign_results)
-
         response_rate = results.get('response_rate', 0)
         meeting_rate = results.get('meeting_rate', 0)
-        total_sent = results.get('total_sent', 0)
 
-        # Analyze performance
         insights = []
-
         if response_rate > 0.30:
-            insights.append("✓ Excellent response rate - campaign is highly effective")
+            insights.append("Excellent response rate - campaign is highly effective")
         elif response_rate > 0.20:
-            insights.append("✓ Good response rate - above industry average")
+            insights.append("Good response rate - above industry average")
         else:
-            insights.append("⚠ Low response rate - needs optimization")
+            insights.append("Low response rate - needs optimization")
 
-        if meeting_rate > 0.10:
-            insights.append("✓ Strong meeting conversion")
-        else:
-            insights.append("⚠ Low meeting conversion - improve call-to-action")
-
-        # Recommendations
         recommendations = []
-
         if response_rate < 0.25:
-            recommendations.append("Increase personalization in messages")
-            recommendations.append("Reference recent startup news/achievements")
+            recommendations.extend([
+                "Increase personalization in messages",
+                "Reference recent startup news/achievements"
+            ])
 
-        if meeting_rate < 0.10:
-            recommendations.append("Make call-to-action more specific")
-            recommendations.append("Reduce friction in scheduling process")
-
-        analysis = {
-            'metrics': {
-                'response_rate': response_rate,
-                'meeting_rate': meeting_rate,
-                'total_sent': total_sent
-            },
+        return json.dumps({
+            'metrics': results,
             'insights': insights,
             'recommendations': recommendations,
             'overall_grade': 'A' if response_rate > 0.30 else 'B' if response_rate > 0.20 else 'C'
-        }
-
-        return json.dumps(analysis, indent=2)
+        }, indent=2)
 
     except Exception as e:
         return json.dumps({'error': str(e)})
+
+
+# =============================================================================
+# LEGACY COMPATIBILITY - Scraper tool that uses database
+# =============================================================================
+
+@tool("Scrape Startup Data")
+def scraper_tool(sector: str = "all", stage: str = "all") -> str:
+    """Get startup data from the database (collected via web search).
+
+    If database is empty, this indicates web collection needs to be done first.
+
+    Args:
+        sector: Target sector or 'all'
+        stage: Target stage or 'all'
+
+    Returns:
+        JSON string with startup data
+    """
+    logger.info(f"Scraper tool: Getting {sector} startups at {stage} stage")
+
+    db = get_database()
+    startups = db.get_startups(sector=sector, stage=stage, limit=50)
+
+    if not startups:
+        return json.dumps({
+            'status': 'empty',
+            'message': 'No startups in database. Use web search tools to collect data first.',
+            'suggestion': 'Use "Search Web for Startups" tool to find and collect startup data'
+        }, indent=2)
+
+    return json.dumps({
+        'status': 'success',
+        'sector': sector,
+        'stage': stage,
+        'count': len(startups),
+        'startups': startups
+    }, indent=2)

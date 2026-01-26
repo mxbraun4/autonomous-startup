@@ -11,7 +11,7 @@ pip install -r requirements.txt
 
 Expected output:
 ```
-Successfully installed langchain langgraph anthropic openai pydantic...
+Successfully installed crewai crewai-tools anthropic openai pydantic...
 ```
 
 ## Step 2: Create Environment File
@@ -22,10 +22,10 @@ cp .env.example .env
 ```
 
 The default `.env` has `MOCK_MODE=true`, which means:
-- ✅ No API keys needed
-- ✅ No API costs
-- ✅ Fast execution
-- ✅ Deterministic results
+- No API keys needed
+- No API costs
+- Fast execution
+- Deterministic results
 
 ## Step 3: Seed Memory Systems
 
@@ -51,8 +51,6 @@ Ready to run simulation!
 
 ## Step 4: Run Your First Simulation
 
-### Option A: Full Simulation (Recommended)
-
 ```bash
 python scripts/run_simulation.py
 ```
@@ -62,19 +60,15 @@ This runs 3 Build-Measure-Learn iterations and shows:
 - Memory evolution
 - Performance improvement
 
-Expected runtime: ~30 seconds
-
-### Option B: Demo Scenarios
+### With Options
 
 ```bash
-python scripts/demo_scenarios.py
-```
+# Custom iterations with verbosity
+python scripts/run_simulation.py --iterations 5 --verbose 2
 
-Choose from:
-1. Data Collection - See data gap identification
-2. Tool Building - Watch autonomous tool creation
-3. Outreach Campaign - Observe learning across iterations
-4. Full Cycle - Complete simulation
+# Quick integration test
+python scripts/test_crewai_quick.py
+```
 
 ## What You'll See
 
@@ -124,17 +118,17 @@ Metrics:
 
 ### Agent Activity
 ```
-[master_planner] Starting Build-Measure-Learn Cycle 1
-[data_strategy_planner] Analyzing data gaps
-[scraper_actor] Executing scraping task
-[outreach_strategy_planner] Creating outreach campaign plan
-[content_generator_actor] Generating outreach content
+[strategic_coordinator] Starting Build-Measure-Learn Cycle 1
+[data_strategy_expert] Analyzing data gaps
+[scraper_tool] Executing scraping task
+[outreach_strategy_expert] Creating outreach campaign plan
+[content_generator_tool] Generating outreach content
 ```
 
 ### Memory Updates
 ```
-[master_planner] Learning from execution
-Recorded episode 5: master_planner/build_measure_learn_cycle (success=True)
+[strategic_coordinator] Learning from execution
+Recorded episode 5: strategic_coordinator/build_measure_learn_cycle (success=True)
 Saved workflow for outreach_campaign (score: 0.850)
 ```
 
@@ -183,9 +177,9 @@ python scripts/run_simulation.py
 ### Explore the Code
 
 Key files to explore:
-- `src/agents/master_planner.py` - Top-level orchestration
-- `src/agents/planners/` - Specialized planning agents
-- `src/agents/actors/` - Execution agents
+- `src/crewai_agents/agents.py` - Agent definitions
+- `src/crewai_agents/tools.py` - Tool implementations
+- `src/crewai_agents/crews.py` - Crew orchestration
 - `src/memory/` - Memory systems
 - `src/simulation/` - Simulated ecosystem
 
@@ -237,7 +231,7 @@ pytest tests/ -v
 ### Development Workflow
 ```bash
 # 1. Make code changes
-vim src/agents/planners/data_strategy.py
+vim src/crewai_agents/tools.py
 
 # 2. Clear and reseed memory
 python scripts/seed_memory.py
@@ -257,9 +251,8 @@ vim data/seed/startups.json
 # 2. Reseed memory
 python scripts/seed_memory.py
 
-# 3. Run specific scenario
-python scripts/demo_scenarios.py
-# Choose scenario 3 (Outreach Campaign)
+# 3. Run simulation
+python scripts/run_simulation.py --iterations 5
 
 # 4. Check results in memory
 sqlite3 data/memory/episodic.db "SELECT * FROM episodes ORDER BY timestamp DESC LIMIT 5;"
@@ -269,19 +262,18 @@ sqlite3 data/memory/episodic.db "SELECT * FROM episodes ORDER BY timestamp DESC 
 
 You've successfully set up the system when:
 
-✅ Seed script runs without errors
-✅ Simulation shows 3 iterations
-✅ Response rates improve across iterations
-✅ Episodic memory contains episodes
-✅ Procedural memory contains workflows
-✅ Tests pass
+- Seed script runs without errors
+- Simulation shows 3 iterations
+- Response rates improve across iterations
+- Episodic memory contains episodes
+- Procedural memory contains workflows
+- Tests pass
 
 ## Getting Help
 
 1. Check the main [README.md](README.md)
 2. Review test files in `tests/` for examples
-3. Examine demo scenarios in `scripts/demo_scenarios.py`
-4. Read the source code - it's well-commented!
+3. Read the source code - it's well-commented!
 
 ## What's Next?
 
@@ -289,8 +281,8 @@ Once comfortable with the prototype:
 
 1. **Understand the Architecture** - Read through agent implementations
 2. **Experiment with Real LLMs** - Set `MOCK_MODE=false`
-3. **Customize Behaviors** - Modify planner strategies
-4. **Add New Agents** - Create additional planners/actors
+3. **Customize Behaviors** - Modify agent strategies and tools
+4. **Add New Agents** - Create additional agents/tools
 5. **Scale Up** - Replace in-memory components with production systems
 
-Happy simulating! 🚀
+Happy simulating!

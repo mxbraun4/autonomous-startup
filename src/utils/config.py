@@ -20,10 +20,8 @@ class Settings(BaseSettings):
     episodic_db_path: str = "data/memory/episodic.db"
     procedural_json_path: str = "data/memory/workflows.json"
 
-    # Seed data paths
-    seed_startups_path: str = "data/seed/startups.json"
-    seed_vcs_path: str = "data/seed/vcs.json"
-    seed_knowledge_path: str = "data/seed/knowledge.json"
+    # Database path for collected data
+    startup_db_path: str = "data/collected/startups.db"
 
     model_config = SettingsConfigDict(
         env_file=".env",
