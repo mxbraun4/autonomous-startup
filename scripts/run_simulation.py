@@ -13,6 +13,22 @@ setup_logging(settings.log_level)
 logger = get_logger(__name__)
 
 
+def _init_memory_store():
+    """Initialise the UnifiedStore and inject it into CrewAI tools."""
+    from src.framework.storage.unified_store import UnifiedStore
+    from src.framework.storage.sync_wrapper import SyncUnifiedStore
+    from src.crewai_agents.tools import set_memory_store
+
+    use_legacy = getattr(settings, "memory_use_legacy", False)
+    data_dir = getattr(settings, "memory_data_dir", "data/memory")
+
+    store = UnifiedStore(use_legacy_stores=use_legacy, data_dir=data_dir)
+    sync_store = SyncUnifiedStore(store)
+    set_memory_store(sync_store)
+    logger.info("UnifiedStore initialised and injected into tools")
+    return sync_store
+
+
 def display_results(results: dict) -> None:
     """Display simulation results.
 
@@ -94,6 +110,9 @@ def main():
     print("="*60 + "\n")
 
     logger.info(f"Starting CrewAI simulation with {args.iterations} iterations")
+
+    # Initialise memory system
+    _init_memory_store()
 
     # Run Build-Measure-Learn cycles
     results = run_build_measure_learn_cycle(
