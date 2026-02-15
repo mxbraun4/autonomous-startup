@@ -97,8 +97,8 @@ class SemanticStoreBackend:
         return docs
 
     async def sem_get(self, entity_id: str) -> Optional[SemanticDocument]:
-        # Search across all known collections
-        for col_name, col in self._collections.items():
+        # Search across *all* persisted collections, not just the in-memory cache.
+        for col_name, col in self._all_collections():
             try:
                 result = col.get(ids=[entity_id])
                 if result["ids"]:
@@ -120,7 +120,7 @@ class SemanticStoreBackend:
         return None
 
     async def sem_delete(self, entity_id: str) -> bool:
-        for col in self._collections.values():
+        for _col_name, col in self._all_collections():
             try:
                 existing = col.get(ids=[entity_id])
                 if existing["ids"]:
@@ -137,6 +137,21 @@ class SemanticStoreBackend:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _all_collections(self) -> List[tuple]:
+        """Yield (name, Collection) for every persisted collection.
+
+        Ensures collections that exist on disk but haven't been accessed in
+        this process are still discoverable by sem_get / sem_delete.
+        """
+        seen = set(self._collections.keys())
+        pairs = list(self._collections.items())
+        for col_info in self._client.list_collections():
+            name = col_info if isinstance(col_info, str) else col_info.name
+            if name not in seen:
+                col = self._get_collection(name)
+                pairs.append((name, col))
+        return pairs
 
     @staticmethod
     def _build_where(filters: Dict[str, Any]) -> Optional[Dict[str, Any]]:

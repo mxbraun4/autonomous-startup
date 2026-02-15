@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 
 from src.framework.types import (
     ConsensusStatus,
@@ -34,7 +34,10 @@ class BaseMemoryEntity(BaseModel):
     status: str = "active"
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
-    model_config = {"json_encoders": {datetime: lambda v: v.isoformat()}}
+    @field_serializer("timestamp_utc")
+    @classmethod
+    def _serialize_dt(cls, v: datetime) -> str:
+        return v.isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +107,10 @@ class ProcedureVersion(BaseModel):
     is_active: bool = True
     created_at: datetime = Field(default_factory=_utc_now)
 
-    model_config = {"json_encoders": {datetime: lambda v: v.isoformat()}}
+    @field_serializer("created_at")
+    @classmethod
+    def _serialize_dt(cls, v: datetime) -> str:
+        return v.isoformat()
 
 
 class Procedure(BaseMemoryEntity):

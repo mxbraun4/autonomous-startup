@@ -21,6 +21,11 @@ pytest = "^8.0.0"
 black = "^24.0.0"
 ruff = "^0.2.0"
 
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests that require a live LLM API key (deselect with '-m \"not slow\"')",
+]
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
