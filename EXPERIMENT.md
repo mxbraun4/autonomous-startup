@@ -19,7 +19,7 @@ A coordinated agent system with memory can improve matching and outreach outcome
 - Tools: `src/crewai_agents/tools.py`
 - Persistence: `src/data/database.py`
 - Simulation actors: `src/simulation/startup_agent.py`, `src/simulation/vc_agent.py`, `src/simulation/scenarios.py`
-- Runtime scripts: `scripts/seed_memory.py`, `scripts/run_simulation.py`
+- Runtime scripts: `scripts/seed_memory.py`, `scripts/run_simulation.py`, `scripts/run_customer_simulation.py`, `scripts/evaluate_customer_simulation.py`
 - Customer simulation model: `CUSTOMER_SIMULATION.md`
 
 ## Baseline Setup
@@ -34,6 +34,10 @@ A coordinated agent system with memory can improve matching and outreach outcome
    - `python scripts/test_crewai_quick.py`
 5. Confirm customer simulation parameters
    - Review and lock cohort sizes/thresholds in `CUSTOMER_SIMULATION.md`
+6. Validate deterministic customer scenario matrix
+   - `python scripts/run_customer_simulation.py`
+7. Evaluate Track D hypotheses against matrix output
+   - `python scripts/evaluate_customer_simulation.py --summary-path data/memory/customer_matrix_summary.json --allow-warn`
 
 ## Experiment Protocol
 1. Baseline run
@@ -102,6 +106,13 @@ Goal: validate the growth model around the core matching product.
 Goal: validate customer-side dynamics without leaving the simulation environment.
 
 - Variable: cohort mix, transition thresholds, and behavior parameters
+- Deterministic scenario matrix:
+  - `baseline`
+  - `high_personalization`
+  - `better_matching`
+  - `acquisition_push`
+- Hypothesis contract file:
+  - `data/seed/customer_hypotheses.json`
 - Metrics:
   - visitor -> tool use conversion
   - tool use -> signup conversion
@@ -111,6 +122,10 @@ Goal: validate customer-side dynamics without leaving the simulation environment
 - Pass condition:
   - Reproducible outputs with fixed seed and configuration
   - At least one tested variant improves a downstream conversion metric
+- Execution command:
+  - `python scripts/run_customer_simulation.py`
+- Evaluation command:
+  - `python scripts/evaluate_customer_simulation.py --summary-path data/memory/customer_matrix_summary.json --allow-warn`
 
 ## Run Log Template
 Use this for each experiment run.
