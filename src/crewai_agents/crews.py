@@ -182,13 +182,16 @@ def create_autonomous_startup_crew(
     )
 
     # Create crew with hierarchical process
+    # NOTE: memory=False because we use our own five-tier UnifiedStore rather
+    # than CrewAI's built-in memory (which requires an OpenAI API key for
+    # embeddings). Our memory is injected into tools via set_memory_store().
     crew = Crew(
         agents=[coordinator, data_strategist, product_strategist, outreach_strategist],
         tasks=tasks,
         process=Process.hierarchical,  # Coordinator delegates to specialists
         manager_llm=llm or get_llm(),
         verbose=verbose,
-        memory=True,  # Enable memory across iterations
+        memory=False,
         cache=True,   # Cache results for efficiency
         max_rpm=10    # Rate limiting
     )
@@ -245,7 +248,7 @@ def run_build_measure_learn_cycle(
             tasks=build_tasks,
             process=Process.sequential,
             verbose=verbose,
-            memory=True
+            memory=False,
         )
 
         logger.info("BUILD PHASE: Executing...")
@@ -279,7 +282,7 @@ def run_build_measure_learn_cycle(
             tasks=[learn_task],
             process=Process.sequential,
             verbose=verbose,
-            memory=True
+            memory=False,
         )
 
         learn_result = learn_crew.kickoff()

@@ -1,7 +1,7 @@
 """CrewAI Tools - Including web-enabled data collection tools."""
 import json
 import time
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from pathlib import Path
 
 from crewai.tools import tool
@@ -10,10 +10,17 @@ from src.data.database import StartupDatabase
 from src.utils.config import settings
 from src.utils.logging import get_logger
 
+if TYPE_CHECKING:
+    from src.framework.storage.sync_wrapper import SyncUnifiedStore
+
 logger = get_logger(__name__)
 
 # Global database instance
 _db = None
+
+# Global memory store instance (SyncUnifiedStore)
+_memory_store: Optional["SyncUnifiedStore"] = None
+
 
 def get_database() -> StartupDatabase:
     """Get or create database instance."""
@@ -21,6 +28,18 @@ def get_database() -> StartupDatabase:
     if _db is None:
         _db = StartupDatabase()
     return _db
+
+
+def set_memory_store(store: "SyncUnifiedStore") -> None:
+    """Inject the unified memory store for tool use."""
+    global _memory_store
+    _memory_store = store
+    logger.info("Memory store injected into CrewAI tools")
+
+
+def get_memory_store() -> Optional["SyncUnifiedStore"]:
+    """Get the current memory store (may be None if not initialised)."""
+    return _memory_store
 
 
 # =============================================================================
