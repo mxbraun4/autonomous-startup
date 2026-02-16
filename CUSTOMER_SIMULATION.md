@@ -1,12 +1,116 @@
 # Customer Simulation Spec
 
 ## Purpose
-Define a constrained customer simulation model for the autonomous startup prototype so product behavior can be tested without relying on live traffic or external systems.
+Define a constrained customer simulation environment for the autonomous startup prototype so product behavior can be tested without relying on live traffic or external systems.
 
 ## Why This Exists
 - Keep experimentation deterministic and low-cost
 - Validate core product loops before production infrastructure
 - Measure conversion and match quality signals in a controlled environment
+
+## Environment Contract (v1)
+
+### Scope
+- This contract defines the customer-side environment only.
+- It covers founder, VC, and visitor behavioral transitions and environment metrics.
+- It does not cover web scraping, live traffic, external APIs, or LLM-generated customer decisions.
+
+### Non-Goals
+- Real-world prediction accuracy for production forecasting
+- Open-ended conversational roleplay
+- Unbounded agent autonomy
+
+### Required Input Interface
+
+The simulator must consume a single environment input object with the following top-level keys:
+- `run_context`
+- `params`
+- `cohorts`
+- `signals`
+
+#### 1) `run_context`
+- `run_id`: `str`, unique identifier for the run
+- `iteration`: `int`, `>= 1`
+- `seed`: `int`, deterministic random seed
+
+#### 2) `params`
+All values are numeric and bounded in `[0.0, 1.0]` unless noted:
+- `founder_base_interest`
+- `vc_base_interest`
+- `visitor_tool_click_rate`
+- `signup_rate_from_tool`
+- `meeting_rate_from_mutual_interest`
+- Optional threshold params:
+  - `match_score_threshold`
+  - `shortlist_threshold`
+  - `interest_threshold`
+  - `max_steps_per_customer` (integer, `>= 1`)
+
+#### 3) `cohorts`
+- `founders`: list of founder profiles
+- `vcs`: list of VC profiles
+- `visitors`: list of visitor profiles
+
+Required founder fields:
+- `id`, `sector`, `stage`, `geography`, `fundraising_status`, `urgency_score`
+
+Required VC fields:
+- `id`, `thesis_sectors`, `stage_focus`, `geography`, `confidence_threshold`
+
+Required visitor fields:
+- `id`, `intent_topic`, `tool_need_score`, `cta_friction`
+
+#### 4) `signals`
+Signals are produced by system components and consumed by the environment:
+- `match_signals`: list of `{founder_id, vc_id, match_score, explanation_quality}`
+- `outreach_signals`: list of `{founder_id, vc_id, personalization_score, timing_score}`
+- `acquisition_signals`: list of `{visitor_id, article_relevance, tool_usefulness, cta_clarity}`
+
+### Output Interface
+
+Each environment run must return a JSON-serializable object with:
+- `metrics`
+- `events`
+- `final_states`
+- `diagnostics`
+
+Required `metrics` keys:
+- `visitor_to_tool_use`
+- `tool_use_to_signup`
+- `signup_to_first_match`
+- `founder_interested_rate`
+- `vc_interested_rate`
+- `mutual_interest_rate`
+- `meeting_conversion_rate`
+- `average_match_relevance`
+- `explanation_coverage`
+- `personalization_quality_score`
+
+Event shape (`events[]`):
+- `event_id`
+- `iteration`
+- `actor_type` (`founder|vc|visitor`)
+- `actor_id`
+- `from_state`
+- `to_state`
+- `reason_code`
+- `score_snapshot` (object with relevant numeric values)
+
+`final_states` shape:
+- `founders`: map of `founder_id -> state`
+- `vcs`: map of `vc_id -> state`
+- `visitors`: map of `visitor_id -> state`
+
+`diagnostics` minimum:
+- `dropoff_reasons`: map of reason code to count
+- `input_validation_errors`: list
+
+### Determinism and Safety Invariants
+- No external network dependency for customer behavior decisions
+- Same `{seed, params, cohorts, signals}` must produce identical outputs
+- Bounded state transitions; no loops outside defined state graph
+- At most `max_steps_per_customer` transitions per actor per run
+- Missing required fields must fail validation and be reported in `diagnostics`
 
 ## Simulated Customer Types
 
@@ -43,13 +147,6 @@ A top-of-funnel user arriving via article or tool pages.
   - Tool usefulness score
   - CTA friction
 
-## Constrained Simulation Rules
-- No external network dependency for customer behavior decisions
-- Fixed cohort sizes per run (example: 50 founders, 30 VCs, 200 visitors)
-- Deterministic randomness via seedable random generator
-- Bounded state transitions (no unbounded loops)
-- Keep feature inputs limited to fields already produced by the system
-
 ## Customer State Machines
 
 ### Founder Journey
@@ -78,6 +175,13 @@ Transition drivers:
 - tool output usefulness
 - CTA clarity and friction
 
+## Transition Evaluation Order
+- Validate actor input and current state
+- Compute deterministic gates (hard thresholds)
+- Compute probabilistic transition using seeded RNG
+- Emit one event per accepted state transition
+- Stop at terminal state or `max_steps_per_customer`
+
 ## Example Parameter Set (MVP)
 - founder_base_interest = 0.15
 - vc_base_interest = 0.12
@@ -103,12 +207,13 @@ These are simulation defaults and should be tuned through experiments, not treat
   - personalization quality score
 
 ## Integration With Current Code
-- Existing agents:
+- Existing simulation actors:
   - `src/simulation/startup_agent.py`
   - `src/simulation/vc_agent.py`
-- Extend with:
-  - `src/simulation/customer_agent.py` (new, optional next step)
-  - `data/seed/customers.json` (new cohort definitions)
+- Next environment components:
+  - `src/simulation/customer_agent.py`
+  - `src/simulation/customer_environment.py`
+  - `data/seed/customers.json`
   - `src/simulation/scenarios.py` customer-focused scenarios
 - Experiment linkage:
   - Use `EXPERIMENT.md` Track D for customer simulation validation
@@ -120,6 +225,7 @@ These are simulation defaults and should be tuned through experiments, not treat
 4. Acquisition variant (stronger article/tool CTA design)
 
 ## Acceptance Criteria
+- Input and output interfaces are stable and validated at runtime
 - Simulation runs end-to-end with fixed inputs and reproducible outputs
 - At least one variant improves:
   - signup -> first match conversion
