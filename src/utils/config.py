@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # Database path for collected data
     startup_db_path: str = "data/collected/startups.db"
 
+    # Customer simulation seed data
+    customer_seed_path: str = "data/seed/customers.json"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
