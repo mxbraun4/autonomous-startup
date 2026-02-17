@@ -1,6 +1,6 @@
 # Layer C: Agent Runtime — Implementation Plan
 
-Last updated: 2026-02-15
+Last updated: 2026-02-16
 
 ## Purpose
 
@@ -21,7 +21,7 @@ The runtime **consumes** policies and budgets from Layer F and **produces** resu
 
 Before implementing Layer C, these contracts must be added to `src/framework/contracts.py` and the corresponding enums to `src/framework/types.py`. The runtime cannot function without them.
 
-### New enums needed in `types.py`
+### New enums needed in `types.py` — IMPLEMENTED
 
 ```python
 class TaskStatus(str, Enum):
@@ -41,13 +41,21 @@ class ToolCallStatus(str, Enum):
     DENIED = "denied"       # blocked by policy
     TIMEOUT = "timeout"
     BUDGET_EXCEEDED = "budget_exceeded"
+
+class ErrorCategory(str, Enum):
+    """Classification of task/runtime errors."""
+    TRANSIENT = "transient"
+    PERMANENT = "permanent"
+    BUDGET_EXCEEDED = "budget_exceeded"
+    POLICY_VIOLATION = "policy_violation"
+    UNRESOLVABLE_CAPABILITY = "unresolvable_capability"
 ```
 
 ### New contracts needed in `contracts.py`
 
 All inherit from `BaseMemoryEntity` so they carry `entity_id`, `run_id`, `cycle_id`, `timestamp_utc`, `version`, `status`, `metadata`.
 
-#### RunConfig
+#### RunConfig — IMPLEMENTED
 Configuration for a single autonomous run. Created once, immutable during the run.
 
 ```
@@ -61,6 +69,7 @@ Fields:
   domain_adapter: str              # e.g. "startup_vc"
   autonomy_level: int              # 0 = dry-run, 1 = sim-write, 2 = real
   policies: Dict[str, Any]         # tool allowlist/denylist, risk settings
+  max_delegation_depth: int = 3    # prevents unbounded agent recursion
 ```
 
 #### RunContext
@@ -95,7 +104,7 @@ Fields:
   priority: int                    # 0 = highest
 ```
 
-#### TaskResult
+#### TaskResult — IMPLEMENTED
 Typed output produced after a task completes or fails.
 
 ```
@@ -106,7 +115,7 @@ Fields:
   output: Dict[str, Any]           # structured result
   output_text: str                 # natural language summary
   error: Optional[str]             # error message if failed
-  error_code: Optional[str]        # typed error classification
+  error_category: Optional[ErrorCategory]  # typed error classification using ErrorCategory enum
   tool_calls: List[str]            # entity_ids of ToolCall records
   duration_seconds: float          # wall-clock time taken
   tokens_used: int                 # LLM tokens consumed
@@ -145,22 +154,18 @@ Fields:
   confidence: float                # 0.0 - 1.0
 ```
 
-#### CycleMetrics
-Aggregated metrics for one complete BML cycle. Produced at end of MEASURE phase.
+#### CycleMetrics — IMPLEMENTED (domain-agnostic)
+Aggregated metrics for one complete BML cycle. Produced at end of MEASURE phase. Domain-specific fields are stored in the `domain_metrics` bag, not as top-level fields — this ensures the framework works for any domain adapter.
 
 ```
 Fields:
   cycle_id: int
-  phase_results: Dict[str, Any]    # per-phase summaries (build, measure, learn)
-  response_rate: float
-  meeting_rate: float
-  data_collected_count: int
-  outreach_sent_count: int
-  tools_built_count: int
-  episodes_recorded: int
-  procedures_updated: int
-  duration_seconds: float
+  task_count: int                  # total tasks in cycle
+  success_count: int               # tasks completed successfully
+  failure_count: int               # tasks that failed
   tokens_used: int
+  duration_seconds: float
+  domain_metrics: Dict[str, Any]   # e.g. {"response_rate": 0.4, "meeting_rate": 0.1}
 ```
 
 #### Checkpoint
@@ -270,10 +275,13 @@ All existing tools from `tools.py` get registered under these capabilities:
 
 ---
 
-## File 2: `execution_context.py`
+## File 2: `execution_context.py` — IMPLEMENTED
 
 ### Purpose
 Construct and manage the `RunContext` that gets threaded through agent execution. Provides helpers for budget tracking, step counting, and RNG access.
+
+### Thread-safety note
+`ExecutionContext` is NOT thread-safe. If Layer D introduces concurrent agent execution, callers must serialize access to `begin_step` / `end_step` or introduce a lock.
 
 ### Interface
 
@@ -564,12 +572,22 @@ Step 6: Register all existing tools from tools.py into the registry
 These should be decided before or during implementation:
 
 1. **Should agents be able to delegate tasks to other agents through the runtime?**
-   If yes, `execute_task` needs to handle recursive `TaskSpec` creation when an agent delegates. The plan assumes yes (the `delegated_by` field exists on `TaskSpec`), but the depth limit should be set.
+   **Resolved**: Yes. `delegated_by` field exists on `TaskSpec`, and `max_delegation_depth` on `RunConfig` (default 3) prevents unbounded recursion. `AgentRuntime.execute_task()` checks depth before execution.
 
 2. **How should CrewAI be integrated long-term?**
    Option A: CrewAI remains the agent execution engine, wrapped by the runtime.
    Option B: Replace CrewAI with direct LLM calls managed by the runtime.
-   This plan assumes Option A for now.
+   This plan assumes Option A for now. The runtime accepts any callable as an agent instance.
 
 3. **Should tool calls require explicit policy approval from the start, or should that wait for Layer F?**
-   This plan assumes Layer F is optional — the runtime works without it but has a hook ready.
+   **Resolved**: Layer F is optional — the runtime works without it but has a `policy_engine` hook ready. When present, `execute_tool_call()` checks the engine before execution.
+
+---
+
+## Design Corrections Applied (2026-02-16)
+
+1. **ErrorCategory enum** added to `types.py` — enables Layer E to make structured retry/stop decisions without string parsing
+2. **CycleMetrics made domain-agnostic** — replaced hardcoded startup-specific fields (response_rate, meeting_rate, etc.) with generic `task_count`/`success_count`/`failure_count` + `domain_metrics: Dict[str, Any]` bag
+3. **max_delegation_depth** added to `RunConfig` (default 3) — prevents unbounded agent recursion in autonomous operation
+4. **Thread-safety note** added to `ExecutionContext` docstring — flags that Layer D must serialize access if concurrent execution is introduced
+5. **EvaluationResult and GateDecision** included in Layer A contracts (not deferred to Layer G) — they are pure data contracts needed across layers

@@ -10,8 +10,11 @@ from src.framework.types import (
     ConsensusStatus,
     EntryType,
     EpisodeType,
+    ErrorCategory,
     ItemType,
     MemoryType,
+    TaskStatus,
+    ToolCallStatus,
 )
 
 
@@ -137,3 +140,144 @@ class ConsensusEntry(BaseMemoryEntity):
     source_evidence: List[str] = Field(default_factory=list)
     supersedes: Optional[str] = None  # entity_id of the entry this replaces
     consensus_status: ConsensusStatus = ConsensusStatus.APPROVED
+
+
+# ---------------------------------------------------------------------------
+# Runtime / Orchestration Contracts (Layer A completion)
+# ---------------------------------------------------------------------------
+
+
+class RunConfig(BaseMemoryEntity):
+    """Immutable configuration for a single autonomous run."""
+
+    seed: int = 42
+    max_cycles: int = 10
+    max_steps_per_cycle: int = 100
+    budget_seconds: Optional[float] = None
+    budget_tokens: Optional[int] = None
+    domain_adapter: str = "default"
+    autonomy_level: int = 0
+    policies: Dict[str, Any] = Field(default_factory=dict)
+    max_delegation_depth: int = 3
+
+
+class RunContext(BaseModel):
+    """Live mutable state threaded through execution. NOT a BaseMemoryEntity."""
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    run_id: str
+    cycle_id: int = 0
+    step_count: int = 0
+    budget_remaining_seconds: Optional[float] = None
+    budget_remaining_tokens: Optional[int] = None
+    rng: Any = None  # seeded random.Random instance
+    active_agent_id: Optional[str] = None
+    store: Any = None  # reference to SyncUnifiedStore
+
+
+class TaskSpec(BaseMemoryEntity):
+    """Typed description of work to be done by an agent."""
+
+    task_id: str = Field(default_factory=_new_id)
+    objective: str = ""
+    agent_role: str = ""
+    required_capabilities: List[str] = Field(default_factory=list)
+    constraints: Dict[str, Any] = Field(default_factory=dict)
+    input_data: Dict[str, Any] = Field(default_factory=dict)
+    expected_output_schema: Optional[Dict[str, Any]] = None
+    delegated_by: Optional[str] = None
+    depends_on: List[str] = Field(default_factory=list)
+    priority: int = 0
+
+
+class TaskResult(BaseMemoryEntity):
+    """Typed output produced after a task completes or fails."""
+
+    task_id: str = ""
+    agent_id: str = ""
+    task_status: TaskStatus = TaskStatus.COMPLETED
+    output: Dict[str, Any] = Field(default_factory=dict)
+    output_text: str = ""
+    error: Optional[str] = None
+    error_category: Optional[ErrorCategory] = None
+    tool_calls: List[str] = Field(default_factory=list)
+    duration_seconds: float = 0.0
+    tokens_used: int = 0
+    retries: int = 0
+
+
+class ToolCall(BaseMemoryEntity):
+    """Record of a single tool invocation."""
+
+    tool_name: str = ""
+    capability: str = ""
+    caller_agent_id: str = ""
+    caller_task_id: str = ""
+    arguments: Dict[str, Any] = Field(default_factory=dict)
+    call_status: ToolCallStatus = ToolCallStatus.SUCCESS
+    result: Any = None
+    error_message: Optional[str] = None
+    duration_ms: float = 0.0
+    policy_check_passed: bool = True
+    denied_reason: Optional[str] = None
+
+
+class AgentDecision(BaseMemoryEntity):
+    """Structured record of an agent's reasoning and choices."""
+
+    agent_id: str = ""
+    task_id: str = ""
+    decision_type: str = ""
+    reasoning: str = ""
+    chosen_action: str = ""
+    alternatives_considered: List[str] = Field(default_factory=list)
+    confidence: float = 0.0
+
+
+class CycleMetrics(BaseMemoryEntity):
+    """Domain-agnostic aggregated metrics for one complete BML cycle."""
+
+    cycle_id: int = 0
+    task_count: int = 0
+    success_count: int = 0
+    failure_count: int = 0
+    tokens_used: int = 0
+    duration_seconds: float = 0.0
+    domain_metrics: Dict[str, Any] = Field(default_factory=dict)
+
+
+class GateDecision(BaseMemoryEntity):
+    """Single gate verdict in an evaluation."""
+
+    gate_name: str = ""
+    gate_status: str = "pass"  # pass / warn / fail
+    evidence: Dict[str, Any] = Field(default_factory=dict)
+    recommended_action: str = "continue"
+
+
+class EvaluationResult(BaseMemoryEntity):
+    """Scorecard output with gate decisions."""
+
+    gates: List[GateDecision] = Field(default_factory=list)
+    overall_status: str = "pass"
+    summary: str = ""
+    recommended_action: str = "continue"
+
+
+class Checkpoint(BaseMemoryEntity):
+    """Serializable snapshot of full run state for pause/resume."""
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    run_id: str = ""
+    cycle_id: int = 0
+    step_count: int = 0
+    seed: int = 42
+    rng_state: Any = None  # result of random.getstate()
+    working_memory_path: str = ""
+    store_data_dir: str = ""
+    pending_tasks: List[str] = Field(default_factory=list)
+    completed_tasks: List[str] = Field(default_factory=list)
+    budget_remaining_seconds: Optional[float] = None
+    budget_remaining_tokens: Optional[int] = None
