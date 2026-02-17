@@ -70,6 +70,13 @@ python scripts/run_simulation.py --iterations 5 --verbose 2
 python scripts/test_crewai_quick.py
 ```
 
+### Framework Regression Checks (Recommended)
+
+```bash
+# Runtime + orchestration + safety regression checks
+pytest tests/test_agent_runtime.py tests/test_orchestration/test_orchestration.py tests/test_safety/ -v
+```
+
 ## What You'll See
 
 ### Iteration 1 (Baseline)
@@ -147,6 +154,13 @@ Performance Evolution:
 ```bash
 pytest tests/ -v
 ```
+
+### Tune Framework Guardrails (optional)
+
+Framework safety/failover/delegation controls are set via `RunConfig.policies` in code (not `.env`), for example:
+- `tool_loop_window`, `tool_loop_max_repeats`
+- `loop_window_size`, `max_identical_tool_calls`
+- `max_children_per_parent`, `max_total_delegated_tasks`, `dedupe_delegated_objectives`
 
 ### Customize Configuration
 

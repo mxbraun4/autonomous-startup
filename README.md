@@ -10,6 +10,7 @@ This system demonstrates:
 - **Memory systems** for context and learning
 - **Simulated ecosystem** with startup and VC agents
 - **Autonomous improvement** across iterations
+- **Framework guardrails** for tool failover, loop detection, and bounded delegation
 
 ## CrewAI Benefits
 
@@ -73,6 +74,13 @@ python scripts/test_crewai_quick.py
 
 ## Architecture
 
+### Current Execution Paths
+
+- **CrewAI simulation path (active):** `src/crewai_agents/` + scripts in `scripts/`
+- **Framework kernel path (implemented modules):** `src/framework/` runtime, orchestration, safety, storage
+
+The CrewAI simulation remains the default runnable path. Framework modules are available and tested, and are being progressively integrated.
+
 ### Agent Hierarchy
 
 ```
@@ -109,6 +117,13 @@ Strategic Coordinator (manager)
 - **Startup Agents**: Respond to outreach based on personalization and VC match quality
 - **VC Agents**: Evaluate startups based on sector, stage, and geography alignment
 
+### Framework Runtime Guardrails
+
+- **Capability failover with cooldowns**: tool calls can fall back to lower-priority tools when primary tools fail
+- **Tool-call loop detection**: repeated identical tool signatures are denied by policy/runtime safeguards
+- **Bounded delegation**: orchestration enforces delegation depth and child-task limits
+- **Deterministic scheduling/retries**: seeded tie-breaks and transient-only retry policies
+
 ## Project Structure
 
 ```
@@ -119,6 +134,11 @@ autonomous-startup/
 |   |   |-- agents.py     # Agent definitions
 |   |   |-- crews.py      # Crew orchestration
 |   |   |-- __init__.py
+|   |-- framework/        # Layered framework kernel (runtime/orchestration/safety/storage)
+|   |   |-- runtime/
+|   |   |-- orchestration/
+|   |   |-- safety/
+|   |   |-- storage/
 |   |-- memory/           # Memory systems
 |   |   |-- semantic.py
 |   |   |-- episodic.py
@@ -160,6 +180,9 @@ pytest tests/ -v
 # Run CrewAI integration tests
 pytest tests/test_crewai_integration.py -v
 
+# Run framework runtime/orchestration/safety tests
+pytest tests/test_agent_runtime.py tests/test_orchestration/test_orchestration.py tests/test_safety/ -v
+
 # Run with coverage
 pytest tests/ --cov=src --cov-report=html
 ```
@@ -183,6 +206,15 @@ LOG_LEVEL=INFO
 EPISODIC_DB_PATH=data/memory/episodic.db
 PROCEDURAL_JSON_PATH=data/memory/workflows.json
 ```
+
+Framework runtime and orchestration controls are configured through `RunConfig.policies` (not environment variables), including:
+- `tool_loop_window`
+- `tool_loop_max_repeats`
+- `max_children_per_parent`
+- `max_total_delegated_tasks`
+- `dedupe_delegated_objectives`
+- `loop_window_size`
+- `max_identical_tool_calls`
 
 ## Performance Metrics
 

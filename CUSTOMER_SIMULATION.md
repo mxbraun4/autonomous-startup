@@ -49,6 +49,7 @@ A top-of-funnel user arriving via article or tool pages.
 - Deterministic randomness via seedable random generator
 - Bounded state transitions (no unbounded loops)
 - Keep feature inputs limited to fields already produced by the system
+- Enforce runtime guardrails (tool-call loop detection, bounded delegation, policy-denied actions)
 
 ## Customer State Machines
 
@@ -106,6 +107,10 @@ These are simulation defaults and should be tuned through experiments, not treat
 - Existing agents:
   - `src/simulation/startup_agent.py`
   - `src/simulation/vc_agent.py`
+- Framework safety/runtime modules:
+  - `src/framework/runtime/agent_runtime.py`
+  - `src/framework/orchestration/delegation.py`
+  - `src/framework/safety/action_guard.py`
 - Extend with:
   - `src/simulation/customer_agent.py` (new, optional next step)
   - `data/seed/customers.json` (new cohort definitions)
@@ -121,6 +126,8 @@ These are simulation defaults and should be tuned through experiments, not treat
 
 ## Acceptance Criteria
 - Simulation runs end-to-end with fixed inputs and reproducible outputs
+- Loop-prone repeated action patterns are blocked consistently by guardrails
+- Delegated/derived task expansion remains within configured bounds
 - At least one variant improves:
   - signup -> first match conversion
   - or mutual interest -> meeting conversion

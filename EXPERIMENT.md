@@ -21,6 +21,7 @@ A coordinated agent system with memory can improve matching and outreach outcome
 - Simulation actors: `src/simulation/startup_agent.py`, `src/simulation/vc_agent.py`, `src/simulation/scenarios.py`
 - Runtime scripts: `scripts/seed_memory.py`, `scripts/run_simulation.py`
 - Customer simulation model: `CUSTOMER_SIMULATION.md`
+- Framework runtime kernel: `src/framework/runtime/`, `src/framework/orchestration/`, `src/framework/safety/`
 
 ## Baseline Setup
 1. Install deps
@@ -32,6 +33,7 @@ A coordinated agent system with memory can improve matching and outreach outcome
    - `python scripts/seed_memory.py`
 4. Smoke test
    - `python scripts/test_crewai_quick.py`
+   - `pytest tests/test_agent_runtime.py tests/test_orchestration/test_orchestration.py tests/test_safety/ -v`
 5. Confirm customer simulation parameters
    - Review and lock cohort sizes/thresholds in `CUSTOMER_SIMULATION.md`
 
@@ -49,6 +51,8 @@ A coordinated agent system with memory can improve matching and outreach outcome
 - Reliability
   - All runs complete without exceptions
   - `scripts/test_crewai_quick.py` passes
+  - Framework guardrail suites pass (runtime/orchestration/safety)
+  - No unbounded delegation growth for fixed limits/policies
 - Outcome trend
   - Response rate in final iteration >= first iteration
   - Meeting rate in final iteration >= first iteration
@@ -111,6 +115,20 @@ Goal: validate customer-side dynamics without leaving the simulation environment
 - Pass condition:
   - Reproducible outputs with fixed seed and configuration
   - At least one tested variant improves a downstream conversion metric
+
+### Track E: Runtime Safety and Resilience (Framework)
+Goal: validate fail-safe autonomous behavior under error and repetition patterns.
+
+- Variable: policy guardrail settings and capability failover configuration
+- Metrics:
+  - primary-tool failure recovery rate (fallback success)
+  - loop-detection deny events
+  - policy-denial rate
+  - delegated child-task count vs configured caps
+- Pass condition:
+  - fallback succeeds for transient tool outages
+  - loop patterns are blocked deterministically
+  - delegated task counts stay within configured bounds
 
 ## Run Log Template
 Use this for each experiment run.

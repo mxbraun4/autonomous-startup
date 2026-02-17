@@ -1,6 +1,6 @@
 ﻿# Framework Plan: Autonomous Multi-Agent Simulation System (Detailed)
 
-Last updated: 2026-02-12
+Last updated: 2026-02-17
 
 ## 1) Purpose and Framing
 This document is the implementation blueprint for building an autonomous multi-agent simulation framework that can run repeatedly with minimal human intervention, while remaining constrained, reproducible, and inspectable.
@@ -136,6 +136,8 @@ Runtime lifecycle:
 2. Resolve task intent and capability requirements.
 3. Select tools/delegates through registry.
 4. Execute tool calls under policy and budget limits.
+   - block repeated identical tool-call loops via deterministic signatures
+   - fail over to lower-priority tools when preferred tools error
 5. Produce typed `TaskResult` and emit events.
 6. Persist outcomes and hand off to evaluator.
 
@@ -143,6 +145,7 @@ Capability registry requirements:
 - Register tool by capability label.
 - Support multiple tools per capability with priority.
 - Provide fallback ordering if primary tool fails.
+- Support cooldown windows for failed tools.
 - Emit resolution trace for observability.
 
 ## Layer D: Orchestration Kernel
@@ -207,6 +210,7 @@ Policy engine responsibilities:
 - Allowlist/denylist tools and capabilities.
 - Validate action class per environment mode.
 - Enforce domain-specific risk policies via adapter hooks.
+- Detect and deny repeated identical tool-call loops.
 
 Budget manager responsibilities:
 - Track runtime wall-clock budget.
@@ -354,6 +358,8 @@ Delegation semantics:
 - Delegator agent emits `TaskSpec` with objective + constraints.
 - Delegate result is validated against `expected_output_schema`.
 - Invalid outputs trigger repair path or failure.
+- Delegation fan-out is bounded per parent (`max_children_per_parent`) with optional global cap.
+- Duplicate delegated objectives under one parent can be suppressed.
 
 ## 9) Safety and Kill-Switch Strategy
 Autonomous systems must have unambiguous safety controls.

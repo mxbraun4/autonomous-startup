@@ -1,6 +1,6 @@
 # Layer C: Agent Runtime — Implementation Plan
 
-Last updated: 2026-02-16
+Last updated: 2026-02-17
 
 ## Purpose
 
@@ -14,6 +14,13 @@ Give every agent a **common execution lifecycle** that is independent of domain 
 - It does not evaluate outcomes — that is Layer G (Evaluation & Learning).
 
 The runtime **consumes** policies and budgets from Layer F and **produces** results and events consumed by Layers D, G, and H. It reads and writes through the UnifiedStore (Layer B).
+
+## 2026-02-17 Runtime Upgrades
+
+- Added capability-level failover behavior with tool cooldown support in `capability_registry.py`.
+- Added fallback execution chain in `AgentRuntime.execute_tool_call()` with structured attempt traces.
+- Added repeated-identical tool-call loop detection in runtime policy flow.
+- Added orchestration delegation guardrails: child-task caps, optional global cap, and duplicate-objective suppression.
 
 ---
 

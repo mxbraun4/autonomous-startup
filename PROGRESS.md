@@ -1,10 +1,17 @@
 # Framework Progress Tracker
 
-Last updated: 2026-02-16
+Last updated: 2026-02-17
 
 ## Goal
 
 Build a fully autonomous multi-agent system that runs Build-Measure-Learn cycles without human intervention. Agents independently orchestrate, delegate, execute, evaluate, and adapt their strategies across iterations — all within enforced safety bounds. A single command launches multi-cycle runs that can be paused, resumed, replayed, and audited. The framework is domain-agnostic; the startup-VC matching use case is a domain adapter plugged into it.
+
+## Recent Updates (2026-02-17)
+
+- Runtime: added tool failover chains with cooldown-aware capability resolution.
+- Runtime/Safety: added repeated-identical tool-call loop detection.
+- Orchestration: added bounded delegation controls (per-parent fan-out caps, optional global caps, duplicate-objective suppression).
+- Tests: added coverage for failover, loop guards, and delegation bounds.
 
 ## Layer Status Overview
 
