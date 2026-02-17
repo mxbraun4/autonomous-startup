@@ -200,6 +200,69 @@ class TestAgentRuntimeToolCall:
         assert tc.call_status == ToolCallStatus.ERROR
         assert "tool broke" in tc.error_message
 
+    def test_tool_call_fallback_after_primary_error(self):
+        def broken_tool(**kwargs):
+            raise RuntimeError("primary broke")
+
+        def backup_tool(**kwargs):
+            return {"ok": True}
+
+        registry = CapabilityRegistry()
+        registry.register(
+            "cap",
+            "primary",
+            broken_tool,
+            priority=0,
+            cooldown_seconds=60.0,
+        )
+        registry.register("cap", "backup", backup_tool, priority=1)
+
+        router = TaskRouter(registry)
+        router.register_agent(
+            "a1", "Worker", ["cap"],
+            agent_instance=lambda task_spec, tools, context: {"output_text": "ok"},
+        )
+        ctx = ExecutionContext(RunConfig(run_id="r1", seed=1))
+        rt = AgentRuntime(registry=registry, router=router, context=ctx)
+
+        tc = rt.execute_tool_call(
+            tool_name="primary",
+            capability="cap",
+            arguments={},
+            agent_id="a1",
+            task_id="t1",
+        )
+        assert tc.call_status == ToolCallStatus.SUCCESS
+        assert tc.tool_name == "backup"
+        assert tc.metadata["fallback_used"] is True
+        assert len(tc.metadata["attempts"]) == 2
+        assert registry.is_tool_available("cap", "primary") is False
+
+    def test_tool_call_loop_detected(self):
+        def noop_tool(**kwargs):
+            return {"ok": True}
+
+        rc = RunConfig(
+            run_id="r1",
+            seed=42,
+            policies={"tool_loop_window": 5, "tool_loop_max_repeats": 2},
+        )
+        registry = CapabilityRegistry()
+        registry.register("cap", "t", noop_tool)
+        router = TaskRouter(registry)
+        router.register_agent(
+            "a1", "Worker", ["cap"],
+            agent_instance=lambda task_spec, tools, context: {"output_text": "ok"},
+        )
+        ctx = ExecutionContext(rc)
+        rt = AgentRuntime(registry=registry, router=router, context=ctx)
+
+        assert rt.execute_tool_call("t", "cap", {"x": 1}, "a1", "t1").call_status == ToolCallStatus.SUCCESS
+        assert rt.execute_tool_call("t", "cap", {"x": 1}, "a1", "t1").call_status == ToolCallStatus.SUCCESS
+        blocked = rt.execute_tool_call("t", "cap", {"x": 1}, "a1", "t1")
+        assert blocked.call_status == ToolCallStatus.DENIED
+        assert "loop" in (blocked.denied_reason or "").lower()
+
     def test_tool_call_no_tool_found(self):
         rt = _make_runtime()
         tc = rt.execute_tool_call(
@@ -210,7 +273,7 @@ class TestAgentRuntimeToolCall:
             task_id="t1",
         )
         assert tc.call_status == ToolCallStatus.ERROR
-        assert "No tool found" in tc.error_message
+        assert "No available tool found" in tc.error_message
 
     def test_tool_call_budget_exceeded(self):
         def dummy_tool(**kw):

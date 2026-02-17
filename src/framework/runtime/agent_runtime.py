@@ -6,7 +6,8 @@ and policy constraints, persists outcomes, and returns a typed
 """
 
 import time
-from typing import Any, Callable, Dict, Optional
+import json
+from typing import Any, Dict, Optional
 
 from src.framework.contracts import (
     Episode,
@@ -66,6 +67,13 @@ class AgentRuntime:
         self._context = context
         self._policy_engine = policy_engine
         self._event_emitter = event_emitter
+        self._tool_call_signatures: list[str] = []
+
+        policies: Dict[str, Any] = {}
+        if self._context is not None:
+            policies = getattr(self._context.run_config, "policies", {}) or {}
+        self._tool_loop_window = int(policies.get("tool_loop_window", 8))
+        self._tool_loop_max_repeats = int(policies.get("tool_loop_max_repeats", 3))
 
     # ------------------------------------------------------------------
     # Task execution
@@ -209,31 +217,27 @@ class AgentRuntime:
         """
         start = time.monotonic()
 
-        # 1. Policy check
-        if self._policy_engine is not None:
-            allowed = self._policy_engine.check(tool_name, capability, arguments)
-            if not allowed:
-                # Structured reason when check_detailed is available
-                reason = "Denied by policy engine"
-                if hasattr(self._policy_engine, "check_detailed"):
-                    detail = self._policy_engine.check_detailed(
-                        tool_name, capability, arguments
-                    )
-                    if getattr(detail, "denied_reason", None):
-                        reason = detail.denied_reason
-                tc = ToolCall(
-                    tool_name=tool_name,
-                    capability=capability,
-                    caller_agent_id=agent_id,
-                    caller_task_id=task_id,
-                    arguments=arguments,
-                    call_status=ToolCallStatus.DENIED,
-                    policy_check_passed=False,
-                    denied_reason=reason,
-                    duration_ms=(time.monotonic() - start) * 1000,
-                )
-                self._emit("tool_denied", tc)
-                return tc
+        # 1. Loop detection circuit breaker
+        if self._is_tool_call_loop(tool_name, capability, arguments):
+            tc = ToolCall(
+                tool_name=tool_name,
+                capability=capability,
+                caller_agent_id=agent_id,
+                caller_task_id=task_id,
+                arguments=arguments,
+                call_status=ToolCallStatus.DENIED,
+                policy_check_passed=False,
+                denied_reason=(
+                    "Tool-call loop detected: repeated identical call signature"
+                ),
+                duration_ms=(time.monotonic() - start) * 1000,
+                metadata={
+                    "tool_loop_window": self._tool_loop_window,
+                    "tool_loop_max_repeats": self._tool_loop_max_repeats,
+                },
+            )
+            self._emit("tool_denied", tc)
+            return tc
 
         # 2. Budget check
         if self._context is not None and not self._context.check_budget():
@@ -249,9 +253,14 @@ class AgentRuntime:
             )
             return tc
 
-        # 3. Resolve tool
-        tool = self._registry.resolve_best(capability)
-        if tool is None:
+        # 3. Resolve candidate tools (cooldown-aware), with preferred tool first
+        candidates = self._registry.resolve(capability)
+        if tool_name:
+            preferred = [t for t in candidates if t.tool_name == tool_name]
+            non_preferred = [t for t in candidates if t.tool_name != tool_name]
+            candidates = preferred + non_preferred
+
+        if not candidates:
             tc = ToolCall(
                 tool_name=tool_name,
                 capability=capability,
@@ -259,45 +268,114 @@ class AgentRuntime:
                 caller_task_id=task_id,
                 arguments=arguments,
                 call_status=ToolCallStatus.ERROR,
-                error_message=f"No tool found for capability: {capability}",
+                error_message=f"No available tool found for capability: {capability}",
                 policy_check_passed=True,
                 duration_ms=(time.monotonic() - start) * 1000,
-            )
-            return tc
-
-        # 4. Execute
-        try:
-            result = tool.tool_callable(**arguments)
-            duration_ms = (time.monotonic() - start) * 1000
-            tc = ToolCall(
-                tool_name=tool_name,
-                capability=capability,
-                caller_agent_id=agent_id,
-                caller_task_id=task_id,
-                arguments=arguments,
-                call_status=ToolCallStatus.SUCCESS,
-                result=result,
-                policy_check_passed=True,
-                duration_ms=duration_ms,
-            )
-            self._emit("tool_called", tc)
-            return tc
-
-        except Exception as exc:
-            duration_ms = (time.monotonic() - start) * 1000
-            tc = ToolCall(
-                tool_name=tool_name,
-                capability=capability,
-                caller_agent_id=agent_id,
-                caller_task_id=task_id,
-                arguments=arguments,
-                call_status=ToolCallStatus.ERROR,
-                error_message=str(exc),
-                policy_check_passed=True,
-                duration_ms=duration_ms,
+                metadata={"resolution_trace": self._registry.resolution_trace(capability)},
             )
             self._emit("tool_error", tc)
             return tc
+
+        # 4. Execute with fallback chain
+        attempts: list[Dict[str, Any]] = []
+        policy_denials: list[str] = []
+        execution_errors: list[str] = []
+
+        for candidate in candidates:
+            # Per-tool policy check before execution
+            denied_reason = self._policy_denied_reason(
+                candidate.tool_name, capability, arguments
+            )
+            if denied_reason is not None:
+                attempts.append(
+                    {
+                        "tool_name": candidate.tool_name,
+                        "status": ToolCallStatus.DENIED.value,
+                        "reason": denied_reason,
+                    }
+                )
+                policy_denials.append(
+                    f"{candidate.tool_name}: {denied_reason}"
+                )
+                continue
+
+            try:
+                result = candidate.tool_callable(**arguments)
+                self._registry.mark_tool_success(capability, candidate.tool_name)
+
+                duration_ms = (time.monotonic() - start) * 1000
+                attempts.append(
+                    {
+                        "tool_name": candidate.tool_name,
+                        "status": ToolCallStatus.SUCCESS.value,
+                    }
+                )
+                tc = ToolCall(
+                    tool_name=candidate.tool_name,
+                    capability=capability,
+                    caller_agent_id=agent_id,
+                    caller_task_id=task_id,
+                    arguments=arguments,
+                    call_status=ToolCallStatus.SUCCESS,
+                    result=result,
+                    policy_check_passed=True,
+                    duration_ms=duration_ms,
+                    metadata={
+                        "attempts": attempts,
+                        "fallback_used": len(attempts) > 1,
+                    },
+                )
+                self._emit("tool_called", tc)
+                return tc
+            except Exception as exc:
+                self._registry.mark_tool_failure(capability, candidate.tool_name)
+                attempts.append(
+                    {
+                        "tool_name": candidate.tool_name,
+                        "status": ToolCallStatus.ERROR.value,
+                        "error": str(exc),
+                    }
+                )
+                execution_errors.append(f"{candidate.tool_name}: {exc}")
+                continue
+
+        # 5. Final failure after fallback attempts
+        duration_ms = (time.monotonic() - start) * 1000
+        if policy_denials and not execution_errors:
+            denied = "; ".join(policy_denials)
+            tc = ToolCall(
+                tool_name=tool_name,
+                capability=capability,
+                caller_agent_id=agent_id,
+                caller_task_id=task_id,
+                arguments=arguments,
+                call_status=ToolCallStatus.DENIED,
+                policy_check_passed=False,
+                denied_reason=denied,
+                duration_ms=duration_ms,
+                metadata={"attempts": attempts},
+            )
+            self._emit("tool_denied", tc)
+            return tc
+
+        error_message = "; ".join(execution_errors) or "All candidate tools failed"
+        if policy_denials:
+            error_message += f"; policy denials: {'; '.join(policy_denials)}"
+
+        tc = ToolCall(
+            tool_name=tool_name,
+            capability=capability,
+            caller_agent_id=agent_id,
+            caller_task_id=task_id,
+            arguments=arguments,
+            call_status=ToolCallStatus.ERROR,
+            error_message=error_message,
+            policy_check_passed=not policy_denials,
+            duration_ms=duration_ms,
+            metadata={"attempts": attempts},
+        )
+        self._emit("tool_error", tc)
+        return tc
 
     # ------------------------------------------------------------------
     # Internals
@@ -317,6 +395,60 @@ class AgentRuntime:
         if task_spec.delegated_by is not None:
             return depth + 1
         return depth
+
+    def _policy_denied_reason(
+        self,
+        tool_name: str,
+        capability: str,
+        arguments: Dict[str, Any],
+    ) -> Optional[str]:
+        """Return policy denial reason, or ``None`` when call is allowed."""
+        if self._policy_engine is None:
+            return None
+
+        allowed = self._policy_engine.check(tool_name, capability, arguments)
+        if allowed:
+            return None
+
+        reason = "Denied by policy engine"
+        if hasattr(self._policy_engine, "check_detailed"):
+            detail = self._policy_engine.check_detailed(tool_name, capability, arguments)
+            if getattr(detail, "denied_reason", None):
+                reason = detail.denied_reason
+        return reason
+
+    def _is_tool_call_loop(
+        self,
+        tool_name: str,
+        capability: str,
+        arguments: Dict[str, Any],
+    ) -> bool:
+        """Detect repeated identical tool-call signatures in a sliding window."""
+        if self._tool_loop_window <= 0 or self._tool_loop_max_repeats <= 0:
+            return False
+
+        signature = self._tool_call_signature(tool_name, capability, arguments)
+        recent = self._tool_call_signatures[-self._tool_loop_window:]
+        repeat_count = sum(1 for item in recent if item == signature)
+
+        self._tool_call_signatures.append(signature)
+        keep = max(50, self._tool_loop_window * 3)
+        if len(self._tool_call_signatures) > keep:
+            self._tool_call_signatures = self._tool_call_signatures[-keep:]
+
+        return repeat_count >= self._tool_loop_max_repeats
+
+    @staticmethod
+    def _tool_call_signature(
+        tool_name: str,
+        capability: str,
+        arguments: Dict[str, Any],
+    ) -> str:
+        try:
+            arg_sig = json.dumps(arguments, sort_keys=True, default=str)
+        except Exception:
+            arg_sig = str(arguments)
+        return f"{tool_name}|{capability}|{arg_sig}"
 
     def _persist_episode(
         self, task_spec: TaskSpec, task_result: TaskResult, agent_id: str

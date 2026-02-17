@@ -1,6 +1,6 @@
 """Tests for CapabilityRegistry: register, resolve, priority, list ops."""
 
-from src.framework.runtime.capability_registry import CapabilityRegistry, RegisteredTool
+from src.framework.runtime.capability_registry import CapabilityRegistry
 
 
 def _dummy_tool_a(**kwargs):
@@ -90,3 +90,64 @@ class TestCapabilityRegistry:
         reg = CapabilityRegistry()
         assert reg.list_capabilities() == []
         assert reg.list_tools() == []
+
+    def test_cooldown_hides_failed_tool(self):
+        reg = CapabilityRegistry()
+        reg.register(
+            "web_search",
+            "primary",
+            _dummy_tool_a,
+            priority=0,
+            cooldown_seconds=10.0,
+        )
+        reg.register("web_search", "backup", _dummy_tool_b, priority=1)
+
+        assert [t.tool_name for t in reg.resolve("web_search")] == ["primary", "backup"]
+        reg.mark_tool_failure("web_search", "primary")
+        assert [t.tool_name for t in reg.resolve("web_search")] == ["backup"]
+
+    def test_resolve_include_unavailable(self):
+        reg = CapabilityRegistry()
+        reg.register(
+            "web_search",
+            "primary",
+            _dummy_tool_a,
+            priority=0,
+            cooldown_seconds=10.0,
+        )
+        reg.mark_tool_failure("web_search", "primary")
+
+        available = reg.resolve("web_search")
+        all_tools = reg.resolve("web_search", include_unavailable=True)
+        assert available == []
+        assert [t.tool_name for t in all_tools] == ["primary"]
+
+    def test_mark_success_clears_cooldown(self):
+        reg = CapabilityRegistry()
+        reg.register(
+            "web_search",
+            "primary",
+            _dummy_tool_a,
+            priority=0,
+            cooldown_seconds=10.0,
+        )
+        reg.mark_tool_failure("web_search", "primary")
+        assert reg.is_tool_available("web_search", "primary") is False
+
+        reg.mark_tool_success("web_search", "primary")
+        assert reg.is_tool_available("web_search", "primary") is True
+
+    def test_resolution_trace_contains_availability(self):
+        reg = CapabilityRegistry()
+        reg.register(
+            "web_search",
+            "primary",
+            _dummy_tool_a,
+            cooldown_seconds=10.0,
+        )
+        reg.mark_tool_failure("web_search", "primary")
+        trace = reg.resolution_trace("web_search")
+        assert len(trace) == 1
+        assert trace[0]["tool_name"] == "primary"
+        assert trace[0]["available"] is False
+        assert trace[0]["cooldown_remaining_seconds"] >= 0.0

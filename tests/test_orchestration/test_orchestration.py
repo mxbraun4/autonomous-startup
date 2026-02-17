@@ -517,6 +517,31 @@ class TestDelegationHandler:
                 {"task_id": "d", "objective": "too deep"},
             ])
 
+    def test_inject_rejects_too_many_children(self):
+        g = TaskGraph()
+        g.add_tasks([_make_spec("parent")])
+        dh = DelegationHandler(max_delegation_depth=3, max_children_per_parent=1)
+
+        dh.inject_delegated_tasks(g, "parent", [
+            {"task_id": "child1", "objective": "sub-task 1"},
+        ])
+        with pytest.raises(ValueError, match="child limit exceeded"):
+            dh.inject_delegated_tasks(g, "parent", [
+                {"task_id": "child2", "objective": "sub-task 2"},
+            ])
+
+    def test_inject_dedupes_duplicate_objectives_within_parent(self):
+        g = TaskGraph()
+        g.add_tasks([_make_spec("parent")])
+        dh = DelegationHandler(max_delegation_depth=3, dedupe_within_parent=True)
+
+        new_ids = dh.inject_delegated_tasks(g, "parent", [
+            {"task_id": "child1", "objective": "same objective"},
+            {"task_id": "child2", "objective": "same objective"},
+            {"task_id": "child3", "objective": "different objective"},
+        ])
+        assert set(new_ids) == {"child1", "child3"}
+
     def test_validate_output_no_schema(self):
         result = _make_result("t1", output={"key": "value"})
         assert DelegationHandler.validate_output(result, None) is True
