@@ -49,3 +49,35 @@ class ConsensusStatus(str, Enum):
     PROPOSED = "proposed"
     APPROVED = "approved"
     SUPERSEDED = "superseded"
+
+
+class TaskStatus(str, Enum):
+    """Task lifecycle states."""
+
+    PENDING = "pending"
+    READY = "ready"
+    RUNNING = "running"
+    BLOCKED = "blocked"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class ToolCallStatus(str, Enum):
+    """Outcome of a tool invocation."""
+
+    SUCCESS = "success"
+    ERROR = "error"
+    DENIED = "denied"
+    TIMEOUT = "timeout"
+    BUDGET_EXCEEDED = "budget_exceeded"
+
+
+class ErrorCategory(str, Enum):
+    """Classification of task/runtime errors."""
+
+    TRANSIENT = "transient"
+    PERMANENT = "permanent"
+    BUDGET_EXCEEDED = "budget_exceeded"
+    POLICY_VIOLATION = "policy_violation"
+    UNRESOLVABLE_CAPABILITY = "unresolvable_capability"

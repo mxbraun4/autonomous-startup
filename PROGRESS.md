@@ -1,6 +1,6 @@
 # Framework Progress Tracker
 
-Last updated: 2026-02-15
+Last updated: 2026-02-16
 
 ## Goal
 
@@ -10,19 +10,19 @@ Build a fully autonomous multi-agent system that runs Build-Measure-Learn cycles
 
 | Layer | Name                   | Status          | Files                                      |
 |-------|------------------------|-----------------|--------------------------------------------|
-| A     | Contracts & Types      | **Partial**     | `src/framework/contracts.py`, `types.py`, `errors.py` |
+| A     | Contracts & Types      | **Done**        | `src/framework/contracts.py`, `types.py`, `errors.py` |
 | B     | Unified Storage        | **Done**        | `src/framework/storage/`                   |
-| C     | Agent Runtime          | Not started     | —                                          |
-| D     | Orchestration Kernel   | Not started     | —                                          |
+| C     | Agent Runtime          | **Done**        | `src/framework/runtime/`                   |
+| D     | Orchestration Kernel   | **Done**        | `src/framework/orchestration/`             |
 | E     | Autonomy Controller    | Not started     | —                                          |
-| F     | Safety & Governance    | Not started     | —                                          |
+| F     | Safety & Governance    | **Done**        | `src/framework/safety/`                    |
 | G     | Evaluation & Learning  | Not started     | —                                          |
 | H     | Observability & Replay | Not started     | —                                          |
 | I     | Domain Adapter Interface | Not started   | —                                          |
 
 ---
 
-## Layer A: Contracts & Types — Partial
+## Layer A: Contracts & Types — Done
 
 ### What exists
 Memory entity contracts are implemented and tested:
@@ -33,23 +33,25 @@ Memory entity contracts are implemented and tested:
 - `Procedure` / `ProcedureVersion`
 - `ConsensusEntry`
 
-Enums in `types.py`: `MemoryType`, `ItemType`, `EpisodeType`, `EntryType`, `ConsensusStatus`
-
-Custom exceptions in `errors.py`.
-
-### What is missing
-The plan requires these runtime/orchestration contracts that have not been created:
-- `RunConfig` — configuration for a single autonomous run (seed, max_cycles, budgets, policies)
-- `RunContext` — live state passed through the system during execution (current run_id, cycle_id, budget remaining, RNG)
-- `TaskSpec` — typed task description with objective, constraints, expected_output_schema
-- `TaskResult` — typed output of a completed task (status, output, metrics, error)
-- `ToolCall` — record of a tool invocation (tool name, args, caller agent)
-- `ToolResult` — record of a tool's response (output, duration, success)
-- `AgentDecision` — structured agent decision with reasoning trace
-- `CycleMetrics` — aggregated metrics for one BML cycle (response_rate, meeting_rate, data_collected, etc.)
-- `EvaluationResult` — scorecard output with gate decisions
+Runtime/orchestration contracts (added 2026-02-16):
+- `RunConfig` — immutable configuration for a single autonomous run (seed, max_cycles, budgets, policies, max_delegation_depth)
+- `RunContext` — live mutable state (NOT a BaseMemoryEntity; uses arbitrary_types_allowed)
+- `TaskSpec` — typed task description with objective, constraints, required_capabilities, delegation tracking
+- `TaskResult` — typed output with task_status, error_category, tool_calls
+- `ToolCall` — record of a tool invocation with policy_check_passed, denied_reason
+- `AgentDecision` — structured agent decision with reasoning trace and confidence
+- `CycleMetrics` — domain-agnostic metrics (task_count, success_count, domain_metrics bag)
+- `EvaluationResult` — scorecard with GateDecision list, overall_status, recommended_action
 - `GateDecision` — single gate verdict (pass/warn/fail, evidence, recommended_action)
-- `Checkpoint` — serializable snapshot of full run state for pause/resume
+- `Checkpoint` — serializable snapshot for pause/resume with RNG state
+
+Enums in `types.py`: `MemoryType`, `ItemType`, `EpisodeType`, `EntryType`, `ConsensusStatus`, `TaskStatus`, `ToolCallStatus`, `ErrorCategory`
+
+Error hierarchy in `errors.py`:
+- `MemoryStoreError` tree (memory store operations)
+- `AgentRuntimeError` tree (separate hierarchy): `BudgetExhaustedError`, `PolicyViolationError`, `CapabilityNotFoundError`, `TaskRoutingError`
+
+**Tests**: `tests/test_contracts.py` (12 tests), `tests/test_layer_a_contracts.py` (38 tests)
 
 ---
 
@@ -75,6 +77,8 @@ All five memory tiers are implemented with both new backends and legacy adapters
 
 **Tests**: 64 passing across `test_contracts.py`, `test_working_memory.py`, `test_unified_store.py`, `test_memory_integration.py`
 
+**Full suite (Layers A+B+C+F)**: 190 tests passing
+
 ### Recent fixes applied (2026-02-15)
 - Fixed `sem_get()`/`sem_delete()` to scan all persisted ChromaDB collections, not just the in-memory cache
 - Fixed Pydantic V2 deprecation: replaced `json_encoders` with `@field_serializer`
@@ -84,53 +88,56 @@ All five memory tiers are implemented with both new backends and legacy adapters
 
 ---
 
-## Layer C: Agent Runtime — Not Started
+## Layer C: Agent Runtime — Done
 
-### What needs to be built
-Files to create:
-- `src/framework/runtime/agent_runtime.py`
-- `src/framework/runtime/execution_context.py`
-- `src/framework/runtime/capability_registry.py`
-- `src/framework/runtime/task_router.py`
-
-Purpose: execute any agent with a common lifecycle, independent of domain.
+### What exists
+Files created (2026-02-16):
+- `src/framework/runtime/__init__.py` — package exports
+- `src/framework/runtime/capability_registry.py` — `CapabilityRegistry`, `RegisteredTool`: register tools by capability label, resolve by priority, list operations
+- `src/framework/runtime/execution_context.py` — `ExecutionContext`: wraps RunContext with budget tracking, step counting, deterministic RNG, checkpoint serialisation. Thread-safety note for future Layer D.
+- `src/framework/runtime/task_router.py` — `TaskRouter`, `RegisteredAgent`, `RoutingDecision`: route TaskSpec to agent by role match then capability overlap
+- `src/framework/runtime/agent_runtime.py` — `AgentRuntime`: core execution engine with execute_task() and execute_tool_call() lifecycle. Handles budget exhaustion, delegation depth, episode persistence, event emission. Optional policy_engine and event_emitter hooks for Layers F and H.
 
 Runtime lifecycle:
-1. Load context from UnifiedStore
-2. Resolve task intent and capability requirements
-3. Select tools/delegates through capability registry
-4. Execute tool calls under policy and budget limits
-5. Produce typed `TaskResult` and emit events
-6. Persist outcomes and hand off to evaluator
+1. Route TaskSpec to agent via TaskRouter
+2. Check delegation depth against RunConfig.max_delegation_depth
+3. Begin step (budget + step limit check)
+4. Execute agent callable with resolved tools
+5. End step (budget accounting)
+6. Persist Episode to episodic memory
+7. Emit structured event
+8. Return typed TaskResult
 
-Capability registry:
-- Register tools by capability label
-- Support multiple tools per capability with priority/fallback
-- Emit resolution trace for observability
-
-### Dependencies
-- Requires Layer A contracts to be completed first (`TaskSpec`, `TaskResult`, `ToolCall`, `ToolResult`, `RunContext`)
+**Tests**: `tests/test_capability_registry.py` (11 tests), `tests/test_execution_context.py` (16 tests), `tests/test_task_router.py` (7 tests), `tests/test_agent_runtime.py` (19 tests)
 
 ---
 
-## Layer D: Orchestration Kernel — Not Started
+## Layer D: Orchestration Kernel — Done
 
-### What needs to be built
-Files to create:
-- `src/framework/orchestration/task_graph.py`
-- `src/framework/orchestration/executor.py`
-- `src/framework/orchestration/scheduler.py`
-- `src/framework/orchestration/delegation.py`
-- `src/framework/orchestration/retry_policy.py`
+### What exists
+Files created (2026-02-17):
+- `src/framework/orchestration/__init__.py` — package exports
+- `src/framework/orchestration/retry_policy.py` — `RetryPolicy`: configurable retry with exponential backoff, transient-only retry gating
+- `src/framework/orchestration/task_graph.py` — `TaskNode`, `TaskGraph`: DAG with dependency edges, cycle detection (Kahn's algorithm), dangling-dep check, state machine (PENDING → READY → RUNNING → COMPLETED/FAILED/SKIPPED), dependent skipping
+- `src/framework/orchestration/scheduler.py` — `Scheduler`: priority-based scheduling with deterministic RNG tie-breaking, alphabetical fallback
+- `src/framework/orchestration/delegation.py` — `DelegationHandler`: delegation depth tracking, sub-task injection, JSON schema output validation (optional jsonschema dependency)
+- `src/framework/orchestration/executor.py` — `Executor`, `CycleExecutionResult`: main execution loop with retry, delegation, schema validation, fail-fast with dependent skipping
 
-Purpose: reusable execution engine supporting sequential, hierarchical, and event-driven coordination.
+Error classes added to `src/framework/errors.py`:
+- `OrchestrationError(AgentRuntimeError)` — base for orchestration errors
+- `CycleDetectedError(OrchestrationError)` — raised when DAG has a cycle
+- `DeadlockError(OrchestrationError)` — raised when no tasks are ready but graph is incomplete
 
-Key responsibilities:
-- Build DAG from task specs, enforce dependency ordering
-- Task state machine: pending → ready → running → completed/failed/skipped
-- Retry with configurable backoff (default max 2 retries, transient errors only)
-- Delegation: delegator emits `TaskSpec`, delegate result validated against schema
-- Deterministic scheduling mode for reproducibility
+Orchestration lifecycle:
+1. Build TaskGraph from TaskSpecs, validate (cycles, dangling deps)
+2. Scheduler picks next task by priority with deterministic tie-breaking
+3. Execute task via AgentRuntime.execute_task()
+4. On transient failure: immediate retry with exponential backoff (max 2 retries)
+5. On success: validate output schema, handle delegation (inject sub-tasks)
+6. On permanent failure: mark failed, skip all transitive dependents
+7. Return CycleExecutionResult with aggregated outcomes
+
+**Tests**: `tests/test_orchestration/test_orchestration.py`
 
 ### Dependencies
 - Requires Layer A contracts (`TaskSpec`, `TaskResult`)
@@ -161,24 +168,19 @@ Stop conditions: budget exhausted, max cycles reached, repeated critical failure
 
 ---
 
-## Layer F: Safety & Governance — Not Started
+## Layer F: Safety & Governance — Done
 
-### What needs to be built
-Files to create:
-- `src/framework/safety/policy_engine.py`
-- `src/framework/safety/budget_manager.py`
-- `src/framework/safety/limits.py`
-- `src/framework/safety/action_guard.py`
+### What exists
+Files created (2026-02-16):
+- `src/framework/safety/__init__.py` — package exports
+- `src/framework/safety/limits.py` — `BudgetLimits`, `ToolClassification`: Pydantic data models for budget caps and per-tool risk metadata (side_effect_level 0/1/2, risk_tags)
+- `src/framework/safety/policy_engine.py` — `PolicyEngine`, `PolicyResult`: rule-based tool-call gating with denylist → allowlist → autonomy level → argument validators → domain hook evaluation order. Deny-first precedence; mutable at runtime.
+- `src/framework/safety/budget_manager.py` — `BudgetManager`: read-only budget query layer on top of ExecutionContext. Adds wall-clock tracking (injectable clock), utilization percentages, critical-threshold detection. Does NOT duplicate budget mutation.
+- `src/framework/safety/action_guard.py` — `ActionGuard`, `create_action_guard`: composite guard that checks kill switch → budget → policy rules. Implements `check(tool_name, capability, arguments) -> bool` matching the AgentRuntime interface. Auto-kills after N consecutive policy denials (default 5). Denial log with timestamps.
 
-Purpose: keep autonomous behavior bounded and auditable.
+Integration: `ActionGuard` is passed as `policy_engine` to `AgentRuntime.__init__()`. No runtime interface changes needed. One-line enhancement in `agent_runtime.py` propagates structured denial reason via `check_detailed` when available.
 
-Policy engine: tool allowlist/denylist, action validation per environment mode, domain risk policies via adapter hooks.
-
-Budget manager: track wall-clock time, step count, token/cost budget. Expose remaining budget in RunContext.
-
-Control levels: Level 0 (dry run), Level 1 (simulation write-only), Level 2 (bounded real tool calls).
-
-Kill switches: manual, auto on critical policy violation, auto on repeated unrecoverable failures.
+**Tests**: `tests/test_safety/test_limits.py` (4 tests), `tests/test_safety/test_policy_engine.py` (16 tests), `tests/test_safety/test_budget_manager.py` (10 tests), `tests/test_safety/test_action_guard.py` (10 tests)
 
 ### Dependencies
 - Requires Layer A contracts (`RunConfig` for budget definitions)
