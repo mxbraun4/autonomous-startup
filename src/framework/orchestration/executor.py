@@ -72,9 +72,16 @@ class Executor:
         self._runtime = runtime
         self._context = context
         self._retry_policy = retry_policy or RetryPolicy()
-        self._delegation_handler = delegation_handler or DelegationHandler(
-            max_delegation_depth=context.run_config.max_delegation_depth,
-        )
+        if delegation_handler is not None:
+            self._delegation_handler = delegation_handler
+        else:
+            policies = getattr(context.run_config, "policies", {}) or {}
+            self._delegation_handler = DelegationHandler(
+                max_delegation_depth=context.run_config.max_delegation_depth,
+                max_children_per_parent=policies.get("max_children_per_parent", 10),
+                max_total_delegated_tasks=policies.get("max_total_delegated_tasks"),
+                dedupe_within_parent=policies.get("dedupe_delegated_objectives", True),
+            )
         self._event_emitter = event_emitter
         self._scheduler = Scheduler(rng=context.get_rng())
 

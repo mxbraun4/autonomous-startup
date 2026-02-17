@@ -14,6 +14,8 @@ def _guard(
     autonomy_level=2,
     budget_manager=None,
     max_consecutive_denials=5,
+    loop_window_size=20,
+    max_identical_calls=5,
 ):
     pe = PolicyEngine(
         denylist=set(denylist) if denylist else None,
@@ -24,6 +26,8 @@ def _guard(
         policy_engine=pe,
         budget_manager=budget_manager,
         max_consecutive_denials=max_consecutive_denials,
+        loop_window_size=loop_window_size,
+        max_identical_calls=max_identical_calls,
     )
 
 
@@ -115,3 +119,32 @@ class TestFactory:
         assert guard.check("safe_tool", "cap", {}) is True
         # Denylisted tool blocked
         assert guard.check("dangerous_tool", "cap", {}) is False
+
+
+class TestLoopDetection:
+    def test_repeated_identical_tool_calls_are_blocked(self):
+        g = _guard(loop_window_size=5, max_identical_calls=2)
+        assert g.check("tool", "cap", {"k": 1}) is True
+        assert g.check("tool", "cap", {"k": 1}) is True
+        assert g.check("tool", "cap", {"k": 1}) is False
+        result = g.check_detailed("tool", "cap", {"k": 1})
+        assert result.rule_name == "loop_detection"
+
+    def test_non_identical_calls_do_not_trigger_loop_block(self):
+        g = _guard(loop_window_size=5, max_identical_calls=2)
+        assert g.check("tool", "cap", {"k": 1}) is True
+        assert g.check("tool", "cap", {"k": 2}) is True
+        assert g.check("tool", "cap", {"k": 3}) is True
+
+    def test_factory_loop_settings(self):
+        rc = RunConfig(
+            policies={
+                "loop_window_size": 4,
+                "max_identical_tool_calls": 1,
+            }
+        )
+        ctx = ExecutionContext(rc)
+        guard = create_action_guard(rc, ctx)
+        assert guard.check("tool", "cap", {"same": True}) is True
+        # Second identical call blocked because threshold is 1 prior repeat
+        assert guard.check("tool", "cap", {"same": True}) is False
