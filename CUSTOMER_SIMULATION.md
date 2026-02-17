@@ -213,8 +213,9 @@ These are simulation defaults and should be tuned through experiments, not treat
 - Next environment components:
   - `src/simulation/customer_agent.py`
   - `src/simulation/customer_environment.py`
+  - `src/simulation/customer_scenario_matrix.py`
   - `data/seed/customers.json`
-  - `src/simulation/scenarios.py` customer-focused scenarios
+  - `src/simulation/scenarios.py` (legacy generic scenario helpers)
 - Experiment linkage:
   - Use `EXPERIMENT.md` Track D for customer simulation validation
 
@@ -223,6 +224,41 @@ These are simulation defaults and should be tuned through experiments, not treat
 2. High personalization variant (higher outreach quality)
 3. Better matching variant (higher fit score thresholds)
 4. Acquisition variant (stronger article/tool CTA design)
+
+## Deterministic Scenario Runner
+- Run all Track D matrix scenarios:
+  - `python scripts/run_customer_simulation.py`
+- Run a subset:
+  - `python scripts/run_customer_simulation.py --scenarios baseline better_matching`
+- Export JSON summary:
+  - `python scripts/run_customer_simulation.py --json-out data/memory/customer_matrix_summary.json`
+
+## Hypothesis Contract (Track D)
+Hypotheses are defined in `data/seed/customer_hypotheses.json` and evaluated against deterministic scenario outputs.
+
+Top-level structure:
+- `version`: integer (`>= 1`)
+- `hypotheses`: list of hypothesis objects
+
+Required fields per hypothesis:
+- `id`: non-empty string, unique
+- `scenario`: one of `baseline|high_personalization|better_matching|acquisition_push`
+- `metric`: non-empty metric key string
+- `direction`: `increase` or `decrease`
+- `min_delta`: numeric threshold (`>= 0.0`)
+
+Optional fields:
+- `guardrails`: list of guardrail objects
+  - each guardrail requires `metric` and at least one of `min_delta` or `max_delta`
+
+Loader and validator:
+- `src/simulation/customer_hypotheses.py`
+
+Evaluator:
+- `src/simulation/customer_hypothesis_evaluator.py`
+- CLI runner:
+  - `python scripts/evaluate_customer_simulation.py --summary-path data/memory/customer_matrix_summary.json`
+  - add `--allow-warn` while the hypothesis file is intentionally empty
 
 ## Acceptance Criteria
 - Input and output interfaces are stable and validated at runtime

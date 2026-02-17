@@ -68,6 +68,12 @@ python scripts/run_simulation.py --iterations 5 --verbose 2
 
 # Quick integration test
 python scripts/test_crewai_quick.py
+
+# Deterministic customer simulation scenario matrix
+python scripts/run_customer_simulation.py
+
+# Evaluate Track D hypotheses (use --allow-warn while hypotheses are empty)
+python scripts/evaluate_customer_simulation.py --allow-warn
 ```
 
 ## What You'll See

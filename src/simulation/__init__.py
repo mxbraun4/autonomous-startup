@@ -13,6 +13,19 @@ from .customer_environment import (
     validate_customer_cohorts,
     validate_environment_input,
 )
+from .customer_scenario_matrix import (
+    SCENARIO_MATRIX_VERSION,
+    build_customer_environment_input_for_scenario,
+    get_customer_scenario,
+    get_customer_scenario_matrix,
+    list_customer_scenarios,
+)
+from .customer_hypotheses import (
+    load_customer_hypotheses,
+    normalize_customer_hypotheses,
+    validate_customer_hypotheses_payload,
+)
+from .customer_hypothesis_evaluator import evaluate_customer_hypotheses
 
 __all__ = [
     "SimulatedStartup",
@@ -26,4 +39,13 @@ __all__ = [
     "run_customer_environment",
     "validate_customer_cohorts",
     "validate_environment_input",
+    "SCENARIO_MATRIX_VERSION",
+    "list_customer_scenarios",
+    "get_customer_scenario_matrix",
+    "get_customer_scenario",
+    "build_customer_environment_input_for_scenario",
+    "load_customer_hypotheses",
+    "normalize_customer_hypotheses",
+    "validate_customer_hypotheses_payload",
+    "evaluate_customer_hypotheses",
 ]

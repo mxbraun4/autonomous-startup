@@ -46,7 +46,7 @@ Existing useful assets already in repository.
 - Procedural memory: `src/memory/procedural.py`
 - Simulation actors: `src/simulation/startup_agent.py`, `src/simulation/vc_agent.py`
 - DB persistence: `src/data/database.py`
-- Entrypoints: `scripts/seed_memory.py`, `scripts/run_simulation.py`
+- Entrypoints: `scripts/seed_memory.py`, `scripts/run_simulation.py`, `scripts/run_customer_simulation.py`, `scripts/evaluate_customer_simulation.py`
 
 Main limitation now: measure metrics in `src/crewai_agents/crews.py` include synthetic improvement formulas. This blocks genuine autonomous evaluation.
 
@@ -561,6 +561,8 @@ These should exist once framework baseline is implemented.
 - `python scripts/run_autonomous.py --resume <run_id>`
 - `python scripts/replay_run.py --run-id <run_id>`
 - `python scripts/evaluate_run.py --run-id <run_id>`
+- `python scripts/run_customer_simulation.py`
+- `python scripts/evaluate_customer_simulation.py --summary-path data/memory/customer_matrix_summary.json`
 
 ## 15) Immediate Work Order (Next Steps)
 This is the best starting sequence right now.
