@@ -64,6 +64,7 @@ Initial tool ideas:
 - Simulated Build-Measure-Learn iterations with measurable response/meeting metrics
 - Tooling for data collection, match-oriented outreach content, and analytics
 - Framework-level guardrails for tool failover, loop detection, and bounded delegation
+- Deterministic mock-mode execution with local runtime storage for constrained environments
 
 ### Near-term MVP deliverables
 - Deterministic match scoring function with transparent scoring factors

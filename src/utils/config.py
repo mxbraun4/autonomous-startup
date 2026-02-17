@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
+    # CrewAI runtime paths (kept local for constrained/sandbox execution)
+    crewai_local_appdata_dir: str = "data/crewai_local"
+    crewai_db_storage_dir: str = "data/crewai_storage"
+    crewai_storage_namespace: str = "autonomous-startup"
+
     # Legacy memory paths (kept for backward compatibility)
     episodic_db_path: str = "data/memory/episodic.db"
     procedural_json_path: str = "data/memory/workflows.json"

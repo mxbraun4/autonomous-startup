@@ -40,6 +40,9 @@ ENV/
 # Memory data (runtime generated)
 data/memory/episodic.db
 data/memory/workflows.json
+data/memory/
+data/crewai_local/
+data/crewai_storage/
 
 # Logs
 *.log

@@ -26,6 +26,8 @@ The default `.env` has `MOCK_MODE=true`, which means:
 - No API costs
 - Fast execution
 - Deterministic results
+- Deterministic local mock LLM (no external model calls)
+- Workspace-local CrewAI runtime storage (`data/crewai_local/`, `data/crewai_storage/`)
 
 ## Step 3: Seed Memory Systems
 
@@ -173,6 +175,11 @@ OPENAI_API_KEY=sk-...
 
 # Adjust logging
 LOG_LEVEL=DEBUG
+
+# Optional: override CrewAI runtime storage paths
+CREWAI_LOCAL_APPDATA_DIR=data/crewai_local
+CREWAI_DB_STORAGE_DIR=data/crewai_storage
+CREWAI_STORAGE_NAMESPACE=autonomous-startup
 ```
 
 ### Modify Seed Data

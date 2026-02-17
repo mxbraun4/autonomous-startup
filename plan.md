@@ -41,6 +41,7 @@ Existing useful assets already in repository.
 - Orchestration prototype: `src/crewai_agents/crews.py`
 - Agent wiring prototype: `src/crewai_agents/agents.py`
 - Tools registry prototype: `src/crewai_agents/tools.py`
+- Deterministic mock-mode LLM + local CrewAI runtime path bootstrap: `src/crewai_agents/mock_llm.py`, `src/crewai_agents/runtime_env.py`
 - Episodic memory: `src/memory/episodic.py`
 - Semantic memory: `src/memory/semantic.py`
 - Procedural memory: `src/memory/procedural.py`

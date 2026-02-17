@@ -5,6 +5,12 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Avoid Windows cp1252 print failures from third-party event handlers
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from src.crewai_agents import run_build_measure_learn_cycle
 from src.utils.logging import setup_logging, get_logger
 from src.utils.config import settings
@@ -64,17 +70,23 @@ def display_results(results: dict) -> None:
         print("\n" + "="*60)
         print("IMPROVEMENT SUMMARY")
         print("="*60)
-        print(f"  Response rate: {first['response_rate']:.1%} → {last['response_rate']:.1%} (+{response_improvement:.0f}%)")
-        print(f"  Meeting rate: {first['meeting_rate']:.1%} → {last['meeting_rate']:.1%} (+{meeting_improvement:.0f}%)")
+        print(
+            f"  Response rate: {first['response_rate']:.1%} -> {last['response_rate']:.1%} "
+            f"(+{response_improvement:.0f}%)"
+        )
+        print(
+            f"  Meeting rate: {first['meeting_rate']:.1%} -> {last['meeting_rate']:.1%} "
+            f"(+{meeting_improvement:.0f}%)"
+        )
 
     print("\n" + "="*60)
     print("SIMULATION COMPLETE")
     print("="*60)
     print("\nKey Takeaways:")
-    print("  ✓ CrewAI agents coordinated hierarchically")
-    print("  ✓ Memory enabled learning across iterations")
-    print("  ✓ Performance improved through adaptation")
-    print("  ✓ Tools (scraper, content generator, etc.) integrated successfully")
+    print("  [OK] CrewAI agents coordinated hierarchically")
+    print("  [OK] Memory enabled learning across iterations")
+    print("  [OK] Performance improved through adaptation")
+    print("  [OK] Tools (scraper, content generator, etc.) integrated successfully")
     print()
 
 

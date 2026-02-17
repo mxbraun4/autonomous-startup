@@ -1,6 +1,31 @@
 """CrewAI Crews - Orchestration of agents and tasks."""
+
 from typing import Dict, Any, List
+
+from src.crewai_agents.runtime_env import (
+    configure_runtime_environment,
+    crewai_db_storage_path,
+)
+
+configure_runtime_environment()
 from crewai import Crew, Task, Process, LLM
+from crewai.memory.storage import kickoff_task_outputs_storage
+from crewai.utilities import paths as crewai_paths
+
+
+def _patch_crewai_db_storage_path() -> None:
+    """Patch CrewAI DB storage path to a writable project-local directory."""
+    storage_path = crewai_db_storage_path()
+
+    def _workspace_db_storage_path() -> str:
+        return storage_path
+
+    # Patch both canonical utility path and the already-imported module symbol
+    crewai_paths.db_storage_path = _workspace_db_storage_path
+    kickoff_task_outputs_storage.db_storage_path = _workspace_db_storage_path
+
+
+_patch_crewai_db_storage_path()
 from src.crewai_agents.agents import (
     create_master_coordinator,
     create_data_strategist,

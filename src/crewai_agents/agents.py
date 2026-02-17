@@ -1,6 +1,13 @@
 """CrewAI Agents - Convert our Planners to Agents."""
+
 from typing import Optional, List
+
+from src.crewai_agents.runtime_env import configure_runtime_environment
+from src.utils.config import settings
+
+configure_runtime_environment()
 from crewai import Agent, LLM
+from src.crewai_agents.mock_llm import DeterministicMockLLM
 from src.crewai_agents.tools import (
     # Web collection tools
     web_search_startups,
@@ -23,28 +30,20 @@ from src.crewai_agents.tools import (
     tool_builder_tool,
     analytics_tool
 )
-from src.utils.config import settings
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
-def get_llm() -> LLM:
+def get_llm() -> LLM | DeterministicMockLLM:
     """Get LLM instance based on configuration.
 
     Returns:
         LLM instance (uses fake LLM in mock mode)
     """
     if settings.mock_mode:
-        # Use a fake LLM for mock mode
-        # Set a dummy API key to satisfy CrewAI's requirements
-        import os
-        os.environ['OPENAI_API_KEY'] = 'fake-key-for-mock-mode'
-
-        return LLM(
-            model="gpt-4o-mini",
-            temperature=0.7
-        )
+        # Fully local deterministic model; no network/API dependency.
+        return DeterministicMockLLM()
 
     # Use Anthropic Claude as primary
     if settings.anthropic_api_key:
@@ -60,10 +59,10 @@ def get_llm() -> LLM:
             api_key=settings.openai_api_key
         )
 
-    # Default to fake LLM
-    import os
-    os.environ['OPENAI_API_KEY'] = 'fake-key-for-mock-mode'
-    return LLM(model="gpt-4o-mini")
+    logger.warning(
+        "No API keys configured with MOCK_MODE=false; falling back to deterministic mock LLM."
+    )
+    return DeterministicMockLLM()
 
 
 def create_master_coordinator(llm: LLM = None) -> Agent:

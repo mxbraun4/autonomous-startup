@@ -29,6 +29,7 @@ A coordinated agent system with memory can improve matching and outreach outcome
 2. Configure environment
    - `cp .env.example .env`
    - Keep `MOCK_MODE=true` for deterministic simulation
+   - Mock mode should run with local deterministic LLM + workspace-local CrewAI DB paths (`data/crewai_local/`, `data/crewai_storage/`)
 3. Seed memory and data
    - `python scripts/seed_memory.py`
 4. Smoke test
@@ -53,6 +54,7 @@ A coordinated agent system with memory can improve matching and outreach outcome
   - `scripts/test_crewai_quick.py` passes
   - Framework guardrail suites pass (runtime/orchestration/safety)
   - No unbounded delegation growth for fixed limits/policies
+  - No external model-network dependency in mock mode
 - Outcome trend
   - Response rate in final iteration >= first iteration
   - Meeting rate in final iteration >= first iteration

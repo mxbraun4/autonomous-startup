@@ -11,6 +11,7 @@ This system demonstrates:
 - **Simulated ecosystem** with startup and VC agents
 - **Autonomous improvement** across iterations
 - **Framework guardrails** for tool failover, loop detection, and bounded delegation
+- **Deterministic mock-mode execution** with local-only runtime storage
 
 ## CrewAI Benefits
 
@@ -53,6 +54,10 @@ ANTHROPIC_API_KEY=your_key_here
 OPENAI_API_KEY=your_key_here
 MOCK_MODE=true  # Set to false for real LLM calls
 ```
+
+In `MOCK_MODE=true`, CrewAI runs with a deterministic local mock LLM and stores runtime DB files in:
+- `data/crewai_local/`
+- `data/crewai_storage/`
 
 3. Seed memory systems:
 ```bash
@@ -133,6 +138,8 @@ autonomous-startup/
 |   |   |-- tools.py      # @tool decorated functions
 |   |   |-- agents.py     # Agent definitions
 |   |   |-- crews.py      # Crew orchestration
+|   |   |-- mock_llm.py   # Deterministic local mock LLM
+|   |   |-- runtime_env.py # Runtime path/telemetry bootstrap
 |   |   |-- __init__.py
 |   |-- framework/        # Layered framework kernel (runtime/orchestration/safety/storage)
 |   |   |-- runtime/
@@ -158,6 +165,8 @@ autonomous-startup/
 |   |   |-- startups.json
 |   |   |-- vcs.json
 |   |   |-- knowledge.json
+|   |-- crewai_local/     # CrewAI appdata redirection (runtime generated)
+|   |-- crewai_storage/   # CrewAI task output DBs (runtime generated)
 |   |-- memory/           # Runtime data
 |       |-- episodic.db
 |       |-- workflows.json
@@ -205,6 +214,9 @@ LOG_LEVEL=INFO
 # Paths (auto-configured, override if needed)
 EPISODIC_DB_PATH=data/memory/episodic.db
 PROCEDURAL_JSON_PATH=data/memory/workflows.json
+CREWAI_LOCAL_APPDATA_DIR=data/crewai_local
+CREWAI_DB_STORAGE_DIR=data/crewai_storage
+CREWAI_STORAGE_NAMESPACE=autonomous-startup
 ```
 
 Framework runtime and orchestration controls are configured through `RunConfig.policies` (not environment variables), including:
