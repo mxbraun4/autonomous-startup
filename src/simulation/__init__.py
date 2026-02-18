@@ -26,6 +26,13 @@ from .customer_hypotheses import (
     validate_customer_hypotheses_payload,
 )
 from .customer_hypothesis_evaluator import evaluate_customer_hypotheses
+from .customer_transition_logic import (
+    TRANSITION_LOGIC_VERSION,
+    get_marketplace_transition_logic,
+    list_actor_phases,
+    list_actor_transition_parameters,
+    list_marketplace_actors,
+)
 
 __all__ = [
     "SimulatedStartup",
@@ -48,4 +55,9 @@ __all__ = [
     "normalize_customer_hypotheses",
     "validate_customer_hypotheses_payload",
     "evaluate_customer_hypotheses",
+    "TRANSITION_LOGIC_VERSION",
+    "get_marketplace_transition_logic",
+    "list_marketplace_actors",
+    "list_actor_phases",
+    "list_actor_transition_parameters",
 ]

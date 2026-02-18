@@ -25,7 +25,7 @@ class FounderCustomerAgent:
         self.profile = profile
         self.params = params
         self.rng = rng
-        self.state = "unaware"
+        self.state = "visit"
 
     def simulate(
         self,
@@ -49,6 +49,36 @@ class FounderCustomerAgent:
         )
         timing_score = _clamp(float((outreach_signal or {}).get("timing_score", 0.0)))
         urgency_score = _clamp(float(self.profile.get("urgency_score", 0.0)))
+        preview_match_quality = _clamp((0.65 * match_score) + (0.35 * explanation_quality))
+
+        signup_cta_clarity = _clamp(
+            float(self.params.get("founder_signup_cta_clarity", 0.72))
+        )
+        signup_friction = _clamp(float(self.params.get("founder_signup_friction", 0.30)))
+        signup_prob = _clamp(
+            float(self.params.get("founder_signup_base_rate", 0.70))
+            * (0.60 + (0.40 * signup_cta_clarity))
+            * (0.50 + (0.50 * preview_match_quality))
+            * (1.0 - (0.35 * signup_friction))
+            * (0.60 + (0.40 * urgency_score))
+        )
+        if self._coin_flip(signup_prob):
+            self._record_transition(
+                transitions,
+                "signup",
+                "founder_signed_up",
+                {
+                    "signup_prob": signup_prob,
+                    "signup_cta_clarity": signup_cta_clarity,
+                    "signup_friction": signup_friction,
+                    "preview_match_quality": preview_match_quality,
+                    "urgency_score": urgency_score,
+                },
+                max_steps,
+            )
+        else:
+            dropoff_reason = "founder_no_signup"
+            return self._result(transitions, dropoff_reason, match_signal)
 
         engaged_prob = _clamp(0.20 + (0.45 * match_score) + (0.25 * urgency_score))
         if self._coin_flip(engaged_prob):
@@ -142,6 +172,8 @@ class FounderCustomerAgent:
             "state": self.state,
             "transitions": transitions,
             "dropoff_reason": dropoff_reason,
+            "signed_up": self.state
+            in {"signup", "engaged", "matched", "interested", "meeting"},
             "interested": self.state in {"interested", "meeting"},
             "preferred_vc_id": (match_signal or {}).get("vc_id"),
         }
@@ -154,7 +186,7 @@ class VCCustomerAgent:
         self.profile = profile
         self.params = params
         self.rng = rng
-        self.state = "unaware"
+        self.state = "visit"
 
     def simulate(
         self,
@@ -174,6 +206,35 @@ class VCCustomerAgent:
             float((match_signal or {}).get("explanation_quality", 0.0))
         )
         timing_score = _clamp(float((outreach_signal or {}).get("timing_score", 0.0)))
+        confidence_threshold = _clamp(float(self.profile.get("confidence_threshold", 0.5)))
+        preview_match_quality = _clamp((0.70 * match_score) + (0.30 * explanation_quality))
+        signup_cta_clarity = _clamp(float(self.params.get("vc_signup_cta_clarity", 0.68)))
+        signup_friction = _clamp(float(self.params.get("vc_signup_friction", 0.33)))
+        confidence_factor = _clamp(1.0 - confidence_threshold)
+        signup_prob = _clamp(
+            float(self.params.get("vc_signup_base_rate", 0.66))
+            * (0.60 + (0.40 * signup_cta_clarity))
+            * (0.50 + (0.50 * preview_match_quality))
+            * (1.0 - (0.35 * signup_friction))
+            * (0.55 + (0.45 * confidence_factor))
+        )
+        if self._coin_flip(signup_prob):
+            self._record_transition(
+                transitions,
+                "signup",
+                "vc_signed_up",
+                {
+                    "signup_prob": signup_prob,
+                    "signup_cta_clarity": signup_cta_clarity,
+                    "signup_friction": signup_friction,
+                    "preview_match_quality": preview_match_quality,
+                    "confidence_threshold": confidence_threshold,
+                },
+                max_steps,
+            )
+        else:
+            dropoff_reason = "vc_no_signup"
+            return self._result(transitions, dropoff_reason, match_signal)
 
         engaged_prob = _clamp(0.15 + (0.55 * match_score) + (0.20 * explanation_quality))
         if self._coin_flip(engaged_prob):
@@ -208,7 +269,6 @@ class VCCustomerAgent:
             dropoff_reason = "vc_not_shortlisted"
             return self._result(transitions, dropoff_reason, match_signal)
 
-        confidence_threshold = _clamp(float(self.profile.get("confidence_threshold", 0.5)))
         interest_prob = _clamp(
             float(self.params["vc_base_interest"])
             + (0.40 * match_score)
@@ -266,6 +326,8 @@ class VCCustomerAgent:
             "state": self.state,
             "transitions": transitions,
             "dropoff_reason": dropoff_reason,
+            "signed_up": self.state
+            in {"signup", "engaged", "shortlist", "interested", "meeting"},
             "interested": self.state in {"interested", "meeting"},
             "preferred_founder_id": (match_signal or {}).get("founder_id"),
         }
