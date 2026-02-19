@@ -1,12 +1,125 @@
 # Customer Simulation Spec
 
 ## Purpose
-Define a constrained customer simulation model for the autonomous startup prototype so product behavior can be tested without relying on live traffic or external systems.
+Define a constrained customer simulation environment for the autonomous startup prototype so product behavior can be tested without relying on live traffic or external systems.
 
 ## Why This Exists
 - Keep experimentation deterministic and low-cost
 - Validate core product loops before production infrastructure
 - Measure conversion and match quality signals in a controlled environment
+
+## Environment Contract (v1)
+
+### Scope
+- This contract defines the customer-side environment only.
+- It covers founder, VC, and visitor behavioral transitions and environment metrics.
+- It does not cover web scraping, live traffic, external APIs, or LLM-generated customer decisions.
+
+### Non-Goals
+- Real-world prediction accuracy for production forecasting
+- Open-ended conversational roleplay
+- Unbounded agent autonomy
+
+### Required Input Interface
+
+The simulator must consume a single environment input object with the following top-level keys:
+- `run_context`
+- `params`
+- `cohorts`
+- `signals`
+
+#### 1) `run_context`
+- `run_id`: `str`, unique identifier for the run
+- `iteration`: `int`, `>= 1`
+- `seed`: `int`, deterministic random seed
+
+#### 2) `params`
+All values are numeric and bounded in `[0.0, 1.0]` unless noted:
+- `founder_base_interest`
+- `vc_base_interest`
+- `visitor_tool_click_rate`
+- `signup_rate_from_tool`
+- `meeting_rate_from_mutual_interest`
+- Optional signup behavior params:
+  - `founder_signup_base_rate`
+  - `vc_signup_base_rate`
+  - `founder_signup_cta_clarity`
+  - `vc_signup_cta_clarity`
+  - `founder_signup_friction`
+  - `vc_signup_friction`
+- Optional threshold params:
+  - `match_score_threshold`
+  - `shortlist_threshold`
+  - `interest_threshold`
+  - `max_steps_per_customer` (integer, `>= 1`)
+
+#### 3) `cohorts`
+- `founders`: list of founder profiles
+- `vcs`: list of VC profiles
+- `visitors`: list of visitor profiles
+
+Required founder fields:
+- `id`, `sector`, `stage`, `geography`, `fundraising_status`, `urgency_score`
+
+Required VC fields:
+- `id`, `thesis_sectors`, `stage_focus`, `geography`, `confidence_threshold`
+
+Required visitor fields:
+- `id`, `intent_topic`, `tool_need_score`, `cta_friction`
+
+#### 4) `signals`
+Signals are produced by system components and consumed by the environment:
+- `match_signals`: list of `{founder_id, vc_id, match_score, explanation_quality}`
+- `outreach_signals`: list of `{founder_id, vc_id, personalization_score, timing_score}`
+- `acquisition_signals`: list of `{visitor_id, article_relevance, tool_usefulness, cta_clarity}`
+
+### Output Interface
+
+Each environment run must return a JSON-serializable object with:
+- `metrics`
+- `events`
+- `final_states`
+- `diagnostics`
+
+Required `metrics` keys:
+- `founder_visit_to_signup`
+- `vc_visit_to_signup`
+- `visitor_to_tool_use`
+- `tool_use_to_signup`
+- `signup_to_first_match`
+- `founder_interested_rate`
+- `vc_interested_rate`
+- `mutual_interest_rate`
+- `meeting_conversion_rate`
+- `average_match_relevance`
+- `explanation_coverage`
+- `personalization_quality_score`
+
+Event shape (`events[]`):
+- `event_id`
+- `iteration`
+- `actor_type` (`founder|vc|visitor`)
+- `actor_id`
+- `from_state`
+- `to_state`
+- `reason_code`
+- `score_snapshot` (object with relevant numeric values)
+
+`final_states` shape:
+- `founders`: map of `founder_id -> state`
+- `vcs`: map of `vc_id -> state`
+- `visitors`: map of `visitor_id -> state`
+
+`diagnostics` minimum:
+- `dropoff_reasons`: map of reason code to count
+- `input_validation_errors`: list
+
+### Determinism and Safety Invariants
+- No external network dependency for customer behavior decisions
+- Same `{seed, params, cohorts, signals}` must produce identical outputs
+- Bounded state transitions; no loops outside defined state graph
+- At most `max_steps_per_customer` transitions per actor per run
+- Missing required fields must fail validation and be reported in `diagnostics`
 
 ## Simulated Customer Types
 
@@ -54,18 +167,20 @@ A top-of-funnel user arriving via article or tool pages.
 ## Customer State Machines
 
 ### Founder Journey
-`unaware -> engaged -> matched -> interested -> meeting`
+`visit -> signup -> engaged -> matched -> interested -> meeting`
 
 Transition drivers:
+- `signup`: CTA clarity, signup friction, preview match quality, urgency
 - `engaged`: content/tool relevance
 - `matched`: match score above threshold
 - `interested`: outreach personalization + fit explanation quality
 - `meeting`: founder interest + VC reciprocal interest
 
 ### VC Journey
-`unaware -> engaged -> shortlist -> interested -> meeting`
+`visit -> signup -> engaged -> shortlist -> interested -> meeting`
 
 Transition drivers:
+- `signup`: CTA clarity, signup friction, preview match quality, confidence threshold
 - `engaged`: startup quality + relevance to thesis
 - `shortlist`: alignment and confidence threshold
 - `interested`: strong signal on fit and timing
@@ -79,9 +194,58 @@ Transition drivers:
 - tool output usefulness
 - CTA clarity and friction
 
+## Founder/VC Transition Logic (Deterministic)
+
+### Founder
+1. `visit -> signup`
+   - Inputs: `founder_signup_base_rate`, `founder_signup_cta_clarity`, `founder_signup_friction`, `urgency_score`, `match_score`, `explanation_quality`
+   - Derived:
+     - `preview_match_quality = clamp(0.65 * match_score + 0.35 * explanation_quality)`
+     - `signup_prob = clamp(founder_signup_base_rate * (0.60 + 0.40 * founder_signup_cta_clarity) * (0.50 + 0.50 * preview_match_quality) * (1.00 - 0.35 * founder_signup_friction) * (0.60 + 0.40 * urgency_score))`
+   - Decision: `rng.random() < signup_prob`
+2. `signup -> engaged`
+   - `engaged_prob = clamp(0.20 + 0.45 * match_score + 0.25 * urgency_score)`
+   - Decision: `rng.random() < engaged_prob`
+3. `engaged -> matched`
+   - Gate: `match_score >= match_score_threshold`
+4. `matched -> interested`
+   - `interest_prob = clamp(founder_base_interest + 0.35 * personalization_score + 0.20 * explanation_quality + 0.15 * timing_score + 0.15 * urgency_score)`
+   - Gate + decision: `interest_prob >= interest_threshold` and `rng.random() < interest_prob`
+5. `interested -> meeting`
+   - Requires mutual interest with VC, then `rng.random() < meeting_rate_from_mutual_interest`
+
+### VC
+1. `visit -> signup`
+   - Inputs: `vc_signup_base_rate`, `vc_signup_cta_clarity`, `vc_signup_friction`, `confidence_threshold`, `match_score`, `explanation_quality`
+   - Derived:
+     - `preview_match_quality = clamp(0.70 * match_score + 0.30 * explanation_quality)`
+     - `confidence_factor = clamp(1.00 - confidence_threshold)`
+     - `signup_prob = clamp(vc_signup_base_rate * (0.60 + 0.40 * vc_signup_cta_clarity) * (0.50 + 0.50 * preview_match_quality) * (1.00 - 0.35 * vc_signup_friction) * (0.55 + 0.45 * confidence_factor))`
+   - Decision: `rng.random() < signup_prob`
+2. `signup -> engaged`
+   - `engaged_prob = clamp(0.15 + 0.55 * match_score + 0.20 * explanation_quality)`
+   - Decision: `rng.random() < engaged_prob`
+3. `engaged -> shortlist`
+   - Gate: `match_score >= shortlist_threshold`
+4. `shortlist -> interested`
+   - `interest_prob = clamp(vc_base_interest + 0.40 * match_score + 0.20 * explanation_quality + 0.15 * timing_score)`
+   - `gate_threshold = max(confidence_threshold, interest_threshold)`
+   - Gate + decision: `interest_prob >= gate_threshold` and `rng.random() < interest_prob`
+5. `interested -> meeting`
+   - Requires mutual interest with Founder, then `rng.random() < meeting_rate_from_mutual_interest`
+
+## Transition Evaluation Order
+- Validate actor input and current state
+- Compute deterministic gates (hard thresholds)
+- Compute probabilistic transition using seeded RNG
+- Emit one event per accepted state transition
+- Stop at terminal state or `max_steps_per_customer`
+
 ## Example Parameter Set (MVP)
 - founder_base_interest = 0.15
 - vc_base_interest = 0.12
+- founder_signup_base_rate = 0.70
+- vc_signup_base_rate = 0.66
 - visitor_tool_click_rate = 0.20
 - signup_rate_from_tool = 0.10
 - meeting_rate_from_mutual_interest = 0.35
@@ -90,6 +254,8 @@ These are simulation defaults and should be tuned through experiments, not treat
 
 ## Metrics
 - Funnel metrics:
+  - founder visit -> signup
+  - VC visit -> signup
   - visitor -> tool use
   - tool use -> signup
   - signup -> first qualified match
@@ -104,7 +270,7 @@ These are simulation defaults and should be tuned through experiments, not treat
   - personalization quality score
 
 ## Integration With Current Code
-- Existing agents:
+- Existing simulation actors:
   - `src/simulation/startup_agent.py`
   - `src/simulation/vc_agent.py`
 - Framework safety/runtime modules:
@@ -118,6 +284,12 @@ These are simulation defaults and should be tuned through experiments, not treat
   - `src/simulation/customer_agent.py` (new, optional next step)
   - `data/seed/customers.json` (new cohort definitions)
   - `src/simulation/scenarios.py` customer-focused scenarios
+- Next environment components:
+  - `src/simulation/customer_agent.py`
+  - `src/simulation/customer_environment.py`
+  - `src/simulation/customer_scenario_matrix.py`
+  - `data/seed/customers.json`
+  - `src/simulation/scenarios.py` (legacy generic scenario helpers)
 - Experiment linkage:
   - Use `EXPERIMENT.md` Track D for customer simulation validation
 
@@ -127,7 +299,43 @@ These are simulation defaults and should be tuned through experiments, not treat
 3. Better matching variant (higher fit score thresholds)
 4. Acquisition variant (stronger article/tool CTA design)
 
+## Deterministic Scenario Runner
+- Run all Track D matrix scenarios:
+  - `python scripts/run_customer_simulation.py`
+- Run a subset:
+  - `python scripts/run_customer_simulation.py --scenarios baseline better_matching`
+- Export JSON summary:
+  - `python scripts/run_customer_simulation.py --json-out data/memory/customer_matrix_summary.json`
+
+## Hypothesis Contract (Track D)
+Hypotheses are defined in `data/seed/customer_hypotheses.json` and evaluated against deterministic scenario outputs.
+
+Top-level structure:
+- `version`: integer (`>= 1`)
+- `hypotheses`: list of hypothesis objects
+
+Required fields per hypothesis:
+- `id`: non-empty string, unique
+- `scenario`: one of `baseline|high_personalization|better_matching|acquisition_push`
+- `metric`: non-empty metric key string
+- `direction`: `increase` or `decrease`
+- `min_delta`: numeric threshold (`>= 0.0`)
+
+Optional fields:
+- `guardrails`: list of guardrail objects
+  - each guardrail requires `metric` and at least one of `min_delta` or `max_delta`
+
+Loader and validator:
+- `src/simulation/customer_hypotheses.py`
+
+Evaluator:
+- `src/simulation/customer_hypothesis_evaluator.py`
+- CLI runner:
+  - `python scripts/evaluate_customer_simulation.py --summary-path data/memory/customer_matrix_summary.json`
+  - add `--allow-warn` while the hypothesis file is intentionally empty
+
 ## Acceptance Criteria
+- Input and output interfaces are stable and validated at runtime
 - Simulation runs end-to-end with fixed inputs and reproducible outputs
 - Loop-prone repeated action patterns are blocked consistently by guardrails
 - Delegated/derived task expansion remains within configured bounds

@@ -93,6 +93,12 @@ python scripts/run.py --mode web --list-edit-templates --edit-template-file data
 
 # Quick integration test
 python scripts/test_crewai_quick.py
+
+# Deterministic customer simulation scenario matrix (Track D)
+python scripts/run_customer_simulation.py
+
+# Evaluate Track D hypotheses against scenario summary
+python scripts/evaluate_customer_simulation.py --summary-path data/memory/customer_matrix_summary.json --allow-warn
 ```
 
 `--edit-template-file` defaults to `data/seed/web_edit_templates.json`.
@@ -184,6 +190,12 @@ autonomous-startup/
 |   |   |-- startup_agent.py
 |   |   |-- vc_agent.py
 |   |   |-- scenarios.py
+|   |   |-- customer_environment.py
+|   |   |-- customer_scenario_matrix.py
+|   |   |-- customer_hypotheses.py
+|   |-- llm/              # LLM client
+|   |   |-- client.py
+|   |   |-- prompts.py
 |   |-- utils/            # Utilities
 |       |-- config.py
 |       |-- logging.py
@@ -194,6 +206,8 @@ autonomous-startup/
 |   |   |-- knowledge.json
 |   |-- crewai_local/     # CrewAI appdata redirection (runtime generated)
 |   |-- crewai_storage/   # CrewAI task output DBs (runtime generated)
+|   |   |-- customers.json
+|   |   |-- customer_hypotheses.json
 |   |-- memory/           # Runtime data
 |       |-- episodic.db
 |       |-- workflows.json
@@ -205,6 +219,8 @@ autonomous-startup/
 |   |-- run_web_autonomy.py # Localhost web autonomy
 |   |-- live_dashboard.py # Live observability UI
 |   |-- test_crewai_quick.py # Quick test
+|   |-- run_customer_simulation.py # Deterministic customer scenario runner
+|   |-- evaluate_customer_simulation.py # Track D hypothesis evaluator
 |-- tests/
     |-- test_crewai_integration.py
 ```

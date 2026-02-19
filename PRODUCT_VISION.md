@@ -70,6 +70,8 @@ Initial tool ideas:
 - Deterministic match scoring function with transparent scoring factors
 - Match recommendation API endpoint and basic operator dashboard
 - Outreach workflow with campaign tracking and feedback capture
+- Deterministic customer scenario matrix runner for Track D validation
+- Track D hypothesis evaluation harness with pass/warn/fail gates
 - Evaluation harness for precision/recall of match recommendations
 - Foundational editorial pages for core search intents
 - At least two public utility tools integrated with product CTAs

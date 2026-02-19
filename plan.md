@@ -61,6 +61,7 @@ Existing useful assets already in repository.
 - Simulation actors: `src/simulation/startup_agent.py`, `src/simulation/vc_agent.py`
 - DB persistence: `src/data/database.py`
 - Entrypoints: `scripts/seed_memory.py`, `scripts/run.py` (mode-based), `scripts/run_simulation.py` (compatibility path)
+- Entrypoints: `scripts/seed_memory.py`, `scripts/run_simulation.py`, `scripts/run_customer_simulation.py`, `scripts/evaluate_customer_simulation.py`
 
 Main limitation now: measure metrics in `src/crewai_agents/crews.py` include synthetic improvement formulas. This blocks genuine autonomous evaluation.
 
@@ -599,6 +600,29 @@ This is the current best sequence for shipping autonomous product iteration.
    - checkpoint each cycle
 4. Run one end-to-end local web cycle and verify event trace quality.
 5. After stable mock runs, test one controlled real-LLM cycle.
+## 14) Operational Commands (Planned)
+These should exist once framework baseline is implemented.
+
+- `python scripts/run_autonomous.py --cycles 3 --seed 42`
+- `python scripts/run_autonomous.py --resume <run_id>`
+- `python scripts/replay_run.py --run-id <run_id>`
+- `python scripts/evaluate_run.py --run-id <run_id>`
+- `python scripts/run_customer_simulation.py`
+- `python scripts/evaluate_customer_simulation.py --summary-path data/memory/customer_matrix_summary.json`
+
+## 15) Immediate Work Order (Next Steps)
+This is the best starting sequence right now.
+
+1. Create framework folder skeleton under `src/framework/`.
+2. Implement `contracts.py` and `types.py` with full schema coverage.
+3. Implement `UnifiedStore` facade and adapter wrappers.
+4. Add tests for contract + storage layers.
+5. Implement capability registry and agent runtime baseline.
+6. Implement task graph and orchestration executor compatibility mode.
+7. Replace synthetic measure logic with simulation adapter outputs.
+8. Add run controller and checkpoint/resume.
+9. Add safety policy + budget controls.
+10. Add evaluator/gates and observability/replay.
 
 ## 16) Acceptance Criteria for Starting Autonomous Simulation
 Before allowing unattended runs, all items below must be true.

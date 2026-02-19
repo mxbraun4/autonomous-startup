@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # Database path for collected data
     startup_db_path: str = "data/collected/startups.db"
 
+    # Customer simulation seed data
+    customer_seed_path: str = "data/seed/customers.json"
+    customer_hypotheses_path: str = "data/seed/customer_hypotheses.json"
     # New memory system settings (flat, loaded from env)
     memory_use_legacy: bool = False
     memory_data_dir: str = "data/memory"

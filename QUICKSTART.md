@@ -85,6 +85,12 @@ python scripts/run.py --mode web --list-edit-templates --edit-template-file data
 
 # Quick integration test
 python scripts/test_crewai_quick.py
+
+# Deterministic customer simulation scenario matrix
+python scripts/run_customer_simulation.py
+
+# Evaluate Track D hypotheses (use --allow-warn while hypotheses are empty)
+python scripts/evaluate_customer_simulation.py --allow-warn
 ```
 
 `--edit-template-file` defaults to `data/seed/web_edit_templates.json`.
