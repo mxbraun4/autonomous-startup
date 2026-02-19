@@ -24,6 +24,9 @@ class StartupDatabase:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(self.db_path))
         self.conn.row_factory = sqlite3.Row
+        # WAL mode prevents "database is locked" / "readonly" errors from
+        # concurrent readers (e.g. measure phase reading while build writes).
+        self.conn.execute("PRAGMA journal_mode=WAL")
         self._create_tables()
         logger.info(f"Database initialized at {self.db_path}")
 

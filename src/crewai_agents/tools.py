@@ -651,6 +651,92 @@ def analytics_tool(campaign_results: str) -> str:
 
 
 # =============================================================================
+# CONSENSUS MEMORY TOOLS
+# =============================================================================
+
+
+@tool("Share Insight")
+def share_insight(key: str, value: str, evidence: str = "") -> str:
+    """Share a finding with other agents via consensus memory.
+
+    Use this tool to record insights, learnings, or facts so other agents
+    can access them in future iterations.
+
+    Args:
+        key: A namespaced key (e.g., "outreach.best_subject_line", "data.top_gap_sector")
+        value: The insight or fact to share
+        evidence: Supporting evidence or reasoning
+
+    Returns:
+        Confirmation that the insight was stored
+    """
+    store = get_memory_store()
+    if store is None:
+        return json.dumps({
+            "status": "skipped",
+            "reason": "Memory store not initialised",
+        })
+
+    from src.framework.contracts import ConsensusEntry
+
+    entry = ConsensusEntry(
+        key=key,
+        value=value,
+        source_agent_id="crewai_agent",
+        source_evidence=[evidence] if evidence else [],
+        confidence=0.9,
+    )
+    entity_id = store.cons_set(entry)
+
+    return json.dumps({
+        "status": "success",
+        "entity_id": entity_id,
+        "key": key,
+        "message": f"Insight stored under '{key}'",
+    }, indent=2)
+
+
+@tool("Get Team Insights")
+def get_team_insights(topic: str = "") -> str:
+    """Read insights shared by other agents via consensus memory.
+
+    Use this tool to retrieve shared learnings and facts from past
+    iterations or other agents. Provide a topic prefix to filter results.
+
+    Args:
+        topic: Key prefix to filter (e.g., "outreach", "data"). Empty for all.
+
+    Returns:
+        JSON with matching insights
+    """
+    store = get_memory_store()
+    if store is None:
+        return json.dumps({
+            "status": "skipped",
+            "reason": "Memory store not initialised",
+            "insights": [],
+        })
+
+    entries = store.cons_list(prefix=topic if topic else None)
+    insights = [
+        {
+            "key": e.key,
+            "value": e.value,
+            "confidence": e.confidence,
+            "source": e.source_agent_id,
+        }
+        for e in entries
+    ]
+
+    return json.dumps({
+        "status": "success",
+        "count": len(insights),
+        "topic": topic or "all",
+        "insights": insights,
+    }, indent=2)
+
+
+# =============================================================================
 # LEGACY COMPATIBILITY - Scraper tool that uses database
 # =============================================================================
 

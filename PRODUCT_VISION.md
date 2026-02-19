@@ -25,6 +25,7 @@ Founders and investors both face noisy deal flow and fragmented information.
 - Explainability: every recommended match should include why it is a fit
 - Feedback-driven learning: user and campaign outcomes must directly improve future matching
 - Operational simplicity: workflows must be usable by small startup and VC teams
+- Safe autonomy: autonomous actions must remain bounded, auditable, and policy-constrained
 
 ## Acquisition Layer: Content + Tools
 To grow top-of-funnel demand, the platform will combine SEO-focused editorial content with practical startup/VC tools.
@@ -62,6 +63,8 @@ Initial tool ideas:
 - SQLite-backed startup/VC/outreach records
 - Simulated Build-Measure-Learn iterations with measurable response/meeting metrics
 - Tooling for data collection, match-oriented outreach content, and analytics
+- Framework-level guardrails for tool failover, loop detection, and bounded delegation
+- Deterministic mock-mode execution with local runtime storage for constrained environments
 
 ### Near-term MVP deliverables
 - Deterministic match scoring function with transparent scoring factors
@@ -73,12 +76,17 @@ Initial tool ideas:
 - Foundational editorial pages for core search intents
 - At least two public utility tools integrated with product CTAs
 
+### Current inspectability support
+- Local live run dashboard available via `python scripts/run.py --mode dashboard`
+- Dashboard surfaces run/cycle/task/tool/policy event streams from NDJSON observability logs
+
 ## Success Metrics
 - North star: qualified intro conversion rate (match -> accepted intro)
 - Startup-side: outreach response rate, meeting request rate, time-to-first-qualified-intro
 - VC-side: % of reviewed startups marked relevant, time-to-shortlist, follow-up rate
 - Acquisition: organic sessions, non-branded keyword rankings, tool usage volume, content-to-signup conversion
 - System quality: data freshness, profile completeness, and match explanation coverage
+- Runtime quality: tool fallback success rate, policy-denial rate, and loop-break events
 
 ## Non-Goals (for MVP)
 - Full CRM replacement for funds or startups

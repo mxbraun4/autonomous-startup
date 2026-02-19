@@ -1,6 +1,6 @@
 ﻿# Framework Plan: Autonomous Multi-Agent Simulation System (Detailed)
 
-Last updated: 2026-02-12
+Last updated: 2026-02-18
 
 ## 1) Purpose and Framing
 This document is the implementation blueprint for building an autonomous multi-agent simulation framework that can run repeatedly with minimal human intervention, while remaining constrained, reproducible, and inspectable.
@@ -35,17 +35,32 @@ These constraints are first-class and must be implemented before broad autonomy.
 - Structured observability: every major decision emits an event.
 - Backward compatibility: existing simulation still runs during migration.
 
+## Active Priorities (2026-02-18)
+Near-term execution priorities now that framework layers are implemented:
+
+1. Product-coupled localhost web autonomy:
+   - wire `scripts/run.py --mode web` to the real local product URL, tests, and restart command
+   - keep edit scopes narrow and policy-bounded
+2. Runtime path clarity:
+   - keep `scripts/run.py` as the main entrypoint
+   - keep `scripts/run_simulation.py` as compatibility path only
+3. Controlled real-LLM readiness:
+   - run first `MOCK_MODE=false` cycles under strict budgets and policy limits
+   - compare traces against mock-mode behavior
+
 ## 4) Current Repository Baseline
 Existing useful assets already in repository.
 
 - Orchestration prototype: `src/crewai_agents/crews.py`
 - Agent wiring prototype: `src/crewai_agents/agents.py`
 - Tools registry prototype: `src/crewai_agents/tools.py`
+- Deterministic mock-mode LLM + local CrewAI runtime path bootstrap: `src/crewai_agents/mock_llm.py`, `src/crewai_agents/runtime_env.py`
 - Episodic memory: `src/memory/episodic.py`
 - Semantic memory: `src/memory/semantic.py`
 - Procedural memory: `src/memory/procedural.py`
 - Simulation actors: `src/simulation/startup_agent.py`, `src/simulation/vc_agent.py`
 - DB persistence: `src/data/database.py`
+- Entrypoints: `scripts/seed_memory.py`, `scripts/run.py` (mode-based), `scripts/run_simulation.py` (compatibility path)
 - Entrypoints: `scripts/seed_memory.py`, `scripts/run_simulation.py`, `scripts/run_customer_simulation.py`, `scripts/evaluate_customer_simulation.py`
 
 Main limitation now: measure metrics in `src/crewai_agents/crews.py` include synthetic improvement formulas. This blocks genuine autonomous evaluation.
@@ -136,6 +151,8 @@ Runtime lifecycle:
 2. Resolve task intent and capability requirements.
 3. Select tools/delegates through registry.
 4. Execute tool calls under policy and budget limits.
+   - block repeated identical tool-call loops via deterministic signatures
+   - fail over to lower-priority tools when preferred tools error
 5. Produce typed `TaskResult` and emit events.
 6. Persist outcomes and hand off to evaluator.
 
@@ -143,6 +160,7 @@ Capability registry requirements:
 - Register tool by capability label.
 - Support multiple tools per capability with priority.
 - Provide fallback ordering if primary tool fails.
+- Support cooldown windows for failed tools.
 - Emit resolution trace for observability.
 
 ## Layer D: Orchestration Kernel
@@ -207,6 +225,7 @@ Policy engine responsibilities:
 - Allowlist/denylist tools and capabilities.
 - Validate action class per environment mode.
 - Enforce domain-specific risk policies via adapter hooks.
+- Detect and deny repeated identical tool-call loops.
 
 Budget manager responsibilities:
 - Track runtime wall-clock budget.
@@ -354,6 +373,8 @@ Delegation semantics:
 - Delegator agent emits `TaskSpec` with objective + constraints.
 - Delegate result is validated against `expected_output_schema`.
 - Invalid outputs trigger repair path or failure.
+- Delegation fan-out is bounded per parent (`max_children_per_parent`) with optional global cap.
+- Duplicate delegated objectives under one parent can be suppressed.
 
 ## 9) Safety and Kill-Switch Strategy
 Autonomous systems must have unambiguous safety controls.
@@ -501,9 +522,11 @@ Duration estimate: 3-5 days
 Tasks:
 - Implement event model and timeline output.
 - Implement replay runner and trace diffing.
+- Implement local live dashboard UI for run-event inspection.
 
 Exit criteria:
 - One run can be replayed and compared to original.
+- Operators can inspect run/cycle/task/tool events live from NDJSON logs.
 
 ## Phase 8: Adapter Isolation
 Duration estimate: 2-4 days
@@ -554,6 +577,29 @@ Suggested file set:
 - `tests/test_evaluation_gates.py`
 - `tests/test_replay_determinism.py`
 
+## 14) Operational Commands (Current)
+Primary commands currently used:
+
+- `python scripts/seed_memory.py`
+- `python scripts/run.py --mode crewai --iterations 3`
+- `python scripts/run.py --mode web --iterations 3 --target-url http://localhost:3000`
+- `python scripts/run.py --mode dashboard --events-path data/memory/web_autonomy_events.ndjson`
+- `pytest tests/ -v`
+
+## 15) Immediate Work Order (Current Next Steps)
+This is the current best sequence for shipping autonomous product iteration.
+
+1. Configure `scripts/run.py --mode web` with real local product values:
+   - `--target-url`
+   - `--test-command`
+   - `--restart-command`
+2. Add project-specific edit templates for approved paths and patterns.
+3. Keep policy limits strict:
+   - max edits per cycle
+   - tests must pass before restart
+   - checkpoint each cycle
+4. Run one end-to-end local web cycle and verify event trace quality.
+5. After stable mock runs, test one controlled real-LLM cycle.
 ## 14) Operational Commands (Planned)
 These should exist once framework baseline is implemented.
 

@@ -156,6 +156,14 @@ A top-of-funnel user arriving via article or tool pages.
   - Tool usefulness score
   - CTA friction
 
+## Constrained Simulation Rules
+- No external network dependency for customer behavior decisions
+- Fixed cohort sizes per run (example: 50 founders, 30 VCs, 200 visitors)
+- Deterministic randomness via seedable random generator
+- Bounded state transitions (no unbounded loops)
+- Keep feature inputs limited to fields already produced by the system
+- Enforce runtime guardrails (tool-call loop detection, bounded delegation, policy-denied actions)
+
 ## Customer State Machines
 
 ### Founder Journey
@@ -265,6 +273,17 @@ These are simulation defaults and should be tuned through experiments, not treat
 - Existing simulation actors:
   - `src/simulation/startup_agent.py`
   - `src/simulation/vc_agent.py`
+- Framework safety/runtime modules:
+  - `src/framework/runtime/agent_runtime.py`
+  - `src/framework/orchestration/delegation.py`
+  - `src/framework/safety/action_guard.py`
+- Live run observability:
+  - `scripts/live_dashboard.py`
+  - `python scripts/run.py --mode dashboard --events-path data/memory/web_autonomy_events.ndjson`
+- Extend with:
+  - `src/simulation/customer_agent.py` (new, optional next step)
+  - `data/seed/customers.json` (new cohort definitions)
+  - `src/simulation/scenarios.py` customer-focused scenarios
 - Next environment components:
   - `src/simulation/customer_agent.py`
   - `src/simulation/customer_environment.py`
@@ -318,6 +337,8 @@ Evaluator:
 ## Acceptance Criteria
 - Input and output interfaces are stable and validated at runtime
 - Simulation runs end-to-end with fixed inputs and reproducible outputs
+- Loop-prone repeated action patterns are blocked consistently by guardrails
+- Delegated/derived task expansion remains within configured bounds
 - At least one variant improves:
   - signup -> first match conversion
   - or mutual interest -> meeting conversion

@@ -37,7 +37,7 @@ The system must:
 - Quick integration check:
   - `python scripts/test_crewai_quick.py`
 - Run simulation:
-  - `python scripts/run_simulation.py --iterations 3 --verbose 2`
+  - `python scripts/run.py --mode crewai --iterations 3 --verbose 2`
 - Run tests:
   - `pytest tests/ -v`
 - Targeted integration test:
@@ -87,7 +87,7 @@ The system must:
   - `python scripts/test_crewai_quick.py`
   - `pytest tests/test_crewai_integration.py -v`
 - For end-to-end behavior changes, run one simulation iteration and confirm output completes:
-  - `python scripts/run_simulation.py --iterations 1 --verbose 1`
+  - `python scripts/run.py --mode crewai --iterations 1 --verbose 1`
 - For experiment-sensitive changes, verify outputs map to `EXPERIMENT.md` success criteria and note which track(s) were affected
 - For customer simulation changes, verify reproducibility with fixed parameters/seed and report conversion deltas
 

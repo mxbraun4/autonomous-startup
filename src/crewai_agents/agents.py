@@ -1,6 +1,13 @@
 """CrewAI Agents - Convert our Planners to Agents."""
+
 from typing import Optional, List
+
+from src.crewai_agents.runtime_env import configure_runtime_environment
+from src.utils.config import settings
+
+configure_runtime_environment()
 from crewai import Agent, LLM
+from src.crewai_agents.mock_llm import DeterministicMockLLM
 from src.crewai_agents.tools import (
     # Web collection tools
     web_search_startups,
@@ -21,30 +28,25 @@ from src.crewai_agents.tools import (
     data_validator_tool,
     content_generator_tool,
     tool_builder_tool,
-    analytics_tool
+    analytics_tool,
+    # Consensus memory tools
+    share_insight,
+    get_team_insights,
 )
-from src.utils.config import settings
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
-def get_llm() -> LLM:
+def get_llm() -> LLM | DeterministicMockLLM:
     """Get LLM instance based on configuration.
 
     Returns:
         LLM instance (uses fake LLM in mock mode)
     """
     if settings.mock_mode:
-        # Use a fake LLM for mock mode
-        # Set a dummy API key to satisfy CrewAI's requirements
-        import os
-        os.environ['OPENAI_API_KEY'] = 'fake-key-for-mock-mode'
-
-        return LLM(
-            model="gpt-4o-mini",
-            temperature=0.7
-        )
+        # Fully local deterministic model; no network/API dependency.
+        return DeterministicMockLLM()
 
     # Use Anthropic Claude as primary
     if settings.anthropic_api_key:
@@ -60,10 +62,10 @@ def get_llm() -> LLM:
             api_key=settings.openai_api_key
         )
 
-    # Default to fake LLM
-    import os
-    os.environ['OPENAI_API_KEY'] = 'fake-key-for-mock-mode'
-    return LLM(model="gpt-4o-mini")
+    logger.warning(
+        "No API keys configured with MOCK_MODE=false; falling back to deterministic mock LLM."
+    )
+    return DeterministicMockLLM()
 
 
 def create_master_coordinator(llm: LLM = None) -> Agent:
@@ -140,7 +142,9 @@ def create_data_strategist(llm: LLM = None) -> Agent:
             get_startups_tool,
             get_vcs_tool,
             get_database_stats,
-            data_validator_tool
+            data_validator_tool,
+            share_insight,
+            get_team_insights,
         ],
         llm=llm or get_llm(),
         verbose=True,
@@ -175,7 +179,7 @@ def create_product_strategist(llm: LLM = None) -> Agent:
 
         You use the tool_builder_tool to create specifications for new tools and features.
         ''',
-        tools=[tool_builder_tool],
+        tools=[tool_builder_tool, share_insight, get_team_insights],
         llm=llm or get_llm(),
         verbose=True,
         allow_delegation=True,
@@ -219,7 +223,9 @@ def create_outreach_strategist(llm: LLM = None) -> Agent:
             send_outreach_email,
             get_outreach_history,
             record_outreach_response,
-            analytics_tool
+            analytics_tool,
+            share_insight,
+            get_team_insights,
         ],
         llm=llm or get_llm(),
         verbose=True,

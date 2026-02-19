@@ -4,11 +4,13 @@ Supports both legacy memory systems and the new UnifiedStore.
 By default seeds through UnifiedStore; pass --legacy to use old code paths.
 """
 import asyncio
-import sys
-from pathlib import Path
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+if __package__:
+    from ._bootstrap import add_repo_root_to_path
+else:
+    from _bootstrap import add_repo_root_to_path
+
+add_repo_root_to_path(__file__)
 
 from src.memory import SemanticMemory, EpisodicMemory, ProceduralMemory
 from src.data.database import StartupDatabase
@@ -167,7 +169,7 @@ def main_legacy():
     print(f"Procedural Memory: {len(procedural_mem.get_all_workflows())} workflows")
     print("\nDatabase ready for data collection.")
     print("\nNext steps:")
-    print("  1. Run simulation: python scripts/run_simulation.py")
+    print("  1. Run simulation: python scripts/run.py")
     print("  2. The system will collect startup/VC data via web search")
     print("  3. Outreach campaigns will use collected data")
 
@@ -185,7 +187,7 @@ def main_unified():
     print("Consensus baseline seeded")
     print("\nDatabase ready for data collection.")
     print("\nNext steps:")
-    print("  1. Run simulation: python scripts/run_simulation.py")
+    print("  1. Run simulation: python scripts/run.py")
     print("  2. The system will collect startup/VC data via web search")
     print("  3. Outreach campaigns will use collected data")
 

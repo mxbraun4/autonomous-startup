@@ -112,6 +112,8 @@ class Executor:
                 blocked = graph.pending_task_ids()
                 raise DeadlockError(blocked_tasks=blocked)
 
+            self._emit("task_scheduled", node.task_spec)
+            self._emit("task_started", node.task_spec)
             result = self._execute_with_retries(graph, node)
             all_results[node.task_id] = result
 
