@@ -12,7 +12,8 @@ Define a constrained customer simulation environment for the autonomous startup 
 
 ### Scope
 - This contract defines the customer-side environment only.
-- It covers founder, VC, and visitor behavioral transitions and environment metrics.
+- It primarily covers founder and VC behavioral transitions and environment metrics.
+- Visitor simulation remains available but is disabled by default in marketplace-focused runs.
 - It does not cover web scraping, live traffic, external APIs, or LLM-generated customer decisions.
 
 ### Non-Goals
@@ -56,7 +57,7 @@ All values are numeric and bounded in `[0.0, 1.0]` unless noted:
 #### 3) `cohorts`
 - `founders`: list of founder profiles
 - `vcs`: list of VC profiles
-- `visitors`: list of visitor profiles
+- `visitors`: optional list of visitor profiles (used only when visitor simulation is enabled)
 
 Required founder fields:
 - `id`, `sector`, `stage`, `geography`, `fundraising_status`, `urgency_score`
@@ -71,7 +72,7 @@ Required visitor fields:
 Signals are produced by system components and consumed by the environment:
 - `match_signals`: list of `{founder_id, vc_id, match_score, explanation_quality}`
 - `outreach_signals`: list of `{founder_id, vc_id, personalization_score, timing_score}`
-- `acquisition_signals`: list of `{visitor_id, article_relevance, tool_usefulness, cta_clarity}`
+- `acquisition_signals`: optional list of `{visitor_id, article_relevance, tool_usefulness, cta_clarity}`
 
 ### Output Interface
 
@@ -84,9 +85,6 @@ Each environment run must return a JSON-serializable object with:
 Required `metrics` keys:
 - `founder_visit_to_signup`
 - `vc_visit_to_signup`
-- `visitor_to_tool_use`
-- `tool_use_to_signup`
-- `signup_to_first_match`
 - `founder_interested_rate`
 - `vc_interested_rate`
 - `mutual_interest_rate`
@@ -94,6 +92,10 @@ Required `metrics` keys:
 - `average_match_relevance`
 - `explanation_coverage`
 - `personalization_quality_score`
+- Optional acquisition metrics (visitor mode):
+  - `visitor_to_tool_use`
+  - `tool_use_to_signup`
+  - `signup_to_first_match`
 
 Event shape (`events[]`):
 - `event_id`
@@ -178,7 +180,7 @@ Transition drivers:
 - `interested`: strong signal on fit and timing
 - `meeting`: reciprocal founder interest
 
-### Visitor Journey
+### Visitor Journey (Optional)
 `visit -> article_read -> tool_use -> signup -> first_match`
 
 Transition drivers:
@@ -232,6 +234,7 @@ Transition drivers:
 - Compute probabilistic transition using seeded RNG
 - Emit one event per accepted state transition
 - Stop at terminal state or `max_steps_per_customer`
+- Default runtime mode executes founder + VC only (`include_visitors=false`)
 
 ## Example Parameter Set (MVP)
 - founder_base_interest = 0.15
@@ -283,6 +286,8 @@ These are simulation defaults and should be tuned through experiments, not treat
 ## Deterministic Scenario Runner
 - Run all Track D matrix scenarios:
   - `python scripts/run_customer_simulation.py`
+- Enable visitor cohort explicitly:
+  - `python scripts/run_customer_simulation.py --include-visitors`
 - Run a subset:
   - `python scripts/run_customer_simulation.py --scenarios baseline better_matching`
 - Export JSON summary:

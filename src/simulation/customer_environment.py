@@ -13,12 +13,12 @@ from src.simulation.customer_agent import (
 )
 from src.utils.config import settings
 
-COHORT_KEYS = ("founders", "vcs", "visitors")
+REQUIRED_COHORT_KEYS = ("founders", "vcs")
+OPTIONAL_COHORT_KEYS = ("visitors",)
+COHORT_KEYS = REQUIRED_COHORT_KEYS + OPTIONAL_COHORT_KEYS
 CORE_PARAM_KEYS = (
     "founder_base_interest",
     "vc_base_interest",
-    "visitor_tool_click_rate",
-    "signup_rate_from_tool",
     "meeting_rate_from_mutual_interest",
 )
 
@@ -52,7 +52,9 @@ PROBABILITY_FIELDS = {
     "visitors": {"tool_need_score", "cta_friction"},
 }
 
-SIGNAL_KEYS = ("match_signals", "outreach_signals", "acquisition_signals")
+REQUIRED_SIGNAL_KEYS = ("match_signals", "outreach_signals")
+OPTIONAL_SIGNAL_KEYS = ("acquisition_signals",)
+SIGNAL_KEYS = REQUIRED_SIGNAL_KEYS + OPTIONAL_SIGNAL_KEYS
 SIGNAL_REQUIRED_FIELDS = {
     "match_signals": {
         "founder_id",
@@ -109,7 +111,7 @@ def run_customer_environment(environment_input: Dict[str, Any]) -> Dict[str, Any
 
     match_signals = [dict(item) for item in signals["match_signals"]]
     outreach_signals = [dict(item) for item in signals["outreach_signals"]]
-    acquisition_signals = [dict(item) for item in signals["acquisition_signals"]]
+    acquisition_signals = [dict(item) for item in signals.get("acquisition_signals", [])]
 
     founders = sorted(cohorts["founders"], key=lambda item: str(item.get("id", "")))
     vcs = sorted(cohorts["vcs"], key=lambda item: str(item.get("id", "")))
@@ -342,7 +344,8 @@ def validate_customer_cohorts(payload: Dict[str, Any]) -> List[str]:
     for cohort_key in COHORT_KEYS:
         cohort = payload.get(cohort_key)
         if cohort is None:
-            errors.append(f"Missing required cohort key: '{cohort_key}'.")
+            if cohort_key in REQUIRED_COHORT_KEYS:
+                errors.append(f"Missing required cohort key: '{cohort_key}'.")
             continue
         if not isinstance(cohort, list):
             errors.append(f"Cohort '{cohort_key}' must be a list.")
@@ -447,6 +450,7 @@ def build_customer_environment_input(
     params: Dict[str, Any],
     seed_path: Optional[str] = None,
     signals: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    include_visitors: bool = False,
 ) -> Dict[str, Any]:
     """Build a contract-compliant environment input object."""
     if iteration < 1:
@@ -458,6 +462,10 @@ def build_customer_environment_input(
         for key in SIGNAL_KEYS:
             value = signals.get(key, [])
             merged_signals[key] = list(value) if isinstance(value, list) else []
+
+    if not include_visitors:
+        cohorts["visitors"] = []
+        merged_signals["acquisition_signals"] = []
 
     return {
         "run_context": {
@@ -542,7 +550,8 @@ def validate_environment_input(environment_input: Dict[str, Any]) -> List[str]:
         for key in SIGNAL_KEYS:
             value = signals.get(key)
             if value is None:
-                errors.append(f"Missing signal bucket: '{key}'.")
+                if key in REQUIRED_SIGNAL_KEYS:
+                    errors.append(f"Missing signal bucket: '{key}'.")
                 continue
             if not isinstance(value, list):
                 errors.append(f"signals.{key} must be a list.")

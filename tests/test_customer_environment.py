@@ -58,6 +58,71 @@ def test_build_environment_input_same_seed_same_payload():
     assert first == second
 
 
+def test_build_environment_input_excludes_visitors_by_default():
+    """Marketplace mode should drop visitor cohort and acquisition signals by default."""
+    params = {
+        "founder_base_interest": 0.15,
+        "vc_base_interest": 0.12,
+        "meeting_rate_from_mutual_interest": 0.35,
+    }
+    signals = {
+        "match_signals": [],
+        "outreach_signals": [],
+        "acquisition_signals": [
+            {
+                "visitor_id": "visitor_001",
+                "article_relevance": 0.80,
+                "tool_usefulness": 0.82,
+                "cta_clarity": 0.75,
+            }
+        ],
+    }
+
+    environment_input = build_customer_environment_input(
+        run_id="run_no_visitors_001",
+        iteration=1,
+        seed=42,
+        params=params,
+        signals=signals,
+    )
+
+    assert environment_input["cohorts"]["visitors"] == []
+    assert environment_input["signals"]["acquisition_signals"] == []
+
+
+def test_build_environment_input_can_include_visitors_when_enabled():
+    """Visitor cohort and acquisition signals should be preserved when enabled."""
+    params = {
+        "founder_base_interest": 0.15,
+        "vc_base_interest": 0.12,
+        "meeting_rate_from_mutual_interest": 0.35,
+    }
+    signals = {
+        "match_signals": [],
+        "outreach_signals": [],
+        "acquisition_signals": [
+            {
+                "visitor_id": "visitor_001",
+                "article_relevance": 0.80,
+                "tool_usefulness": 0.82,
+                "cta_clarity": 0.75,
+            }
+        ],
+    }
+
+    environment_input = build_customer_environment_input(
+        run_id="run_with_visitors_001",
+        iteration=1,
+        seed=42,
+        params=params,
+        signals=signals,
+        include_visitors=True,
+    )
+
+    assert len(environment_input["cohorts"]["visitors"]) > 0
+    assert len(environment_input["signals"]["acquisition_signals"]) == 1
+
+
 def test_load_customer_cohorts_raises_for_invalid_seed_data(tmp_path: Path):
     """Invalid seed payloads raise a readable validation error."""
     invalid_seed = {
@@ -320,3 +385,22 @@ def test_validate_environment_input_flags_missing_signal_bucket():
     assert any("match_signals" in error for error in errors)
     assert output["diagnostics"]["input_validation_errors"]
     assert output["metrics"]["founder_interested_rate"] == 0.0
+
+
+def test_validate_environment_input_allows_missing_acquisition_signals():
+    """Acquisition signal bucket is optional in founder/VC-focused mode."""
+    params = {
+        "founder_base_interest": 0.15,
+        "vc_base_interest": 0.12,
+        "meeting_rate_from_mutual_interest": 0.35,
+    }
+    environment_input = build_customer_environment_input(
+        run_id="run_optional_acq_001",
+        iteration=1,
+        seed=42,
+        params=params,
+    )
+    del environment_input["signals"]["acquisition_signals"]
+
+    errors = validate_environment_input(environment_input)
+    assert not any("acquisition_signals" in error for error in errors)

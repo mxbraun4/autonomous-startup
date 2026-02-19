@@ -24,9 +24,6 @@ logger = get_logger(__name__)
 SUMMARY_METRICS = [
     "founder_visit_to_signup",
     "vc_visit_to_signup",
-    "visitor_to_tool_use",
-    "tool_use_to_signup",
-    "signup_to_first_match",
     "founder_interested_rate",
     "vc_interested_rate",
     "mutual_interest_rate",
@@ -81,6 +78,7 @@ def run_scenario_matrix(
     scenario_names: List[str],
     seed_override: Optional[int] = None,
     seed_path: Optional[str] = None,
+    include_visitors: bool = False,
 ) -> Dict[str, Any]:
     """Execute selected deterministic scenarios and compare to baseline."""
     scenario_results: Dict[str, Dict[str, Any]] = {}
@@ -95,6 +93,7 @@ def run_scenario_matrix(
             scenario_name=scenario_name,
             seed=seed_override,
             seed_path=seed_path,
+            include_visitors=include_visitors,
         )
 
         first = run_customer_environment(environment_input)
@@ -129,6 +128,7 @@ def run_scenario_matrix(
             "iteration": iteration,
             "seed_override": seed_override,
             "scenario_names": scenario_names,
+            "include_visitors": include_visitors,
         },
         "baseline_scenario": "baseline",
         "determinism_failures": determinism_failures,
@@ -146,6 +146,7 @@ def _print_summary(summary: Dict[str, Any], verbose: int) -> None:
     print(f"Scenarios: {', '.join(scenario_names)}")
     print(f"Iteration: {summary['run_context']['iteration']}")
     print(f"Seed override: {summary['run_context']['seed_override']}")
+    print(f"Include visitors: {summary['run_context'].get('include_visitors', False)}")
     print("-" * 72)
 
     for scenario_name in scenario_names:
@@ -209,6 +210,14 @@ def parse_args() -> argparse.Namespace:
         help="Optional path to customer seed cohort file.",
     )
     parser.add_argument(
+        "--include-visitors",
+        action="store_true",
+        help=(
+            "Enable visitor cohort and acquisition signals. By default the customer "
+            "simulation runs founder/VC only."
+        ),
+    )
+    parser.add_argument(
         "--scenarios",
         nargs="*",
         default=None,
@@ -251,6 +260,7 @@ def main() -> int:
         scenario_names=scenario_names,
         seed_override=args.seed,
         seed_path=args.seed_path,
+        include_visitors=args.include_visitors,
     )
 
     if args.verbose > 0:

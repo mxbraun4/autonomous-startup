@@ -116,11 +116,12 @@ Goal: validate customer-side dynamics without leaving the simulation environment
 - Metrics:
   - founder visit -> signup conversion
   - VC visit -> signup conversion
-  - visitor -> tool use conversion
-  - tool use -> signup conversion
-  - signup -> first match conversion
   - founder interest rate, VC interest rate, mutual interest rate
   - mutual interest -> meeting conversion
+  - optional acquisition metrics (only with `--include-visitors`)
+    - visitor -> tool use conversion
+    - tool use -> signup conversion
+    - signup -> first match conversion
 - Pass condition:
   - Reproducible outputs with fixed seed and configuration
   - At least one tested variant improves a downstream conversion metric

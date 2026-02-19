@@ -297,13 +297,16 @@ def _build_scenario_matrix() -> Dict[str, Dict[str, Any]]:
             "signals": better_matching_signals,
         },
         "acquisition_push": {
-            "description": "Improved acquisition quality and funnel propensities.",
+            "description": (
+                "Improved acquisition quality and funnel propensities "
+                "(effective only when visitors are enabled)."
+            ),
             "seed": 42,
             "hypothesis": {
                 "id": "H_ACQ_001",
                 "summary": (
                     "Stronger acquisition signals should increase tool_use_to_signup "
-                    "and signup_to_first_match."
+                    "and signup_to_first_match when visitor simulation is enabled."
                 ),
                 "metric": "tool_use_to_signup",
                 "direction": "increase",
@@ -348,6 +351,7 @@ def build_customer_environment_input_for_scenario(
     scenario_name: str,
     seed: Optional[int] = None,
     seed_path: Optional[str] = None,
+    include_visitors: bool = False,
 ) -> Dict[str, Any]:
     """Build a contract-compliant environment input from a scenario row."""
     scenario = get_customer_scenario(scenario_name)
@@ -360,4 +364,5 @@ def build_customer_environment_input_for_scenario(
         params=scenario["params"],
         seed_path=seed_path,
         signals=scenario["signals"],
+        include_visitors=include_visitors,
     )

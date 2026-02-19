@@ -72,6 +72,9 @@ python scripts/test_crewai_quick.py
 # Deterministic customer simulation scenario matrix
 python scripts/run_customer_simulation.py
 
+# Optional: include visitor cohort/acquisition signals
+python scripts/run_customer_simulation.py --include-visitors
+
 # Evaluate Track D hypotheses (use --allow-warn while hypotheses are empty)
 python scripts/evaluate_customer_simulation.py --allow-warn
 ```
