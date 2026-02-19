@@ -140,6 +140,8 @@ def test_run_customer_environment_returns_contract_shape():
     assert output["diagnostics"]["input_validation_errors"] == []
 
     expected_metric_keys = {
+        "founder_visit_to_signup",
+        "vc_visit_to_signup",
         "visitor_to_tool_use",
         "tool_use_to_signup",
         "signup_to_first_match",
@@ -202,6 +204,97 @@ def test_run_customer_environment_is_deterministic():
     second = run_customer_environment(environment_input)
 
     assert first == second
+
+
+def test_founder_and_vc_journeys_start_with_signup_transition(tmp_path: Path):
+    """Founder/VC journeys should begin with a visit -> signup transition."""
+    seed_payload = {
+        "version": 1,
+        "founders": [
+            {
+                "id": "founder_test_001",
+                "sector": "fintech",
+                "stage": "seed",
+                "geography": "Germany",
+                "fundraising_status": "active",
+                "urgency_score": 1.0,
+            }
+        ],
+        "vcs": [
+            {
+                "id": "vc_test_001",
+                "thesis_sectors": ["fintech"],
+                "stage_focus": "seed",
+                "geography": "Europe",
+                "confidence_threshold": 0.0,
+            }
+        ],
+        "visitors": [],
+    }
+    seed_path = tmp_path / "customers_signup_flow.json"
+    seed_path.write_text(json.dumps(seed_payload), encoding="utf-8")
+
+    params = {
+        "founder_base_interest": 0.15,
+        "vc_base_interest": 0.12,
+        "founder_signup_base_rate": 1.0,
+        "vc_signup_base_rate": 1.0,
+        "founder_signup_cta_clarity": 1.0,
+        "vc_signup_cta_clarity": 1.0,
+        "founder_signup_friction": 0.0,
+        "vc_signup_friction": 0.0,
+        "visitor_tool_click_rate": 0.20,
+        "signup_rate_from_tool": 0.10,
+        "meeting_rate_from_mutual_interest": 0.35,
+    }
+    signals = {
+        "match_signals": [
+            {
+                "founder_id": "founder_test_001",
+                "vc_id": "vc_test_001",
+                "match_score": 1.0,
+                "explanation_quality": 1.0,
+            }
+        ],
+        "outreach_signals": [
+            {
+                "founder_id": "founder_test_001",
+                "vc_id": "vc_test_001",
+                "personalization_score": 1.0,
+                "timing_score": 1.0,
+            }
+        ],
+        "acquisition_signals": [],
+    }
+
+    environment_input = build_customer_environment_input(
+        run_id="run_signup_start_001",
+        iteration=1,
+        seed=42,
+        params=params,
+        seed_path=str(seed_path),
+        signals=signals,
+    )
+    output = run_customer_environment(environment_input)
+
+    founder_events = [
+        event
+        for event in output["events"]
+        if event["actor_type"] == "founder" and event["actor_id"] == "founder_test_001"
+    ]
+    vc_events = [
+        event
+        for event in output["events"]
+        if event["actor_type"] == "vc" and event["actor_id"] == "vc_test_001"
+    ]
+
+    assert founder_events[0]["from_state"] == "visit"
+    assert founder_events[0]["to_state"] == "signup"
+    assert founder_events[0]["reason_code"] == "founder_signed_up"
+
+    assert vc_events[0]["from_state"] == "visit"
+    assert vc_events[0]["to_state"] == "signup"
+    assert vc_events[0]["reason_code"] == "vc_signed_up"
 
 
 def test_validate_environment_input_flags_missing_signal_bucket():

@@ -77,6 +77,12 @@ SIGNAL_REQUIRED_FIELDS = {
 DEFAULT_ENV_PARAMS = {
     "founder_base_interest": 0.15,
     "vc_base_interest": 0.12,
+    "founder_signup_base_rate": 0.70,
+    "vc_signup_base_rate": 0.66,
+    "founder_signup_cta_clarity": 0.72,
+    "vc_signup_cta_clarity": 0.68,
+    "founder_signup_friction": 0.30,
+    "vc_signup_friction": 0.33,
     "visitor_tool_click_rate": 0.20,
     "signup_rate_from_tool": 0.10,
     "meeting_rate_from_mutual_interest": 0.35,
@@ -590,6 +596,8 @@ def _safe_int(value: Any, default: int) -> int:
 def _empty_environment_output(iteration: int, errors: List[str]) -> Dict[str, Any]:
     return {
         "metrics": {
+            "founder_visit_to_signup": 0.0,
+            "vc_visit_to_signup": 0.0,
             "visitor_to_tool_use": 0.0,
             "tool_use_to_signup": 0.0,
             "signup_to_first_match": 0.0,
@@ -748,6 +756,15 @@ def _compute_environment_metrics(
     signup_count = sum(state in {"signup", "first_match"} for state in visitor_states)
     first_match_count = sum(state == "first_match" for state in visitor_states)
 
+    founder_signup_count = sum(
+        state in {"signup", "engaged", "matched", "interested", "meeting"}
+        for state in founder_states
+    )
+    vc_signup_count = sum(
+        state in {"signup", "engaged", "shortlist", "interested", "meeting"}
+        for state in vc_states
+    )
+
     founder_interested = sum(
         state in {"interested", "meeting"} for state in founder_states
     )
@@ -764,6 +781,8 @@ def _compute_environment_metrics(
     explanation_covered = sum(score > 0.0 for score in explanation_scores)
 
     return {
+        "founder_visit_to_signup": _safe_rate(founder_signup_count, len(founder_states)),
+        "vc_visit_to_signup": _safe_rate(vc_signup_count, len(vc_states)),
         "visitor_to_tool_use": _safe_rate(tool_use_count, len(visitor_states)),
         "tool_use_to_signup": _safe_rate(signup_count, tool_use_count),
         "signup_to_first_match": _safe_rate(first_match_count, signup_count),

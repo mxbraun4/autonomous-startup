@@ -40,6 +40,13 @@ All values are numeric and bounded in `[0.0, 1.0]` unless noted:
 - `visitor_tool_click_rate`
 - `signup_rate_from_tool`
 - `meeting_rate_from_mutual_interest`
+- Optional signup behavior params:
+  - `founder_signup_base_rate`
+  - `vc_signup_base_rate`
+  - `founder_signup_cta_clarity`
+  - `vc_signup_cta_clarity`
+  - `founder_signup_friction`
+  - `vc_signup_friction`
 - Optional threshold params:
   - `match_score_threshold`
   - `shortlist_threshold`
@@ -75,6 +82,8 @@ Each environment run must return a JSON-serializable object with:
 - `diagnostics`
 
 Required `metrics` keys:
+- `founder_visit_to_signup`
+- `vc_visit_to_signup`
 - `visitor_to_tool_use`
 - `tool_use_to_signup`
 - `signup_to_first_match`
@@ -150,18 +159,20 @@ A top-of-funnel user arriving via article or tool pages.
 ## Customer State Machines
 
 ### Founder Journey
-`unaware -> engaged -> matched -> interested -> meeting`
+`visit -> signup -> engaged -> matched -> interested -> meeting`
 
 Transition drivers:
+- `signup`: CTA clarity, signup friction, preview match quality, urgency
 - `engaged`: content/tool relevance
 - `matched`: match score above threshold
 - `interested`: outreach personalization + fit explanation quality
 - `meeting`: founder interest + VC reciprocal interest
 
 ### VC Journey
-`unaware -> engaged -> shortlist -> interested -> meeting`
+`visit -> signup -> engaged -> shortlist -> interested -> meeting`
 
 Transition drivers:
+- `signup`: CTA clarity, signup friction, preview match quality, confidence threshold
 - `engaged`: startup quality + relevance to thesis
 - `shortlist`: alignment and confidence threshold
 - `interested`: strong signal on fit and timing
@@ -175,6 +186,46 @@ Transition drivers:
 - tool output usefulness
 - CTA clarity and friction
 
+## Founder/VC Transition Logic (Deterministic)
+
+### Founder
+1. `visit -> signup`
+   - Inputs: `founder_signup_base_rate`, `founder_signup_cta_clarity`, `founder_signup_friction`, `urgency_score`, `match_score`, `explanation_quality`
+   - Derived:
+     - `preview_match_quality = clamp(0.65 * match_score + 0.35 * explanation_quality)`
+     - `signup_prob = clamp(founder_signup_base_rate * (0.60 + 0.40 * founder_signup_cta_clarity) * (0.50 + 0.50 * preview_match_quality) * (1.00 - 0.35 * founder_signup_friction) * (0.60 + 0.40 * urgency_score))`
+   - Decision: `rng.random() < signup_prob`
+2. `signup -> engaged`
+   - `engaged_prob = clamp(0.20 + 0.45 * match_score + 0.25 * urgency_score)`
+   - Decision: `rng.random() < engaged_prob`
+3. `engaged -> matched`
+   - Gate: `match_score >= match_score_threshold`
+4. `matched -> interested`
+   - `interest_prob = clamp(founder_base_interest + 0.35 * personalization_score + 0.20 * explanation_quality + 0.15 * timing_score + 0.15 * urgency_score)`
+   - Gate + decision: `interest_prob >= interest_threshold` and `rng.random() < interest_prob`
+5. `interested -> meeting`
+   - Requires mutual interest with VC, then `rng.random() < meeting_rate_from_mutual_interest`
+
+### VC
+1. `visit -> signup`
+   - Inputs: `vc_signup_base_rate`, `vc_signup_cta_clarity`, `vc_signup_friction`, `confidence_threshold`, `match_score`, `explanation_quality`
+   - Derived:
+     - `preview_match_quality = clamp(0.70 * match_score + 0.30 * explanation_quality)`
+     - `confidence_factor = clamp(1.00 - confidence_threshold)`
+     - `signup_prob = clamp(vc_signup_base_rate * (0.60 + 0.40 * vc_signup_cta_clarity) * (0.50 + 0.50 * preview_match_quality) * (1.00 - 0.35 * vc_signup_friction) * (0.55 + 0.45 * confidence_factor))`
+   - Decision: `rng.random() < signup_prob`
+2. `signup -> engaged`
+   - `engaged_prob = clamp(0.15 + 0.55 * match_score + 0.20 * explanation_quality)`
+   - Decision: `rng.random() < engaged_prob`
+3. `engaged -> shortlist`
+   - Gate: `match_score >= shortlist_threshold`
+4. `shortlist -> interested`
+   - `interest_prob = clamp(vc_base_interest + 0.40 * match_score + 0.20 * explanation_quality + 0.15 * timing_score)`
+   - `gate_threshold = max(confidence_threshold, interest_threshold)`
+   - Gate + decision: `interest_prob >= gate_threshold` and `rng.random() < interest_prob`
+5. `interested -> meeting`
+   - Requires mutual interest with Founder, then `rng.random() < meeting_rate_from_mutual_interest`
+
 ## Transition Evaluation Order
 - Validate actor input and current state
 - Compute deterministic gates (hard thresholds)
@@ -185,6 +236,8 @@ Transition drivers:
 ## Example Parameter Set (MVP)
 - founder_base_interest = 0.15
 - vc_base_interest = 0.12
+- founder_signup_base_rate = 0.70
+- vc_signup_base_rate = 0.66
 - visitor_tool_click_rate = 0.20
 - signup_rate_from_tool = 0.10
 - meeting_rate_from_mutual_interest = 0.35
@@ -193,6 +246,8 @@ These are simulation defaults and should be tuned through experiments, not treat
 
 ## Metrics
 - Funnel metrics:
+  - founder visit -> signup
+  - VC visit -> signup
   - visitor -> tool use
   - tool use -> signup
   - signup -> first qualified match

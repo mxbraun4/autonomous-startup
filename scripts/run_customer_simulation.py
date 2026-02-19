@@ -22,6 +22,8 @@ from src.utils.logging import get_logger, setup_logging
 logger = get_logger(__name__)
 
 SUMMARY_METRICS = [
+    "founder_visit_to_signup",
+    "vc_visit_to_signup",
     "visitor_to_tool_use",
     "tool_use_to_signup",
     "signup_to_first_match",

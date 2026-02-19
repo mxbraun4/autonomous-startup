@@ -18,6 +18,12 @@ _SCENARIO_ORDER = [
 _BASELINE_PARAMS: Dict[str, Any] = {
     "founder_base_interest": 0.15,
     "vc_base_interest": 0.12,
+    "founder_signup_base_rate": 0.70,
+    "vc_signup_base_rate": 0.66,
+    "founder_signup_cta_clarity": 0.72,
+    "vc_signup_cta_clarity": 0.68,
+    "founder_signup_friction": 0.30,
+    "vc_signup_friction": 0.33,
     "visitor_tool_click_rate": 0.20,
     "signup_rate_from_tool": 0.10,
     "meeting_rate_from_mutual_interest": 0.35,

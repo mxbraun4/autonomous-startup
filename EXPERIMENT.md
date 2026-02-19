@@ -114,6 +114,8 @@ Goal: validate customer-side dynamics without leaving the simulation environment
 - Hypothesis contract file:
   - `data/seed/customer_hypotheses.json`
 - Metrics:
+  - founder visit -> signup conversion
+  - VC visit -> signup conversion
   - visitor -> tool use conversion
   - tool use -> signup conversion
   - signup -> first match conversion
