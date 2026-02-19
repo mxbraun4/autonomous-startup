@@ -118,6 +118,9 @@ Goal: validate customer-side dynamics without leaving the simulation environment
   - VC visit -> signup conversion
   - founder interest rate, VC interest rate, mutual interest rate
   - mutual interest -> meeting conversion
+  - deterministic event-instrumentation coverage for signup signal drivers
+  - failed-transition feedback frequency by reason code
+  - interaction quality notes from selected LLM-enhanced steps
   - optional acquisition metrics (only with `--include-visitors`)
     - visitor -> tool use conversion
     - tool use -> signup conversion
@@ -127,6 +130,8 @@ Goal: validate customer-side dynamics without leaving the simulation environment
   - At least one tested variant improves a downstream conversion metric
 - Execution command:
   - `python scripts/run_customer_simulation.py`
+  - optional event instrumentation input:
+    - `python scripts/run_customer_simulation.py --product-events-path data/seed/product_events.json`
 - Evaluation command:
   - `python scripts/evaluate_customer_simulation.py --summary-path data/memory/customer_matrix_summary.json --allow-warn`
 

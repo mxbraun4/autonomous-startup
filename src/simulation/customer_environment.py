@@ -11,6 +11,10 @@ from src.simulation.customer_agent import (
     VCCustomerAgent,
     VisitorCustomerAgent,
 )
+from src.simulation.customer_event_instrumentation import (
+    derive_signup_signal_overrides_from_events,
+)
+from src.simulation.customer_feedback import CustomerFeedbackGenerator
 from src.utils.config import settings
 
 REQUIRED_COHORT_KEYS = ("founders", "vcs")
@@ -47,7 +51,13 @@ REQUIRED_FIELDS = {
 }
 
 PROBABILITY_FIELDS = {
-    "founders": {"urgency_score"},
+    "founders": {
+        "urgency_score",
+        "trust_score",
+        "form_complexity_score",
+        "channel_intent_fit",
+        "proof_of_outcomes",
+    },
     "vcs": {"confidence_threshold"},
     "visitors": {"tool_need_score", "cta_friction"},
 }
@@ -85,10 +95,15 @@ DEFAULT_ENV_PARAMS = {
     "vc_signup_cta_clarity": 0.68,
     "founder_signup_friction": 0.30,
     "vc_signup_friction": 0.33,
+    "founder_signup_trust_score": 1.0,
+    "founder_signup_form_complexity": 0.0,
+    "founder_signup_channel_intent_fit": 1.0,
+    "founder_signup_proof_of_outcomes": 1.0,
     "visitor_tool_click_rate": 0.20,
     "signup_rate_from_tool": 0.10,
     "meeting_rate_from_mutual_interest": 0.35,
     "match_score_threshold": 0.50,
+    "vc_match_score_threshold": 0.55,
     "shortlist_threshold": 0.55,
     "interest_threshold": 0.40,
     "max_steps_per_customer": 5,
@@ -108,6 +123,23 @@ def run_customer_environment(environment_input: Dict[str, Any]) -> Dict[str, Any
     params = merge_environment_params(environment_input["params"])
     cohorts = environment_input["cohorts"]
     signals = environment_input["signals"]
+    llm_feedback_enabled = _safe_bool(run_context.get("use_llm_feedback"), default=False)
+    llm_feedback_steps = _safe_string_list(run_context.get("llm_feedback_steps"))
+    llm_feedback_model = str(run_context.get("llm_feedback_model", "claude-3-haiku-20240307"))
+    llm_feedback_temperature = _safe_float(
+        run_context.get("llm_feedback_temperature"),
+        default=0.0,
+    )
+    product_surface_only = _safe_bool(
+        run_context.get("product_surface_only"),
+        default=False,
+    )
+    feedback_generator = CustomerFeedbackGenerator(
+        use_llm=llm_feedback_enabled,
+        llm_steps=llm_feedback_steps,
+        llm_model=llm_feedback_model,
+        llm_temperature=llm_feedback_temperature,
+    )
 
     match_signals = [dict(item) for item in signals["match_signals"]]
     outreach_signals = [dict(item) for item in signals["outreach_signals"]]
@@ -150,6 +182,12 @@ def run_customer_environment(environment_input: Dict[str, Any]) -> Dict[str, Any
     event_counter = 0
     events: List[Dict[str, Any]] = []
     dropoff_reasons: Dict[str, int] = {}
+    failure_feedback: List[Dict[str, Any]] = []
+    interaction_logs: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
+        "founders": {},
+        "vcs": {},
+        "visitors": {},
+    }
 
     final_states = {"founders": {}, "vcs": {}, "visitors": {}}
     founder_results: Dict[str, Dict[str, Any]] = {}
@@ -172,6 +210,15 @@ def run_customer_environment(environment_input: Dict[str, Any]) -> Dict[str, Any
         result = agent.simulate(match_signal, outreach_signal, max_steps=max_steps)
         founder_results[founder_id] = result
         final_states["founders"][founder_id] = result["state"]
+        _append_actor_interactions(
+            actor_type="founder",
+            actor_id=founder_id,
+            interactions=result.get("interaction_trace", []),
+            iteration=iteration,
+            interaction_logs=interaction_logs,
+            failure_feedback=failure_feedback,
+            feedback_generator=feedback_generator,
+        )
 
         for transition in result["transitions"]:
             event_counter += 1
@@ -203,6 +250,15 @@ def run_customer_environment(environment_input: Dict[str, Any]) -> Dict[str, Any
         result = agent.simulate(match_signal, outreach_signal, max_steps=max_steps)
         vc_results[vc_id] = result
         final_states["vcs"][vc_id] = result["state"]
+        _append_actor_interactions(
+            actor_type="vc",
+            actor_id=vc_id,
+            interactions=result.get("interaction_trace", []),
+            iteration=iteration,
+            interaction_logs=interaction_logs,
+            failure_feedback=failure_feedback,
+            feedback_generator=feedback_generator,
+        )
 
         for transition in result["transitions"]:
             event_counter += 1
@@ -252,6 +308,26 @@ def run_customer_environment(environment_input: Dict[str, Any]) -> Dict[str, Any
                     )
                 )
                 final_states["founders"][founder_id] = "meeting"
+                _append_actor_interactions(
+                    actor_type="founder",
+                    actor_id=founder_id,
+                    interactions=[
+                        {
+                            "step_id": "interested_to_meeting",
+                            "interaction": "confirm_intro_meeting",
+                            "decision_mode": "cross_actor_probabilistic",
+                            "outcome": "passed",
+                            "reason_code": "mutual_interest_meeting",
+                            "score_snapshot": {
+                                "meeting_rate_from_mutual_interest": meeting_rate,
+                            },
+                        }
+                    ],
+                    iteration=iteration,
+                    interaction_logs=interaction_logs,
+                    failure_feedback=failure_feedback,
+                    feedback_generator=feedback_generator,
+                )
 
             if final_states["vcs"].get(vc_id) == "interested":
                 transition = {
@@ -273,17 +349,117 @@ def run_customer_environment(environment_input: Dict[str, Any]) -> Dict[str, Any
                     )
                 )
                 final_states["vcs"][vc_id] = "meeting"
+                _append_actor_interactions(
+                    actor_type="vc",
+                    actor_id=vc_id,
+                    interactions=[
+                        {
+                            "step_id": "interested_to_meeting",
+                            "interaction": "confirm_intro_meeting",
+                            "decision_mode": "cross_actor_probabilistic",
+                            "outcome": "passed",
+                            "reason_code": "mutual_interest_meeting",
+                            "score_snapshot": {
+                                "meeting_rate_from_mutual_interest": meeting_rate,
+                            },
+                        }
+                    ],
+                    iteration=iteration,
+                    interaction_logs=interaction_logs,
+                    failure_feedback=failure_feedback,
+                    feedback_generator=feedback_generator,
+                )
         else:
             _increment_counter(dropoff_reasons, "mutual_interest_no_meeting")
+            _append_actor_interactions(
+                actor_type="founder",
+                actor_id=founder_id,
+                interactions=[
+                    {
+                        "step_id": "interested_to_meeting",
+                        "interaction": "confirm_intro_meeting",
+                        "decision_mode": "cross_actor_probabilistic",
+                        "outcome": "failed",
+                        "reason_code": "mutual_interest_no_meeting",
+                        "score_snapshot": {
+                            "meeting_rate_from_mutual_interest": meeting_rate,
+                        },
+                    }
+                ],
+                iteration=iteration,
+                interaction_logs=interaction_logs,
+                failure_feedback=failure_feedback,
+                feedback_generator=feedback_generator,
+            )
+            _append_actor_interactions(
+                actor_type="vc",
+                actor_id=vc_id,
+                interactions=[
+                    {
+                        "step_id": "interested_to_meeting",
+                        "interaction": "confirm_intro_meeting",
+                        "decision_mode": "cross_actor_probabilistic",
+                        "outcome": "failed",
+                        "reason_code": "mutual_interest_no_meeting",
+                        "score_snapshot": {
+                            "meeting_rate_from_mutual_interest": meeting_rate,
+                        },
+                    }
+                ],
+                iteration=iteration,
+                interaction_logs=interaction_logs,
+                failure_feedback=failure_feedback,
+                feedback_generator=feedback_generator,
+            )
 
     founders_in_mutual = {pair[0] for pair in mutual_interest_pairs}
     vcs_in_mutual = {pair[1] for pair in mutual_interest_pairs}
     for founder_id, state in final_states["founders"].items():
         if state == "interested" and founder_id not in founders_in_mutual:
             _increment_counter(dropoff_reasons, "founder_no_reciprocal_interest")
+            _append_actor_interactions(
+                actor_type="founder",
+                actor_id=founder_id,
+                interactions=[
+                    {
+                        "step_id": "interested_to_meeting",
+                        "interaction": "confirm_intro_meeting",
+                        "decision_mode": "cross_actor_gate",
+                        "outcome": "failed",
+                        "reason_code": "founder_no_reciprocal_interest",
+                        "score_snapshot": {
+                            "mutual_interest_candidates": len(mutual_interest_pairs),
+                        },
+                    }
+                ],
+                iteration=iteration,
+                interaction_logs=interaction_logs,
+                failure_feedback=failure_feedback,
+                feedback_generator=feedback_generator,
+            )
     for vc_id, state in final_states["vcs"].items():
         if state == "interested" and vc_id not in vcs_in_mutual:
             _increment_counter(dropoff_reasons, "vc_no_reciprocal_interest")
+            _append_actor_interactions(
+                actor_type="vc",
+                actor_id=vc_id,
+                interactions=[
+                    {
+                        "step_id": "interested_to_meeting",
+                        "interaction": "confirm_intro_meeting",
+                        "decision_mode": "cross_actor_gate",
+                        "outcome": "failed",
+                        "reason_code": "vc_no_reciprocal_interest",
+                        "score_snapshot": {
+                            "mutual_interest_candidates": len(mutual_interest_pairs),
+                        },
+                    }
+                ],
+                iteration=iteration,
+                interaction_logs=interaction_logs,
+                failure_feedback=failure_feedback,
+                feedback_generator=feedback_generator,
+            )
 
     global_match_relevance = _mean(
         [_clamp_signal_value(item.get("match_score")) for item in match_signals]
@@ -298,6 +474,7 @@ def run_customer_environment(environment_input: Dict[str, Any]) -> Dict[str, Any
             max_steps=max_steps,
         )
         final_states["visitors"][visitor_id] = result["state"]
+        interaction_logs["visitors"][visitor_id] = []
 
         for transition in result["transitions"]:
             event_counter += 1
@@ -323,13 +500,40 @@ def run_customer_environment(environment_input: Dict[str, Any]) -> Dict[str, Any
         meeting_pairs=meeting_pairs,
     )
 
+    product_surface = {
+        "events": _sanitize_events_for_product_surface(events),
+        "interaction_logs": _sanitize_interaction_logs_for_product_surface(interaction_logs),
+        "failure_feedback": _sanitize_failure_feedback_for_product_surface(failure_feedback),
+    }
+    output_events = events if not product_surface_only else product_surface["events"]
+    output_interaction_logs = (
+        interaction_logs if not product_surface_only else product_surface["interaction_logs"]
+    )
+    output_failure_feedback = (
+        failure_feedback if not product_surface_only else product_surface["failure_feedback"]
+    )
+    event_instrumentation = run_context.get("event_instrumentation", {})
+    if product_surface_only:
+        event_instrumentation = _sanitize_event_instrumentation_for_product_surface(
+            event_instrumentation
+        )
+
     return {
         "metrics": metrics,
-        "events": events,
+        "events": output_events,
         "final_states": final_states,
         "diagnostics": {
             "dropoff_reasons": dict(sorted(dropoff_reasons.items())),
             "input_validation_errors": [],
+            "interaction_logs": output_interaction_logs,
+            "failure_feedback": output_failure_feedback,
+            "llm_feedback_requested": llm_feedback_enabled,
+            "llm_feedback_active": feedback_generator.llm_active,
+            "llm_feedback_steps": sorted(feedback_generator.llm_steps),
+            "feedback_contract_version": feedback_generator.contract_version,
+            "event_instrumentation": event_instrumentation,
+            "product_surface_only": product_surface_only,
+            "product_surface": product_surface,
         },
     }
 
@@ -374,6 +578,18 @@ def validate_customer_cohorts(payload: Dict[str, Any]) -> List[str]:
                 )
             else:
                 seen_ids.add(profile_id)
+
+            signup_payload = profile.get("signup_payload")
+            if signup_payload is not None:
+                if not isinstance(signup_payload, dict):
+                    errors.append(f"{item_path}.signup_payload must be an object when provided.")
+                else:
+                    for field_name in signup_payload.keys():
+                        if not isinstance(field_name, str) or not field_name.strip():
+                            errors.append(
+                                f"{item_path}.signup_payload contains an invalid field name."
+                            )
+                            break
 
             if cohort_key == "vcs" and "thesis_sectors" in profile:
                 thesis_sectors = profile.get("thesis_sectors")
@@ -451,6 +667,10 @@ def build_customer_environment_input(
     seed_path: Optional[str] = None,
     signals: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     include_visitors: bool = False,
+    use_llm_feedback: bool = False,
+    llm_feedback_steps: Optional[List[str]] = None,
+    product_events: Optional[List[Dict[str, Any]]] = None,
+    product_surface_only: bool = False,
 ) -> Dict[str, Any]:
     """Build a contract-compliant environment input object."""
     if iteration < 1:
@@ -467,13 +687,57 @@ def build_customer_environment_input(
         cohorts["visitors"] = []
         merged_signals["acquisition_signals"] = []
 
+    resolved_params = dict(params)
+    instrumentation_summary: Dict[str, Any] = {
+        "enabled": False,
+        "scoring_formula_version": 0,
+        "event_count": 0,
+        "founder_event_count": 0,
+        "tracked_event_count": 0,
+        "event_type_counts": {},
+        "founder_signal_coverage": {},
+        "founder_scores": {},
+        "founder_signal_sources": {},
+        "founder_signal_inputs": {},
+        "param_overrides": {},
+        "param_sources": {},
+        "effective_global_signup_params": {},
+    }
+    if product_events is not None:
+        defaulted_params = dict(DEFAULT_ENV_PARAMS)
+        defaulted_params.update(resolved_params)
+        instrumentation = derive_signup_signal_overrides_from_events(
+            events=product_events,
+            founders=cohorts.get("founders", []),
+            default_params=defaulted_params,
+        )
+
+        resolved_params.update(instrumentation["param_overrides"])
+        founder_profile_overrides = instrumentation["founder_profile_overrides"]
+        for founder in cohorts.get("founders", []):
+            founder_id = founder.get("id")
+            if not isinstance(founder_id, str):
+                continue
+            profile_override = founder_profile_overrides.get(founder_id)
+            if isinstance(profile_override, dict):
+                founder.update(profile_override)
+
+        instrumentation_summary = {
+            "enabled": True,
+            **instrumentation["diagnostics"],
+        }
+
     return {
         "run_context": {
             "run_id": run_id,
             "iteration": iteration,
             "seed": seed,
+            "use_llm_feedback": bool(use_llm_feedback),
+            "llm_feedback_steps": list(llm_feedback_steps or []),
+            "product_surface_only": bool(product_surface_only),
+            "event_instrumentation": instrumentation_summary,
         },
-        "params": dict(params),
+        "params": resolved_params,
         "cohorts": cohorts,
         "signals": merged_signals,
     }
@@ -518,6 +782,33 @@ def validate_environment_input(environment_input: Dict[str, Any]) -> List[str]:
         seed = run_context.get("seed")
         if not isinstance(seed, int):
             errors.append("run_context.seed must be an integer.")
+
+        use_llm_feedback = run_context.get("use_llm_feedback")
+        if use_llm_feedback is not None and not isinstance(use_llm_feedback, bool):
+            errors.append("run_context.use_llm_feedback must be boolean when provided.")
+
+        llm_feedback_steps = run_context.get("llm_feedback_steps")
+        if llm_feedback_steps is not None:
+            if not isinstance(llm_feedback_steps, list) or not all(
+                isinstance(step, str) and step.strip() for step in llm_feedback_steps
+            ):
+                errors.append(
+                    "run_context.llm_feedback_steps must be a list of non-empty strings."
+                )
+
+        product_surface_only = run_context.get("product_surface_only")
+        if product_surface_only is not None and not isinstance(product_surface_only, bool):
+            errors.append(
+                "run_context.product_surface_only must be boolean when provided."
+            )
+
+        llm_feedback_temperature = run_context.get("llm_feedback_temperature")
+        if llm_feedback_temperature is not None and not _is_probability(
+            llm_feedback_temperature
+        ):
+            errors.append(
+                "run_context.llm_feedback_temperature must be in [0.0, 1.0] when provided."
+            )
 
     params = environment_input.get("params")
     if not isinstance(params, dict):
@@ -602,6 +893,204 @@ def _safe_int(value: Any, default: int) -> int:
     return default
 
 
+def _safe_float(value: Any, default: float) -> float:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    return default
+
+
+def _safe_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    return default
+
+
+def _safe_string_list(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    cleaned: List[str] = []
+    for item in value:
+        if isinstance(item, str):
+            text = item.strip()
+            if text:
+                cleaned.append(text)
+    return cleaned
+
+
+def _interaction_bucket_key(actor_type: str) -> str:
+    if actor_type == "founder":
+        return "founders"
+    if actor_type == "vc":
+        return "vcs"
+    return "visitors"
+
+
+def _append_actor_interactions(
+    actor_type: str,
+    actor_id: str,
+    interactions: Any,
+    iteration: int,
+    interaction_logs: Dict[str, Dict[str, List[Dict[str, Any]]]],
+    failure_feedback: List[Dict[str, Any]],
+    feedback_generator: CustomerFeedbackGenerator,
+) -> None:
+    if not isinstance(interactions, list):
+        return
+
+    bucket = _interaction_bucket_key(actor_type)
+    actor_log = interaction_logs[bucket].setdefault(actor_id, [])
+
+    for item in interactions:
+        if not isinstance(item, dict):
+            continue
+
+        interaction = dict(item)
+        feedback = feedback_generator.render_feedback(actor_type, actor_id, interaction)
+        interaction["feedback_to_system"] = feedback["message"]
+        interaction["feedback_source"] = feedback["source"]
+        interaction["feedback_category"] = feedback.get("category")
+        interaction["feedback_action_hint"] = feedback.get("action_hint")
+        interaction["feedback_contract_version"] = feedback.get("contract_version")
+        actor_log.append(interaction)
+
+        if interaction.get("outcome") != "failed":
+            continue
+
+        failure_feedback.append(
+            {
+                "iteration": iteration,
+                "actor_type": actor_type,
+                "actor_id": actor_id,
+                "step_id": interaction.get("step_id"),
+                "reason_code": interaction.get("reason_code"),
+                "feedback_to_system": interaction["feedback_to_system"],
+                "feedback_source": interaction["feedback_source"],
+                "feedback_category": interaction.get("feedback_category"),
+                "feedback_action_hint": interaction.get("feedback_action_hint"),
+                "feedback_contract_version": interaction.get("feedback_contract_version"),
+                "score_snapshot": interaction.get("score_snapshot", {}),
+            }
+        )
+
+
+def _sanitize_events_for_product_surface(events: Any) -> List[Dict[str, Any]]:
+    if not isinstance(events, list):
+        return []
+    sanitized: List[Dict[str, Any]] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        sanitized.append(
+            {
+                "event_id": event.get("event_id"),
+                "iteration": event.get("iteration"),
+                "actor_type": event.get("actor_type"),
+                "actor_id": event.get("actor_id"),
+                "from_state": event.get("from_state"),
+                "to_state": event.get("to_state"),
+                "reason_code": event.get("reason_code"),
+            }
+        )
+    return sanitized
+
+
+def _sanitize_interaction_logs_for_product_surface(
+    interaction_logs: Any,
+) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+    empty = {"founders": {}, "vcs": {}, "visitors": {}}
+    if not isinstance(interaction_logs, dict):
+        return empty
+
+    sanitized: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+    for bucket in ("founders", "vcs", "visitors"):
+        actors = interaction_logs.get(bucket)
+        if not isinstance(actors, dict):
+            sanitized[bucket] = {}
+            continue
+
+        actor_payload: Dict[str, List[Dict[str, Any]]] = {}
+        for actor_id, entries in actors.items():
+            if not isinstance(actor_id, str):
+                continue
+            if not isinstance(entries, list):
+                continue
+
+            clean_entries: List[Dict[str, Any]] = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                clean_entries.append(
+                    {
+                        "step_id": entry.get("step_id"),
+                        "interaction": entry.get("interaction"),
+                        "decision_mode": entry.get("decision_mode"),
+                        "outcome": entry.get("outcome"),
+                        "reason_code": entry.get("reason_code"),
+                        "feedback_to_system": entry.get("feedback_to_system"),
+                        "feedback_source": entry.get("feedback_source"),
+                        "feedback_category": entry.get("feedback_category"),
+                        "feedback_action_hint": entry.get("feedback_action_hint"),
+                        "feedback_contract_version": entry.get("feedback_contract_version"),
+                    }
+                )
+            actor_payload[actor_id] = clean_entries
+        sanitized[bucket] = actor_payload
+
+    return sanitized
+
+
+def _sanitize_failure_feedback_for_product_surface(
+    failure_feedback: Any,
+) -> List[Dict[str, Any]]:
+    if not isinstance(failure_feedback, list):
+        return []
+    sanitized: List[Dict[str, Any]] = []
+    for item in failure_feedback:
+        if not isinstance(item, dict):
+            continue
+        sanitized.append(
+            {
+                "iteration": item.get("iteration"),
+                "actor_type": item.get("actor_type"),
+                "actor_id": item.get("actor_id"),
+                "step_id": item.get("step_id"),
+                "reason_code": item.get("reason_code"),
+                "feedback_to_system": item.get("feedback_to_system"),
+                "feedback_source": item.get("feedback_source"),
+                "feedback_category": item.get("feedback_category"),
+                "feedback_action_hint": item.get("feedback_action_hint"),
+                "feedback_contract_version": item.get("feedback_contract_version"),
+            }
+        )
+    return sanitized
+
+
+def _sanitize_event_instrumentation_for_product_surface(payload: Any) -> Dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {
+            "enabled": False,
+            "event_count": 0,
+            "founder_event_count": 0,
+            "tracked_event_count": 0,
+            "event_type_counts": {},
+        }
+
+    event_type_counts = payload.get("event_type_counts")
+    if not isinstance(event_type_counts, dict):
+        event_type_counts = {}
+
+    return {
+        "enabled": bool(payload.get("enabled", False)),
+        "event_count": _safe_int(payload.get("event_count"), 0),
+        "founder_event_count": _safe_int(payload.get("founder_event_count"), 0),
+        "tracked_event_count": _safe_int(payload.get("tracked_event_count"), 0),
+        "scoring_formula_version": _safe_int(payload.get("scoring_formula_version"), 0),
+        "event_type_counts": dict(event_type_counts),
+    }
+
+
 def _empty_environment_output(iteration: int, errors: List[str]) -> Dict[str, Any]:
     return {
         "metrics": {
@@ -623,6 +1112,33 @@ def _empty_environment_output(iteration: int, errors: List[str]) -> Dict[str, An
         "diagnostics": {
             "dropoff_reasons": {},
             "input_validation_errors": sorted(errors),
+            "interaction_logs": {"founders": {}, "vcs": {}, "visitors": {}},
+            "failure_feedback": [],
+            "llm_feedback_requested": False,
+            "llm_feedback_active": False,
+            "llm_feedback_steps": [],
+            "feedback_contract_version": 0,
+            "product_surface_only": False,
+            "event_instrumentation": {
+                "enabled": False,
+                "scoring_formula_version": 0,
+                "event_count": 0,
+                "founder_event_count": 0,
+                "tracked_event_count": 0,
+                "event_type_counts": {},
+                "founder_signal_coverage": {},
+                "founder_scores": {},
+                "founder_signal_sources": {},
+                "founder_signal_inputs": {},
+                "param_overrides": {},
+                "param_sources": {},
+                "effective_global_signup_params": {},
+            },
+            "product_surface": {
+                "events": [],
+                "interaction_logs": {"founders": {}, "vcs": {}, "visitors": {}},
+                "failure_feedback": [],
+            },
         },
     }
 
@@ -770,7 +1286,7 @@ def _compute_environment_metrics(
         for state in founder_states
     )
     vc_signup_count = sum(
-        state in {"signup", "engaged", "shortlist", "interested", "meeting"}
+        state in {"signup", "engaged", "matched", "interested", "meeting"}
         for state in vc_states
     )
 

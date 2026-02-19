@@ -2,11 +2,24 @@
 from __future__ import annotations
 
 from random import Random
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+FOUNDER_SIGNUP_REQUIRED_FIELDS: Tuple[str, ...] = (
+    "sector",
+    "stage",
+    "geography",
+    "fundraising_status",
+)
+
+VC_SIGNUP_REQUIRED_FIELDS: Tuple[str, ...] = (
+    "thesis_sectors",
+    "stage_focus",
+    "geography",
+)
 
 
 def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
@@ -16,6 +29,41 @@ def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
     if value > maximum:
         return maximum
     return value
+
+
+def _resolve_signup_payload(
+    profile: Dict[str, Any],
+    fallback_fields: Tuple[str, ...],
+) -> Dict[str, Any]:
+    fallback_payload = {
+        field_name: profile.get(field_name)
+        for field_name in fallback_fields
+    }
+    payload = profile.get("signup_payload")
+    if isinstance(payload, dict):
+        return dict(payload)
+    return fallback_payload
+
+
+def _is_signup_field_filled(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) > 0
+    return True
+
+
+def _missing_required_signup_fields(
+    payload: Dict[str, Any],
+    required_fields: Tuple[str, ...],
+) -> List[str]:
+    missing: List[str] = []
+    for field_name in required_fields:
+        if not _is_signup_field_filled(payload.get(field_name)):
+            missing.append(field_name)
+    return missing
 
 
 class FounderCustomerAgent:
@@ -35,10 +83,53 @@ class FounderCustomerAgent:
     ) -> Dict[str, Any]:
         """Simulate founder journey until terminal or bounded step limit."""
         transitions: List[Dict[str, Any]] = []
+        interactions: List[Dict[str, Any]] = []
         dropoff_reason: Optional[str] = None
 
         if max_steps <= 0:
-            return self._result(transitions, "max_steps_reached", match_signal)
+            self._record_interaction(
+                interactions,
+                step_id="guard_max_steps",
+                interaction="system_guardrail",
+                decision_mode="guardrail",
+                outcome="failed",
+                reason_code="max_steps_reached",
+                score_snapshot={"max_steps": max_steps},
+            )
+            return self._result(
+                transitions,
+                interactions,
+                "max_steps_reached",
+                match_signal,
+            )
+
+        signup_payload = _resolve_signup_payload(
+            self.profile,
+            FOUNDER_SIGNUP_REQUIRED_FIELDS,
+        )
+        missing_signup_fields = _missing_required_signup_fields(
+            signup_payload,
+            FOUNDER_SIGNUP_REQUIRED_FIELDS,
+        )
+        if missing_signup_fields:
+            dropoff_reason = "founder_signup_incomplete_profile"
+            self._record_interaction(
+                interactions,
+                step_id="visit_to_signup",
+                interaction="complete_signup_form",
+                decision_mode="deterministic_validation",
+                outcome="failed",
+                reason_code=dropoff_reason,
+                score_snapshot={
+                    "signup_complete": False,
+                    "missing_required_fields": missing_signup_fields,
+                    "required_field_count": len(FOUNDER_SIGNUP_REQUIRED_FIELDS),
+                    "provided_required_field_count": (
+                        len(FOUNDER_SIGNUP_REQUIRED_FIELDS) - len(missing_signup_fields)
+                    ),
+                },
+            )
+            return self._result(transitions, interactions, dropoff_reason, match_signal)
 
         match_score = _clamp(float((match_signal or {}).get("match_score", 0.0)))
         explanation_quality = _clamp(
@@ -49,8 +140,38 @@ class FounderCustomerAgent:
         )
         timing_score = _clamp(float((outreach_signal or {}).get("timing_score", 0.0)))
         urgency_score = _clamp(float(self.profile.get("urgency_score", 0.0)))
-        preview_match_quality = _clamp((0.65 * match_score) + (0.35 * explanation_quality))
-
+        trust_score = _clamp(
+            float(
+                self.profile.get(
+                    "trust_score",
+                    self.params.get("founder_signup_trust_score", 1.0),
+                )
+            )
+        )
+        form_complexity_score = _clamp(
+            float(
+                self.profile.get(
+                    "form_complexity_score",
+                    self.params.get("founder_signup_form_complexity", 0.0),
+                )
+            )
+        )
+        channel_intent_fit = _clamp(
+            float(
+                self.profile.get(
+                    "channel_intent_fit",
+                    self.params.get("founder_signup_channel_intent_fit", 1.0),
+                )
+            )
+        )
+        proof_of_outcomes = _clamp(
+            float(
+                self.profile.get(
+                    "proof_of_outcomes",
+                    self.params.get("founder_signup_proof_of_outcomes", 1.0),
+                )
+            )
+        )
         signup_cta_clarity = _clamp(
             float(self.params.get("founder_signup_cta_clarity", 0.72))
         )
@@ -58,8 +179,11 @@ class FounderCustomerAgent:
         signup_prob = _clamp(
             float(self.params.get("founder_signup_base_rate", 0.70))
             * (0.60 + (0.40 * signup_cta_clarity))
-            * (0.50 + (0.50 * preview_match_quality))
             * (1.0 - (0.35 * signup_friction))
+            * (1.0 - (0.35 * form_complexity_score))
+            * (0.60 + (0.40 * trust_score))
+            * (0.60 + (0.40 * channel_intent_fit))
+            * (0.60 + (0.40 * proof_of_outcomes))
             * (0.60 + (0.40 * urgency_score))
         )
         if self._coin_flip(signup_prob):
@@ -71,14 +195,56 @@ class FounderCustomerAgent:
                     "signup_prob": signup_prob,
                     "signup_cta_clarity": signup_cta_clarity,
                     "signup_friction": signup_friction,
-                    "preview_match_quality": preview_match_quality,
+                    "trust_score": trust_score,
+                    "form_complexity_score": form_complexity_score,
+                    "channel_intent_fit": channel_intent_fit,
+                    "proof_of_outcomes": proof_of_outcomes,
                     "urgency_score": urgency_score,
+                    "signup_complete": True,
                 },
                 max_steps,
             )
+            self._record_interaction(
+                interactions,
+                step_id="visit_to_signup",
+                interaction="complete_signup_form",
+                decision_mode="probabilistic",
+                outcome="passed",
+                reason_code="founder_signed_up",
+                score_snapshot={
+                    "signup_prob": signup_prob,
+                    "signup_cta_clarity": signup_cta_clarity,
+                    "signup_friction": signup_friction,
+                    "trust_score": trust_score,
+                    "form_complexity_score": form_complexity_score,
+                    "channel_intent_fit": channel_intent_fit,
+                    "proof_of_outcomes": proof_of_outcomes,
+                    "urgency_score": urgency_score,
+                    "signup_complete": True,
+                },
+            )
         else:
             dropoff_reason = "founder_no_signup"
-            return self._result(transitions, dropoff_reason, match_signal)
+            self._record_interaction(
+                interactions,
+                step_id="visit_to_signup",
+                interaction="complete_signup_form",
+                decision_mode="probabilistic",
+                outcome="failed",
+                reason_code=dropoff_reason,
+                score_snapshot={
+                    "signup_prob": signup_prob,
+                    "signup_cta_clarity": signup_cta_clarity,
+                    "signup_friction": signup_friction,
+                    "trust_score": trust_score,
+                    "form_complexity_score": form_complexity_score,
+                    "channel_intent_fit": channel_intent_fit,
+                    "proof_of_outcomes": proof_of_outcomes,
+                    "urgency_score": urgency_score,
+                    "signup_complete": True,
+                },
+            )
+            return self._result(transitions, interactions, dropoff_reason, match_signal)
 
         engaged_prob = _clamp(0.20 + (0.45 * match_score) + (0.25 * urgency_score))
         if self._coin_flip(engaged_prob):
@@ -93,9 +259,35 @@ class FounderCustomerAgent:
                 },
                 max_steps,
             )
+            self._record_interaction(
+                interactions,
+                step_id="signup_to_engaged",
+                interaction="complete_onboarding",
+                decision_mode="probabilistic",
+                outcome="passed",
+                reason_code="founder_engaged",
+                score_snapshot={
+                    "engaged_prob": engaged_prob,
+                    "match_score": match_score,
+                    "urgency_score": urgency_score,
+                },
+            )
         else:
             dropoff_reason = "founder_not_engaged"
-            return self._result(transitions, dropoff_reason, match_signal)
+            self._record_interaction(
+                interactions,
+                step_id="signup_to_engaged",
+                interaction="complete_onboarding",
+                decision_mode="probabilistic",
+                outcome="failed",
+                reason_code=dropoff_reason,
+                score_snapshot={
+                    "engaged_prob": engaged_prob,
+                    "match_score": match_score,
+                    "urgency_score": urgency_score,
+                },
+            )
+            return self._result(transitions, interactions, dropoff_reason, match_signal)
 
         match_threshold = _clamp(float(self.params["match_score_threshold"]))
         if match_score >= match_threshold:
@@ -109,9 +301,33 @@ class FounderCustomerAgent:
                 },
                 max_steps,
             )
+            self._record_interaction(
+                interactions,
+                step_id="engaged_to_matched",
+                interaction="request_match_recommendations",
+                decision_mode="threshold",
+                outcome="passed",
+                reason_code="founder_match_threshold_passed",
+                score_snapshot={
+                    "match_score": match_score,
+                    "match_score_threshold": match_threshold,
+                },
+            )
         else:
             dropoff_reason = "founder_match_below_threshold"
-            return self._result(transitions, dropoff_reason, match_signal)
+            self._record_interaction(
+                interactions,
+                step_id="engaged_to_matched",
+                interaction="request_match_recommendations",
+                decision_mode="threshold",
+                outcome="failed",
+                reason_code=dropoff_reason,
+                score_snapshot={
+                    "match_score": match_score,
+                    "match_score_threshold": match_threshold,
+                },
+            )
+            return self._result(transitions, interactions, dropoff_reason, match_signal)
 
         interest_prob = _clamp(
             float(self.params["founder_base_interest"])
@@ -133,10 +349,40 @@ class FounderCustomerAgent:
                 },
                 max_steps,
             )
+            self._record_interaction(
+                interactions,
+                step_id="matched_to_interested",
+                interaction="evaluate_match_explanation",
+                decision_mode="threshold_and_probabilistic",
+                outcome="passed",
+                reason_code="founder_interest_passed",
+                score_snapshot={
+                    "interest_prob": interest_prob,
+                    "interest_threshold": interest_threshold,
+                    "personalization_score": personalization,
+                    "explanation_quality": explanation_quality,
+                    "timing_score": timing_score,
+                },
+            )
         else:
             dropoff_reason = "founder_not_interested"
+            self._record_interaction(
+                interactions,
+                step_id="matched_to_interested",
+                interaction="evaluate_match_explanation",
+                decision_mode="threshold_and_probabilistic",
+                outcome="failed",
+                reason_code=dropoff_reason,
+                score_snapshot={
+                    "interest_prob": interest_prob,
+                    "interest_threshold": interest_threshold,
+                    "personalization_score": personalization,
+                    "explanation_quality": explanation_quality,
+                    "timing_score": timing_score,
+                },
+            )
 
-        return self._result(transitions, dropoff_reason, match_signal)
+        return self._result(transitions, interactions, dropoff_reason, match_signal)
 
     def _coin_flip(self, probability: float) -> bool:
         return self.rng.random() < _clamp(probability)
@@ -165,18 +411,41 @@ class FounderCustomerAgent:
     def _result(
         self,
         transitions: List[Dict[str, Any]],
+        interaction_trace: List[Dict[str, Any]],
         dropoff_reason: Optional[str],
         match_signal: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
         return {
             "state": self.state,
             "transitions": transitions,
+            "interaction_trace": interaction_trace,
             "dropoff_reason": dropoff_reason,
             "signed_up": self.state
             in {"signup", "engaged", "matched", "interested", "meeting"},
             "interested": self.state in {"interested", "meeting"},
             "preferred_vc_id": (match_signal or {}).get("vc_id"),
         }
+
+    def _record_interaction(
+        self,
+        interactions: List[Dict[str, Any]],
+        step_id: str,
+        interaction: str,
+        decision_mode: str,
+        outcome: str,
+        reason_code: str,
+        score_snapshot: Dict[str, Any],
+    ) -> None:
+        interactions.append(
+            {
+                "step_id": step_id,
+                "interaction": interaction,
+                "decision_mode": decision_mode,
+                "outcome": outcome,
+                "reason_code": reason_code,
+                "score_snapshot": score_snapshot,
+            }
+        )
 
 
 class VCCustomerAgent:
@@ -196,10 +465,53 @@ class VCCustomerAgent:
     ) -> Dict[str, Any]:
         """Simulate VC journey until terminal or bounded step limit."""
         transitions: List[Dict[str, Any]] = []
+        interactions: List[Dict[str, Any]] = []
         dropoff_reason: Optional[str] = None
 
         if max_steps <= 0:
-            return self._result(transitions, "max_steps_reached", match_signal)
+            self._record_interaction(
+                interactions,
+                step_id="guard_max_steps",
+                interaction="system_guardrail",
+                decision_mode="guardrail",
+                outcome="failed",
+                reason_code="max_steps_reached",
+                score_snapshot={"max_steps": max_steps},
+            )
+            return self._result(
+                transitions,
+                interactions,
+                "max_steps_reached",
+                match_signal,
+            )
+
+        signup_payload = _resolve_signup_payload(
+            self.profile,
+            VC_SIGNUP_REQUIRED_FIELDS,
+        )
+        missing_signup_fields = _missing_required_signup_fields(
+            signup_payload,
+            VC_SIGNUP_REQUIRED_FIELDS,
+        )
+        if missing_signup_fields:
+            dropoff_reason = "vc_signup_incomplete_profile"
+            self._record_interaction(
+                interactions,
+                step_id="visit_to_signup",
+                interaction="complete_signup_form",
+                decision_mode="deterministic_validation",
+                outcome="failed",
+                reason_code=dropoff_reason,
+                score_snapshot={
+                    "signup_complete": False,
+                    "missing_required_fields": missing_signup_fields,
+                    "required_field_count": len(VC_SIGNUP_REQUIRED_FIELDS),
+                    "provided_required_field_count": (
+                        len(VC_SIGNUP_REQUIRED_FIELDS) - len(missing_signup_fields)
+                    ),
+                },
+            )
+            return self._result(transitions, interactions, dropoff_reason, match_signal)
 
         match_score = _clamp(float((match_signal or {}).get("match_score", 0.0)))
         explanation_quality = _clamp(
@@ -229,12 +541,45 @@ class VCCustomerAgent:
                     "signup_friction": signup_friction,
                     "preview_match_quality": preview_match_quality,
                     "confidence_threshold": confidence_threshold,
+                    "signup_complete": True,
                 },
                 max_steps,
             )
+            self._record_interaction(
+                interactions,
+                step_id="visit_to_signup",
+                interaction="complete_signup_form",
+                decision_mode="probabilistic",
+                outcome="passed",
+                reason_code="vc_signed_up",
+                score_snapshot={
+                    "signup_prob": signup_prob,
+                    "signup_cta_clarity": signup_cta_clarity,
+                    "signup_friction": signup_friction,
+                    "preview_match_quality": preview_match_quality,
+                    "confidence_threshold": confidence_threshold,
+                    "signup_complete": True,
+                },
+            )
         else:
             dropoff_reason = "vc_no_signup"
-            return self._result(transitions, dropoff_reason, match_signal)
+            self._record_interaction(
+                interactions,
+                step_id="visit_to_signup",
+                interaction="complete_signup_form",
+                decision_mode="probabilistic",
+                outcome="failed",
+                reason_code=dropoff_reason,
+                score_snapshot={
+                    "signup_prob": signup_prob,
+                    "signup_cta_clarity": signup_cta_clarity,
+                    "signup_friction": signup_friction,
+                    "preview_match_quality": preview_match_quality,
+                    "confidence_threshold": confidence_threshold,
+                    "signup_complete": True,
+                },
+            )
+            return self._result(transitions, interactions, dropoff_reason, match_signal)
 
         engaged_prob = _clamp(0.15 + (0.55 * match_score) + (0.20 * explanation_quality))
         if self._coin_flip(engaged_prob):
@@ -249,25 +594,77 @@ class VCCustomerAgent:
                 },
                 max_steps,
             )
+            self._record_interaction(
+                interactions,
+                step_id="signup_to_engaged",
+                interaction="complete_onboarding",
+                decision_mode="probabilistic",
+                outcome="passed",
+                reason_code="vc_engaged",
+                score_snapshot={
+                    "engaged_prob": engaged_prob,
+                    "match_score": match_score,
+                    "explanation_quality": explanation_quality,
+                },
+            )
         else:
             dropoff_reason = "vc_not_engaged"
-            return self._result(transitions, dropoff_reason, match_signal)
+            self._record_interaction(
+                interactions,
+                step_id="signup_to_engaged",
+                interaction="complete_onboarding",
+                decision_mode="probabilistic",
+                outcome="failed",
+                reason_code=dropoff_reason,
+                score_snapshot={
+                    "engaged_prob": engaged_prob,
+                    "match_score": match_score,
+                    "explanation_quality": explanation_quality,
+                },
+            )
+            return self._result(transitions, interactions, dropoff_reason, match_signal)
 
-        shortlist_threshold = _clamp(float(self.params["shortlist_threshold"]))
-        if match_score >= shortlist_threshold:
+        vc_match_threshold = _clamp(
+            float(self.params.get("vc_match_score_threshold", self.params["shortlist_threshold"]))
+        )
+        if match_score >= vc_match_threshold:
             self._record_transition(
                 transitions,
-                "shortlist",
-                "vc_shortlist_threshold_passed",
+                "matched",
+                "vc_match_threshold_passed",
                 {
                     "match_score": match_score,
-                    "shortlist_threshold": shortlist_threshold,
+                    "vc_match_threshold": vc_match_threshold,
                 },
                 max_steps,
             )
+            self._record_interaction(
+                interactions,
+                step_id="engaged_to_matched",
+                interaction="request_match_recommendations",
+                decision_mode="threshold",
+                outcome="passed",
+                reason_code="vc_match_threshold_passed",
+                score_snapshot={
+                    "match_score": match_score,
+                    "vc_match_threshold": vc_match_threshold,
+                },
+            )
         else:
-            dropoff_reason = "vc_not_shortlisted"
-            return self._result(transitions, dropoff_reason, match_signal)
+            dropoff_reason = "vc_match_below_threshold"
+            self._record_interaction(
+                interactions,
+                step_id="engaged_to_matched",
+                interaction="request_match_recommendations",
+                decision_mode="threshold",
+                outcome="failed",
+                reason_code=dropoff_reason,
+                score_snapshot={
+                    "match_score": match_score,
+                    "vc_match_threshold": vc_match_threshold,
+                },
+            )
+            return self._result(transitions, interactions, dropoff_reason, match_signal)
 
         interest_prob = _clamp(
             float(self.params["vc_base_interest"])
@@ -287,10 +684,40 @@ class VCCustomerAgent:
                 },
                 max_steps,
             )
+            self._record_interaction(
+                interactions,
+                step_id="matched_to_interested",
+                interaction="evaluate_match_explanation",
+                decision_mode="threshold_and_probabilistic",
+                outcome="passed",
+                reason_code="vc_interest_passed",
+                score_snapshot={
+                    "interest_prob": interest_prob,
+                    "gate_threshold": gate_threshold,
+                    "match_score": match_score,
+                    "explanation_quality": explanation_quality,
+                    "timing_score": timing_score,
+                },
+            )
         else:
             dropoff_reason = "vc_not_interested"
+            self._record_interaction(
+                interactions,
+                step_id="matched_to_interested",
+                interaction="evaluate_match_explanation",
+                decision_mode="threshold_and_probabilistic",
+                outcome="failed",
+                reason_code=dropoff_reason,
+                score_snapshot={
+                    "interest_prob": interest_prob,
+                    "gate_threshold": gate_threshold,
+                    "match_score": match_score,
+                    "explanation_quality": explanation_quality,
+                    "timing_score": timing_score,
+                },
+            )
 
-        return self._result(transitions, dropoff_reason, match_signal)
+        return self._result(transitions, interactions, dropoff_reason, match_signal)
 
     def _coin_flip(self, probability: float) -> bool:
         return self.rng.random() < _clamp(probability)
@@ -319,18 +746,41 @@ class VCCustomerAgent:
     def _result(
         self,
         transitions: List[Dict[str, Any]],
+        interaction_trace: List[Dict[str, Any]],
         dropoff_reason: Optional[str],
         match_signal: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
         return {
             "state": self.state,
             "transitions": transitions,
+            "interaction_trace": interaction_trace,
             "dropoff_reason": dropoff_reason,
             "signed_up": self.state
-            in {"signup", "engaged", "shortlist", "interested", "meeting"},
+            in {"signup", "engaged", "matched", "interested", "meeting"},
             "interested": self.state in {"interested", "meeting"},
             "preferred_founder_id": (match_signal or {}).get("founder_id"),
         }
+
+    def _record_interaction(
+        self,
+        interactions: List[Dict[str, Any]],
+        step_id: str,
+        interaction: str,
+        decision_mode: str,
+        outcome: str,
+        reason_code: str,
+        score_snapshot: Dict[str, Any],
+    ) -> None:
+        interactions.append(
+            {
+                "step_id": step_id,
+                "interaction": interaction,
+                "decision_mode": decision_mode,
+                "outcome": outcome,
+                "reason_code": reason_code,
+                "score_snapshot": score_snapshot,
+            }
+        )
 
 
 class VisitorCustomerAgent:

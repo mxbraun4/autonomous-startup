@@ -33,13 +33,16 @@ The simulator must consume a single environment input object with the following 
 - `run_id`: `str`, unique identifier for the run
 - `iteration`: `int`, `>= 1`
 - `seed`: `int`, deterministic random seed
+- Optional qualitative feedback controls:
+  - `use_llm_feedback`: `bool`
+  - `llm_feedback_steps`: list of step ids (for selective LLM enrichment)
+  - `llm_feedback_temperature`: float in `[0.0, 1.0]`
+  - `product_surface_only`: `bool` (if true, output strips internal score snapshots)
 
 #### 2) `params`
 All values are numeric and bounded in `[0.0, 1.0]` unless noted:
 - `founder_base_interest`
 - `vc_base_interest`
-- `visitor_tool_click_rate`
-- `signup_rate_from_tool`
 - `meeting_rate_from_mutual_interest`
 - Optional signup behavior params:
   - `founder_signup_base_rate`
@@ -48,11 +51,19 @@ All values are numeric and bounded in `[0.0, 1.0]` unless noted:
   - `vc_signup_cta_clarity`
   - `founder_signup_friction`
   - `vc_signup_friction`
+  - `founder_signup_trust_score`
+  - `founder_signup_form_complexity`
+  - `founder_signup_channel_intent_fit`
+  - `founder_signup_proof_of_outcomes`
 - Optional threshold params:
   - `match_score_threshold`
-  - `shortlist_threshold`
+  - `vc_match_score_threshold` (preferred VC match gate)
+  - `shortlist_threshold` (legacy fallback for VC match gate)
   - `interest_threshold`
   - `max_steps_per_customer` (integer, `>= 1`)
+- Optional acquisition params (visitor mode only):
+  - `visitor_tool_click_rate`
+  - `signup_rate_from_tool`
 
 #### 3) `cohorts`
 - `founders`: list of founder profiles
@@ -61,9 +72,13 @@ All values are numeric and bounded in `[0.0, 1.0]` unless noted:
 
 Required founder fields:
 - `id`, `sector`, `stage`, `geography`, `fundraising_status`, `urgency_score`
+- Optional `signup_payload` object for visit->signup modeling
+  - Required signup fields when provided: `sector`, `stage`, `geography`, `fundraising_status`
 
 Required VC fields:
 - `id`, `thesis_sectors`, `stage_focus`, `geography`, `confidence_threshold`
+- Optional `signup_payload` object for visit->signup modeling
+  - Required signup fields when provided: `thesis_sectors`, `stage_focus`, `geography`
 
 Required visitor fields:
 - `id`, `intent_topic`, `tool_need_score`, `cta_friction`
@@ -73,6 +88,27 @@ Signals are produced by system components and consumed by the environment:
 - `match_signals`: list of `{founder_id, vc_id, match_score, explanation_quality}`
 - `outreach_signals`: list of `{founder_id, vc_id, personalization_score, timing_score}`
 - `acquisition_signals`: optional list of `{visitor_id, article_relevance, tool_usefulness, cta_clarity}`
+
+### Website Event Instrumentation (Pre-Processing)
+- Optional `product_events` can be provided to `build_customer_environment_input(...)`.
+- Required fields per event:
+  - `event_id`, `timestamp` (ISO-8601), `session_id`, `actor_type`, `actor_id`, `event_name`, `properties`
+- Event names are constrained to the tracked set only.
+- `landing_view` must include at least one channel descriptor:
+  - `properties.utm_source` (string) or `properties.channel_intent_fit` (`0..1`)
+- These events are deterministically aggregated into founder signup signal overrides before simulation:
+  - global founder params: `founder_signup_cta_clarity`, `founder_signup_friction`
+  - founder profile signals: `trust_score`, `form_complexity_score`, `channel_intent_fit`, `proof_of_outcomes`
+- Deterministic signal formulas:
+  - `founder_signup_cta_clarity = clamp(cta_click / cta_impression)` (fallback to default param when no impressions)
+  - `founder_signup_friction = clamp(0.15 + 0.35*error_rate + 0.35*abandon_rate + 0.15*incomplete_rate)` (fallback when no signup_start)
+  - `trust_score` and `proof_of_outcomes` use observed values when available, otherwise deterministic view-count fallback, then default
+  - `form_complexity_score` and `channel_intent_fit` use observed values when available, otherwise default
+- Diagnostics expose per-founder measurement transparency:
+  - `founder_signal_coverage`, `founder_signal_sources`, `founder_signal_inputs`
+  - global `param_sources`, `effective_global_signup_params`
+- Current tracked event names:
+  - `landing_view`, `cta_impression`, `cta_click`, `signup_start`, `signup_submit`, `signup_field_error`, `signup_abandon`, `trust_block_view`, `proof_block_view`
 
 ### Output Interface
 
@@ -115,6 +151,10 @@ Event shape (`events[]`):
 `diagnostics` minimum:
 - `dropoff_reasons`: map of reason code to count
 - `input_validation_errors`: list
+- `interaction_logs`: per-actor interaction trace with outcome and feedback
+- `failure_feedback`: normalized list of failed-transition feedback records
+- `feedback_contract_version`: version number for feedback payload schema
+- `product_surface`: product-facing view containing only observable events/interactions and failure feedback
 
 ### Determinism and Safety Invariants
 - No external network dependency for customer behavior decisions
@@ -164,19 +204,19 @@ A top-of-funnel user arriving via article or tool pages.
 `visit -> signup -> engaged -> matched -> interested -> meeting`
 
 Transition drivers:
-- `signup`: CTA clarity, signup friction, preview match quality, urgency
+- `signup`: deterministic `signup_complete` precheck on required signup fields, then CTA clarity, signup friction, trust, form complexity, channel-intent fit, proof of outcomes, urgency
 - `engaged`: content/tool relevance
 - `matched`: match score above threshold
 - `interested`: outreach personalization + fit explanation quality
 - `meeting`: founder interest + VC reciprocal interest
 
 ### VC Journey
-`visit -> signup -> engaged -> shortlist -> interested -> meeting`
+`visit -> signup -> engaged -> matched -> interested -> meeting`
 
 Transition drivers:
-- `signup`: CTA clarity, signup friction, preview match quality, confidence threshold
+- `signup`: deterministic `signup_complete` precheck on required signup fields, then CTA clarity, signup friction, preview match quality, confidence threshold
 - `engaged`: startup quality + relevance to thesis
-- `shortlist`: alignment and confidence threshold
+- `matched`: alignment and confidence threshold
 - `interested`: strong signal on fit and timing
 - `meeting`: reciprocal founder interest
 
@@ -192,11 +232,13 @@ Transition drivers:
 
 ### Founder
 1. `visit -> signup`
-   - Inputs: `founder_signup_base_rate`, `founder_signup_cta_clarity`, `founder_signup_friction`, `urgency_score`, `match_score`, `explanation_quality`
+   - Inputs: `founder_signup_base_rate`, `founder_signup_cta_clarity`, `founder_signup_friction`, `founder_signup_trust_score`, `founder_signup_form_complexity`, `founder_signup_channel_intent_fit`, `founder_signup_proof_of_outcomes`, `urgency_score`
+   - Deterministic precheck:
+     - `signup_complete = all(sector, stage, geography, fundraising_status are non-empty in signup payload)`
+     - on failure: `reason_code = founder_signup_incomplete_profile`
    - Derived:
-     - `preview_match_quality = clamp(0.65 * match_score + 0.35 * explanation_quality)`
-     - `signup_prob = clamp(founder_signup_base_rate * (0.60 + 0.40 * founder_signup_cta_clarity) * (0.50 + 0.50 * preview_match_quality) * (1.00 - 0.35 * founder_signup_friction) * (0.60 + 0.40 * urgency_score))`
-   - Decision: `rng.random() < signup_prob`
+     - `signup_prob = clamp(founder_signup_base_rate * (0.60 + 0.40 * founder_signup_cta_clarity) * (1.00 - 0.35 * founder_signup_friction) * (1.00 - 0.35 * form_complexity_score) * (0.60 + 0.40 * trust_score) * (0.60 + 0.40 * channel_intent_fit) * (0.60 + 0.40 * proof_of_outcomes) * (0.60 + 0.40 * urgency_score))`
+   - Decision: `signup_complete and (rng.random() < signup_prob)`
 2. `signup -> engaged`
    - `engaged_prob = clamp(0.20 + 0.45 * match_score + 0.25 * urgency_score)`
    - Decision: `rng.random() < engaged_prob`
@@ -211,22 +253,36 @@ Transition drivers:
 ### VC
 1. `visit -> signup`
    - Inputs: `vc_signup_base_rate`, `vc_signup_cta_clarity`, `vc_signup_friction`, `confidence_threshold`, `match_score`, `explanation_quality`
+   - Deterministic precheck:
+     - `signup_complete = all(thesis_sectors, stage_focus, geography are non-empty in signup payload)`
+     - on failure: `reason_code = vc_signup_incomplete_profile`
    - Derived:
      - `preview_match_quality = clamp(0.70 * match_score + 0.30 * explanation_quality)`
      - `confidence_factor = clamp(1.00 - confidence_threshold)`
      - `signup_prob = clamp(vc_signup_base_rate * (0.60 + 0.40 * vc_signup_cta_clarity) * (0.50 + 0.50 * preview_match_quality) * (1.00 - 0.35 * vc_signup_friction) * (0.55 + 0.45 * confidence_factor))`
-   - Decision: `rng.random() < signup_prob`
+   - Decision: `signup_complete and (rng.random() < signup_prob)`
 2. `signup -> engaged`
    - `engaged_prob = clamp(0.15 + 0.55 * match_score + 0.20 * explanation_quality)`
    - Decision: `rng.random() < engaged_prob`
-3. `engaged -> shortlist`
-   - Gate: `match_score >= shortlist_threshold`
-4. `shortlist -> interested`
+3. `engaged -> matched`
+   - Gate: `match_score >= vc_match_score_threshold` (fallback to `shortlist_threshold` for compatibility)
+4. `matched -> interested`
    - `interest_prob = clamp(vc_base_interest + 0.40 * match_score + 0.20 * explanation_quality + 0.15 * timing_score)`
    - `gate_threshold = max(confidence_threshold, interest_threshold)`
    - Gate + decision: `interest_prob >= gate_threshold` and `rng.random() < interest_prob`
 5. `interested -> meeting`
    - Requires mutual interest with Founder, then `rng.random() < meeting_rate_from_mutual_interest`
+
+## Interaction + Feedback Contract
+- Every founder/VC transition step records one interaction item with:
+  - `step_id`, `interaction`, `decision_mode`, `outcome`, `reason_code`, `score_snapshot`
+- On failed transitions, feedback is emitted to the system with:
+  - `actor_type`, `actor_id`, `step_id`, `reason_code`, `feedback_to_system`, `feedback_source`, `feedback_category`, `feedback_action_hint`, `feedback_contract_version`
+- Feedback source:
+  - `template` by default (deterministic)
+  - `llm` only for selected steps when `use_llm_feedback=true` and an LLM is available
+- Deterministic feedback categories include:
+  - `signup_validation`, `signup_conversion`, `engagement`, `match_quality`, `interest_gate`, `reciprocal_interest`, `meeting_conversion`, `guardrail`
 
 ## Transition Evaluation Order
 - Validate actor input and current state
@@ -241,6 +297,10 @@ Transition drivers:
 - vc_base_interest = 0.12
 - founder_signup_base_rate = 0.70
 - vc_signup_base_rate = 0.66
+- founder_signup_trust_score = 1.00
+- founder_signup_form_complexity = 0.00
+- founder_signup_channel_intent_fit = 1.00
+- founder_signup_proof_of_outcomes = 1.00
 - visitor_tool_click_rate = 0.20
 - signup_rate_from_tool = 0.10
 - meeting_rate_from_mutual_interest = 0.35
@@ -288,6 +348,12 @@ These are simulation defaults and should be tuned through experiments, not treat
   - `python scripts/run_customer_simulation.py`
 - Enable visitor cohort explicitly:
   - `python scripts/run_customer_simulation.py --include-visitors`
+- Enable optional LLM feedback for selected steps (transitions remain deterministic):
+  - `python scripts/run_customer_simulation.py --use-llm-feedback --llm-feedback-steps matched_to_interested`
+- Run with product-event instrumentation input:
+  - `python scripts/run_customer_simulation.py --product-events-path data/seed/product_events.json`
+- Product-facing output only (no internal score snapshots):
+  - `python scripts/run_customer_simulation.py --product-surface-only`
 - Run a subset:
   - `python scripts/run_customer_simulation.py --scenarios baseline better_matching`
 - Export JSON summary:

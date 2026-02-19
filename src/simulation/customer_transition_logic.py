@@ -17,28 +17,46 @@ _MARKETPLACE_TRANSITION_LOGIC: Dict[str, Any] = {
                     "from_state": "visit",
                     "to_state": "signup",
                     "mode": "probabilistic",
+                    "interaction": "complete_signup_form",
                     "success_reason_code": "founder_signed_up",
                     "failure_reason_code": "founder_no_signup",
-                    "derived_inputs": ["preview_match_quality"],
-                    "signals": ["match_score", "explanation_quality"],
-                    "profile_fields": ["urgency_score"],
+                    "precheck_failure_reason_code": "founder_signup_incomplete_profile",
+                    "signals": [],
+                    "profile_fields": [
+                        "urgency_score",
+                        "trust_score",
+                        "form_complexity_score",
+                        "channel_intent_fit",
+                        "proof_of_outcomes",
+                    ],
+                    "required_signup_fields": [
+                        "sector",
+                        "stage",
+                        "geography",
+                        "fundraising_status",
+                    ],
                     "params": [
                         "founder_signup_base_rate",
                         "founder_signup_cta_clarity",
                         "founder_signup_friction",
+                        "founder_signup_trust_score",
+                        "founder_signup_form_complexity",
+                        "founder_signup_channel_intent_fit",
+                        "founder_signup_proof_of_outcomes",
                     ],
                     "formulas": {
-                        "preview_match_quality": (
-                            "clamp(0.65 * match_score + 0.35 * explanation_quality)"
-                        ),
+                        "signup_complete": "all(required_signup_fields are non-empty)",
                         "probability": (
                             "clamp(founder_signup_base_rate "
                             "* (0.60 + 0.40 * founder_signup_cta_clarity) "
-                            "* (0.50 + 0.50 * preview_match_quality) "
                             "* (1.00 - 0.35 * founder_signup_friction) "
+                            "* (1.00 - 0.35 * form_complexity_score) "
+                            "* (0.60 + 0.40 * trust_score) "
+                            "* (0.60 + 0.40 * channel_intent_fit) "
+                            "* (0.60 + 0.40 * proof_of_outcomes) "
                             "* (0.60 + 0.40 * urgency_score))"
                         ),
-                        "decision": "rng.random() < probability",
+                        "decision": "signup_complete and (rng.random() < probability)",
                     },
                 },
                 {
@@ -46,6 +64,7 @@ _MARKETPLACE_TRANSITION_LOGIC: Dict[str, Any] = {
                     "from_state": "signup",
                     "to_state": "engaged",
                     "mode": "probabilistic",
+                    "interaction": "complete_onboarding",
                     "success_reason_code": "founder_engaged",
                     "failure_reason_code": "founder_not_engaged",
                     "signals": ["match_score"],
@@ -61,6 +80,7 @@ _MARKETPLACE_TRANSITION_LOGIC: Dict[str, Any] = {
                     "from_state": "engaged",
                     "to_state": "matched",
                     "mode": "threshold",
+                    "interaction": "request_match_recommendations",
                     "success_reason_code": "founder_match_threshold_passed",
                     "failure_reason_code": "founder_match_below_threshold",
                     "signals": ["match_score"],
@@ -75,6 +95,8 @@ _MARKETPLACE_TRANSITION_LOGIC: Dict[str, Any] = {
                     "from_state": "matched",
                     "to_state": "interested",
                     "mode": "threshold_and_probabilistic",
+                    "interaction": "evaluate_match_explanation",
+                    "llm_capable": True,
                     "success_reason_code": "founder_interest_passed",
                     "failure_reason_code": "founder_not_interested",
                     "signals": [
@@ -101,6 +123,7 @@ _MARKETPLACE_TRANSITION_LOGIC: Dict[str, Any] = {
                     "from_state": "interested",
                     "to_state": "meeting",
                     "mode": "cross_actor_probabilistic",
+                    "interaction": "confirm_intro_meeting",
                     "success_reason_code": "mutual_interest_meeting",
                     "failure_reason_code": "mutual_interest_no_meeting",
                     "signals": [],
@@ -117,24 +140,32 @@ _MARKETPLACE_TRANSITION_LOGIC: Dict[str, Any] = {
             ],
         },
         "vc": {
-            "states": ["visit", "signup", "engaged", "shortlist", "interested", "meeting"],
+            "states": ["visit", "signup", "engaged", "matched", "interested", "meeting"],
             "transitions": [
                 {
                     "id": "visit_to_signup",
                     "from_state": "visit",
                     "to_state": "signup",
                     "mode": "probabilistic",
+                    "interaction": "complete_signup_form",
                     "success_reason_code": "vc_signed_up",
                     "failure_reason_code": "vc_no_signup",
+                    "precheck_failure_reason_code": "vc_signup_incomplete_profile",
                     "derived_inputs": ["preview_match_quality", "confidence_factor"],
                     "signals": ["match_score", "explanation_quality"],
                     "profile_fields": ["confidence_threshold"],
+                    "required_signup_fields": [
+                        "thesis_sectors",
+                        "stage_focus",
+                        "geography",
+                    ],
                     "params": [
                         "vc_signup_base_rate",
                         "vc_signup_cta_clarity",
                         "vc_signup_friction",
                     ],
                     "formulas": {
+                        "signup_complete": "all(required_signup_fields are non-empty)",
                         "preview_match_quality": (
                             "clamp(0.70 * match_score + 0.30 * explanation_quality)"
                         ),
@@ -146,7 +177,7 @@ _MARKETPLACE_TRANSITION_LOGIC: Dict[str, Any] = {
                             "* (1.00 - 0.35 * vc_signup_friction) "
                             "* (0.55 + 0.45 * confidence_factor))"
                         ),
-                        "decision": "rng.random() < probability",
+                        "decision": "signup_complete and (rng.random() < probability)",
                     },
                 },
                 {
@@ -154,6 +185,7 @@ _MARKETPLACE_TRANSITION_LOGIC: Dict[str, Any] = {
                     "from_state": "signup",
                     "to_state": "engaged",
                     "mode": "probabilistic",
+                    "interaction": "complete_onboarding",
                     "success_reason_code": "vc_engaged",
                     "failure_reason_code": "vc_not_engaged",
                     "signals": ["match_score", "explanation_quality"],
@@ -165,24 +197,30 @@ _MARKETPLACE_TRANSITION_LOGIC: Dict[str, Any] = {
                     },
                 },
                 {
-                    "id": "engaged_to_shortlist",
+                    "id": "engaged_to_matched",
                     "from_state": "engaged",
-                    "to_state": "shortlist",
+                    "to_state": "matched",
                     "mode": "threshold",
-                    "success_reason_code": "vc_shortlist_threshold_passed",
-                    "failure_reason_code": "vc_not_shortlisted",
+                    "interaction": "request_match_recommendations",
+                    "success_reason_code": "vc_match_threshold_passed",
+                    "failure_reason_code": "vc_match_below_threshold",
                     "signals": ["match_score"],
                     "profile_fields": [],
-                    "params": ["shortlist_threshold"],
+                    "params": ["vc_match_score_threshold", "shortlist_threshold"],
                     "formulas": {
-                        "decision": "match_score >= shortlist_threshold",
+                        "decision": (
+                            "match_score >= vc_match_score_threshold "
+                            "(fallback: shortlist_threshold)"
+                        ),
                     },
                 },
                 {
-                    "id": "shortlist_to_interested",
-                    "from_state": "shortlist",
+                    "id": "matched_to_interested",
+                    "from_state": "matched",
                     "to_state": "interested",
                     "mode": "threshold_and_probabilistic",
+                    "interaction": "evaluate_match_explanation",
+                    "llm_capable": True,
                     "success_reason_code": "vc_interest_passed",
                     "failure_reason_code": "vc_not_interested",
                     "signals": ["match_score", "explanation_quality", "timing_score"],
@@ -206,6 +244,7 @@ _MARKETPLACE_TRANSITION_LOGIC: Dict[str, Any] = {
                     "from_state": "interested",
                     "to_state": "meeting",
                     "mode": "cross_actor_probabilistic",
+                    "interaction": "confirm_intro_meeting",
                     "success_reason_code": "mutual_interest_meeting",
                     "failure_reason_code": "mutual_interest_no_meeting",
                     "signals": [],
@@ -256,10 +295,15 @@ def list_actor_transition_parameters(actor_type: str) -> Dict[str, List[str]]:
     transition_params: Dict[str, List[str]] = {}
     for transition in actor["transitions"]:
         field_values: List[str] = []
+        interaction_label = transition.get("interaction")
+        if isinstance(interaction_label, str) and interaction_label:
+            field_values.append(interaction_label)
+
         for field in (
             "params",
             "signals",
             "profile_fields",
+            "required_signup_fields",
             "derived_inputs",
             "cross_actor_requirements",
         ):
