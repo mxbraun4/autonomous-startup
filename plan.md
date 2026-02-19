@@ -1,6 +1,6 @@
 ﻿# Framework Plan: Autonomous Multi-Agent Simulation System (Detailed)
 
-Last updated: 2026-02-17
+Last updated: 2026-02-18
 
 ## 1) Purpose and Framing
 This document is the implementation blueprint for building an autonomous multi-agent simulation framework that can run repeatedly with minimal human intervention, while remaining constrained, reproducible, and inspectable.
@@ -35,6 +35,19 @@ These constraints are first-class and must be implemented before broad autonomy.
 - Structured observability: every major decision emits an event.
 - Backward compatibility: existing simulation still runs during migration.
 
+## Active Priorities (2026-02-18)
+Near-term execution priorities now that framework layers are implemented:
+
+1. Product-coupled localhost web autonomy:
+   - wire `scripts/run.py --mode web` to the real local product URL, tests, and restart command
+   - keep edit scopes narrow and policy-bounded
+2. Runtime path clarity:
+   - keep `scripts/run.py` as the main entrypoint
+   - keep `scripts/run_simulation.py` as compatibility path only
+3. Controlled real-LLM readiness:
+   - run first `MOCK_MODE=false` cycles under strict budgets and policy limits
+   - compare traces against mock-mode behavior
+
 ## 4) Current Repository Baseline
 Existing useful assets already in repository.
 
@@ -47,7 +60,7 @@ Existing useful assets already in repository.
 - Procedural memory: `src/memory/procedural.py`
 - Simulation actors: `src/simulation/startup_agent.py`, `src/simulation/vc_agent.py`
 - DB persistence: `src/data/database.py`
-- Entrypoints: `scripts/seed_memory.py`, `scripts/run_simulation.py`
+- Entrypoints: `scripts/seed_memory.py`, `scripts/run.py` (mode-based), `scripts/run_simulation.py` (compatibility path)
 
 Main limitation now: measure metrics in `src/crewai_agents/crews.py` include synthetic improvement formulas. This blocks genuine autonomous evaluation.
 
@@ -508,9 +521,11 @@ Duration estimate: 3-5 days
 Tasks:
 - Implement event model and timeline output.
 - Implement replay runner and trace diffing.
+- Implement local live dashboard UI for run-event inspection.
 
 Exit criteria:
 - One run can be replayed and compared to original.
+- Operators can inspect run/cycle/task/tool events live from NDJSON logs.
 
 ## Phase 8: Adapter Isolation
 Duration estimate: 2-4 days
@@ -561,27 +576,29 @@ Suggested file set:
 - `tests/test_evaluation_gates.py`
 - `tests/test_replay_determinism.py`
 
-## 14) Operational Commands (Planned)
-These should exist once framework baseline is implemented.
+## 14) Operational Commands (Current)
+Primary commands currently used:
 
-- `python scripts/run_autonomous.py --cycles 3 --seed 42`
-- `python scripts/run_autonomous.py --resume <run_id>`
-- `python scripts/replay_run.py --run-id <run_id>`
-- `python scripts/evaluate_run.py --run-id <run_id>`
+- `python scripts/seed_memory.py`
+- `python scripts/run.py --mode crewai --iterations 3`
+- `python scripts/run.py --mode web --iterations 3 --target-url http://localhost:3000`
+- `python scripts/run.py --mode dashboard --events-path data/memory/web_autonomy_events.ndjson`
+- `pytest tests/ -v`
 
-## 15) Immediate Work Order (Next Steps)
-This is the best starting sequence right now.
+## 15) Immediate Work Order (Current Next Steps)
+This is the current best sequence for shipping autonomous product iteration.
 
-1. Create framework folder skeleton under `src/framework/`.
-2. Implement `contracts.py` and `types.py` with full schema coverage.
-3. Implement `UnifiedStore` facade and adapter wrappers.
-4. Add tests for contract + storage layers.
-5. Implement capability registry and agent runtime baseline.
-6. Implement task graph and orchestration executor compatibility mode.
-7. Replace synthetic measure logic with simulation adapter outputs.
-8. Add run controller and checkpoint/resume.
-9. Add safety policy + budget controls.
-10. Add evaluator/gates and observability/replay.
+1. Configure `scripts/run.py --mode web` with real local product values:
+   - `--target-url`
+   - `--test-command`
+   - `--restart-command`
+2. Add project-specific edit templates for approved paths and patterns.
+3. Keep policy limits strict:
+   - max edits per cycle
+   - tests must pass before restart
+   - checkpoint each cycle
+4. Run one end-to-end local web cycle and verify event trace quality.
+5. After stable mock runs, test one controlled real-LLM cycle.
 
 ## 16) Acceptance Criteria for Starting Autonomous Simulation
 Before allowing unattended runs, all items below must be true.

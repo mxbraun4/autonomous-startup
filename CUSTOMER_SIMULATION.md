@@ -111,6 +111,9 @@ These are simulation defaults and should be tuned through experiments, not treat
   - `src/framework/runtime/agent_runtime.py`
   - `src/framework/orchestration/delegation.py`
   - `src/framework/safety/action_guard.py`
+- Live run observability:
+  - `scripts/live_dashboard.py`
+  - `python scripts/run.py --mode dashboard --events-path data/memory/web_autonomy_events.ndjson`
 - Extend with:
   - `src/simulation/customer_agent.py` (new, optional next step)
   - `data/seed/customers.json` (new cohort definitions)

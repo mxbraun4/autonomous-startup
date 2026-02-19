@@ -15,6 +15,7 @@ from src.framework.safety.action_guard import ActionGuard, create_action_guard
 from src.framework.safety.budget_manager import BudgetManager
 from src.framework.safety.limits import BudgetLimits, ToolClassification
 from src.framework.safety.policy_engine import PolicyEngine, PolicyResult
+from src.framework.safety.web_policy import build_web_domain_policy_hook
 
 __all__ = [
     "ActionGuard",
@@ -23,5 +24,6 @@ __all__ = [
     "PolicyEngine",
     "PolicyResult",
     "ToolClassification",
+    "build_web_domain_policy_hook",
     "create_action_guard",
 ]

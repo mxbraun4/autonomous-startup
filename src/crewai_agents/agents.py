@@ -28,7 +28,10 @@ from src.crewai_agents.tools import (
     data_validator_tool,
     content_generator_tool,
     tool_builder_tool,
-    analytics_tool
+    analytics_tool,
+    # Consensus memory tools
+    share_insight,
+    get_team_insights,
 )
 from src.utils.logging import get_logger
 
@@ -139,7 +142,9 @@ def create_data_strategist(llm: LLM = None) -> Agent:
             get_startups_tool,
             get_vcs_tool,
             get_database_stats,
-            data_validator_tool
+            data_validator_tool,
+            share_insight,
+            get_team_insights,
         ],
         llm=llm or get_llm(),
         verbose=True,
@@ -174,7 +179,7 @@ def create_product_strategist(llm: LLM = None) -> Agent:
 
         You use the tool_builder_tool to create specifications for new tools and features.
         ''',
-        tools=[tool_builder_tool],
+        tools=[tool_builder_tool, share_insight, get_team_insights],
         llm=llm or get_llm(),
         verbose=True,
         allow_delegation=True,
@@ -218,7 +223,9 @@ def create_outreach_strategist(llm: LLM = None) -> Agent:
             send_outreach_email,
             get_outreach_history,
             record_outreach_response,
-            analytics_tool
+            analytics_tool,
+            share_insight,
+            get_team_insights,
         ],
         llm=llm or get_llm(),
         verbose=True,

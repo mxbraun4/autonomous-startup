@@ -74,6 +74,10 @@ Initial tool ideas:
 - Foundational editorial pages for core search intents
 - At least two public utility tools integrated with product CTAs
 
+### Current inspectability support
+- Local live run dashboard available via `python scripts/run.py --mode dashboard`
+- Dashboard surfaces run/cycle/task/tool/policy event streams from NDJSON observability logs
+
 ## Success Metrics
 - North star: qualified intro conversion rate (match -> accepted intro)
 - Startup-side: outreach response rate, meeting request rate, time-to-first-qualified-intro

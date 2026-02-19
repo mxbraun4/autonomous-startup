@@ -43,6 +43,45 @@ from src.framework.contracts import (
     ToolCall,
     WorkingMemoryItem,
 )
+from src.framework.adapters import BaseDomainAdapter, StartupVCAdapter, WebProductAdapter
+from src.framework.autonomy import (
+    AutonomyLoop,
+    CheckpointManager,
+    CycleOutcome,
+    LoopResult,
+    RunController,
+    RunControllerResult,
+    TerminationDecision,
+    TerminationPolicy,
+    TerminationState,
+)
+from src.framework.eval import Evaluator, GateThresholds, Scorecard, build_scorecard
+from src.framework.learning import (
+    PolicyPatch,
+    PolicyUpdater,
+    PolicyVersion,
+    ProcedureUpdateProposal,
+    ProcedureUpdater,
+)
+from src.framework.observability import (
+    EVENT_TYPES_REQUIRED,
+    EventLogger,
+    ObservabilityEvent,
+    ReplayDiff,
+    ReplayEngine,
+    ReplayResult,
+    Timeline,
+    TimelineBuilder,
+    create_event,
+)
+from src.framework.runtime import (
+    LocalhostAutonomyToolset,
+    list_edit_templates,
+    register_web_agents,
+    register_web_capabilities,
+    resolve_edit_template,
+)
+from src.framework.safety import build_web_domain_policy_hook
 
 __all__ = [
     # Types / Enums
@@ -85,4 +124,45 @@ __all__ = [
     "TaskSpec",
     "ToolCall",
     "WorkingMemoryItem",
+    # Layer I
+    "BaseDomainAdapter",
+    "StartupVCAdapter",
+    "WebProductAdapter",
+    # Layer E
+    "AutonomyLoop",
+    "CheckpointManager",
+    "CycleOutcome",
+    "LoopResult",
+    "RunController",
+    "RunControllerResult",
+    "TerminationDecision",
+    "TerminationPolicy",
+    "TerminationState",
+    # Layer G
+    "Evaluator",
+    "GateThresholds",
+    "Scorecard",
+    "build_scorecard",
+    "PolicyPatch",
+    "PolicyUpdater",
+    "PolicyVersion",
+    "ProcedureUpdateProposal",
+    "ProcedureUpdater",
+    # Layer H
+    "EVENT_TYPES_REQUIRED",
+    "EventLogger",
+    "ObservabilityEvent",
+    "ReplayDiff",
+    "ReplayEngine",
+    "ReplayResult",
+    "Timeline",
+    "TimelineBuilder",
+    "create_event",
+    # Web autonomy helpers
+    "LocalhostAutonomyToolset",
+    "list_edit_templates",
+    "register_web_agents",
+    "register_web_capabilities",
+    "resolve_edit_template",
+    "build_web_domain_policy_hook",
 ]

@@ -1,9 +1,12 @@
 """Quick test of CrewAI integration."""
 import sys
-from pathlib import Path
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+if __package__:
+    from ._bootstrap import add_repo_root_to_path
+else:
+    from _bootstrap import add_repo_root_to_path
+
+add_repo_root_to_path(__file__)
 
 print("="*60)
 print("CREWAI INTEGRATION - QUICK TEST")
@@ -122,7 +125,7 @@ print("ALL TESTS PASSED - CREWAI INTEGRATION WORKING!")
 print("="*60)
 print()
 print("Next steps:")
-print("  1. Run: python scripts/run_simulation.py")
+print("  1. Run: python scripts/run.py")
 print("  2. Run tests: pytest tests/ -v")
 print("  3. See README.md for details")
 print()

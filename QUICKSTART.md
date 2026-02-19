@@ -54,7 +54,7 @@ Ready to run simulation!
 ## Step 4: Run Your First Simulation
 
 ```bash
-python scripts/run_simulation.py
+python scripts/run.py
 ```
 
 This runs 3 Build-Measure-Learn iterations and shows:
@@ -66,11 +66,28 @@ This runs 3 Build-Measure-Learn iterations and shows:
 
 ```bash
 # Custom iterations with verbosity
-python scripts/run_simulation.py --iterations 5 --verbose 2
+python scripts/run.py --mode crewai --iterations 5 --verbose 2
+
+# Web-autonomy mode
+python scripts/run.py --mode web --iterations 3 --target-url http://localhost:3000
+
+# Live dashboard mode
+python scripts/run.py --mode dashboard --events-path data/memory/web_autonomy_events.ndjson
+
+# List available safe edit templates
+python scripts/run.py --mode web --list-edit-templates
+
+# Run with one bounded edit template
+python scripts/run.py --mode web --edit-template readme_run_command_note --edit-replace "# Unified runner (default mode: crewai and web)"
+
+# Load project-specific templates from JSON
+python scripts/run.py --mode web --list-edit-templates --edit-template-file data/seed/web_edit_templates.json
 
 # Quick integration test
 python scripts/test_crewai_quick.py
 ```
+
+`--edit-template-file` defaults to `data/seed/web_edit_templates.json`.
 
 ### Framework Regression Checks (Recommended)
 
@@ -81,74 +98,19 @@ pytest tests/test_agent_runtime.py tests/test_orchestration/test_orchestration.p
 
 ## What You'll See
 
-### Iteration 1 (Baseline)
-```
-ITERATION 1 RESULTS
-Outreach Campaign:
-  - Messages sent: 5
-  - Responses: 1
-  - Interested: 1
-  - Meeting requests: 0
+Typical run output includes:
+- Cycle start/end logs for Build-Measure-Learn iterations
+- Agent/tool execution traces
+- Final metrics summary (response/meeting rates and counts)
+- Completion status for the full run
 
-Metrics:
-  - Response rate: 20.0%
-  - Meeting rate: 0.0%
+For web-autonomy observability, run the dashboard in a second terminal:
+```bash
+python scripts/run.py --mode dashboard --events-path data/memory/web_autonomy_events.ndjson
 ```
+This provides a live UI view of run status, cycles, tasks, tools, policies, and recent events.
 
-### Iteration 2 (Learning Applied)
-```
-ITERATION 2 RESULTS
-Outreach Campaign:
-  - Messages sent: 5
-  - Responses: 2
-  - Interested: 2
-  - Meeting requests: 1
-
-Metrics:
-  - Response rate: 40.0%
-  - Meeting rate: 20.0%
-```
-
-### Iteration 3 (Optimized)
-```
-ITERATION 3 RESULTS
-Outreach Campaign:
-  - Messages sent: 5
-  - Responses: 3
-  - Interested: 3
-  - Meeting requests: 2
-
-Metrics:
-  - Response rate: 60.0%
-  - Meeting rate: 40.0%
-```
-
-## Understanding the Output
-
-### Agent Activity
-```
-[strategic_coordinator] Starting Build-Measure-Learn Cycle 1
-[data_strategy_expert] Analyzing data gaps
-[scraper_tool] Executing scraping task
-[outreach_strategy_expert] Creating outreach campaign plan
-[content_generator_tool] Generating outreach content
-```
-
-### Memory Updates
-```
-[strategic_coordinator] Learning from execution
-Recorded episode 5: strategic_coordinator/build_measure_learn_cycle (success=True)
-Saved workflow for outreach_campaign (score: 0.850)
-```
-
-### Performance Tracking
-```
-SIMULATION COMPLETE - FINAL SUMMARY
-Performance Evolution:
-  Iteration 1: Response rate 20.0%, Meeting rate 5.0%
-  Iteration 2: Response rate 30.0%, Meeting rate 12.0%
-  Iteration 3: Response rate 38.0%, Meeting rate 18.0%
-```
+In mock mode, focus on deterministic completion and guardrail behavior rather than specific numeric outcomes.
 
 ## Next Steps
 
@@ -192,7 +154,7 @@ Edit files in `data/seed/`:
 Then re-run:
 ```bash
 python scripts/seed_memory.py
-python scripts/run_simulation.py
+python scripts/run.py
 ```
 
 ### Explore the Code
@@ -212,7 +174,7 @@ Key files to explore:
 ```bash
 # Run from project root
 cd autonomous-startup
-python scripts/run_simulation.py
+python scripts/run.py
 
 # Or set PYTHONPATH
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
@@ -258,7 +220,7 @@ vim src/crewai_agents/tools.py
 python scripts/seed_memory.py
 
 # 3. Run simulation
-python scripts/run_simulation.py
+python scripts/run.py
 
 # 4. Run tests
 pytest tests/ -v
@@ -273,7 +235,7 @@ vim data/seed/startups.json
 python scripts/seed_memory.py
 
 # 3. Run simulation
-python scripts/run_simulation.py --iterations 5
+python scripts/run.py --mode crewai --iterations 5
 
 # 4. Check results in memory
 sqlite3 data/memory/episodic.db "SELECT * FROM episodes ORDER BY timestamp DESC LIMIT 5;"
@@ -285,7 +247,7 @@ You've successfully set up the system when:
 
 - Seed script runs without errors
 - Simulation shows 3 iterations
-- Response rates improve across iterations
+- Simulation completes and prints a metrics evolution summary
 - Episodic memory contains episodes
 - Procedural memory contains workflows
 - Tests pass
@@ -300,10 +262,11 @@ You've successfully set up the system when:
 
 Once comfortable with the prototype:
 
-1. **Understand the Architecture** - Read through agent implementations
-2. **Experiment with Real LLMs** - Set `MOCK_MODE=false`
-3. **Customize Behaviors** - Modify agent strategies and tools
-4. **Add New Agents** - Create additional agents/tools
-5. **Scale Up** - Replace in-memory components with production systems
+1. **Check Current Priorities** - Follow `plan.md` (Immediate Work Order section)
+2. **Understand the Architecture** - Read `plan.md` and agent implementations
+3. **Experiment with Real LLMs** - Set `MOCK_MODE=false`
+4. **Customize Behaviors** - Modify agent strategies and tools
+5. **Add New Agents** - Create additional agents/tools
+6. **Scale Up** - Replace in-memory components with production systems
 
 Happy simulating!

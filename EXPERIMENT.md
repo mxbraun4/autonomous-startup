@@ -47,6 +47,8 @@ A coordinated agent system with memory can improve matching and outreach outcome
    - Run the same command 2-3 times and compare trends
 4. Capture outputs
    - Record metrics and qualitative agent outputs in the run log template below
+   - Optional live observability UI during runs:
+     - `python scripts/run.py --mode dashboard --events-path data/memory/web_autonomy_events.ndjson`
 
 ## Success Criteria (Simulation Phase)
 - Reliability
@@ -138,6 +140,7 @@ Use this for each experiment run.
 - Run ID:
 - Date:
 - Config: iterations, verbose, mock mode
+- Dashboard snapshot notes (optional):
 - Build output summary:
 - Measure output:
   - Iteration 1 response/meeting:

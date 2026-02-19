@@ -67,17 +67,47 @@ python scripts/seed_memory.py
 ### Run Simulation
 
 ```bash
-# Run simulation (3 iterations by default)
-python scripts/run_simulation.py
+# Unified runner (default mode: crewai)
+python scripts/run.py
+
+# Explicit CrewAI mode
+python scripts/run.py --mode crewai
 
 # Custom iterations with verbosity
-python scripts/run_simulation.py --iterations 5 --verbose 2
+python scripts/run.py --mode crewai --iterations 5 --verbose 2
+
+# Web-autonomy mode
+python scripts/run.py --mode web --iterations 3 --target-url http://localhost:3000
+
+# Live dashboard mode (tail NDJSON events in real time)
+python scripts/run.py --mode dashboard --events-path data/memory/web_autonomy_events.ndjson
+
+# List available safe edit templates
+python scripts/run.py --mode web --list-edit-templates
+
+# Run web autonomy with a bounded edit template
+python scripts/run.py --mode web --edit-template readme_run_command_note --edit-replace "# Unified runner (default mode: crewai and web)"
+
+# Use project-specific template catalog (JSON)
+python scripts/run.py --mode web --list-edit-templates --edit-template-file data/seed/web_edit_templates.json
 
 # Quick integration test
 python scripts/test_crewai_quick.py
 ```
 
+`--edit-template-file` defaults to `data/seed/web_edit_templates.json`.
+
 ## Architecture
+
+### Documentation Map
+
+Use this order to avoid duplication:
+
+1. `README.md` - overview and navigation
+2. `QUICKSTART.md` - operational commands
+3. `plan.md` - architecture and roadmap source of truth
+4. `PRODUCT_VISION.md` and `EXPERIMENT.md` - product and experiment source docs
+5. `CUSTOMER_SIMULATION.md` - constrained simulation assumptions
 
 ### Current Execution Paths
 
@@ -154,9 +184,6 @@ autonomous-startup/
 |   |   |-- startup_agent.py
 |   |   |-- vc_agent.py
 |   |   |-- scenarios.py
-|   |-- llm/              # LLM client
-|   |   |-- client.py
-|   |   |-- prompts.py
 |   |-- utils/            # Utilities
 |       |-- config.py
 |       |-- logging.py
@@ -171,8 +198,12 @@ autonomous-startup/
 |       |-- episodic.db
 |       |-- workflows.json
 |-- scripts/
+|   |-- _bootstrap.py     # Shared script bootstrap helpers
 |   |-- seed_memory.py    # Initialize memories
-|   |-- run_simulation.py # Main simulation
+|   |-- run.py            # Unified runner (crewai/web/dashboard)
+|   |-- run_simulation.py # CrewAI compatibility runner
+|   |-- run_web_autonomy.py # Localhost web autonomy
+|   |-- live_dashboard.py # Live observability UI
 |   |-- test_crewai_quick.py # Quick test
 |-- tests/
     |-- test_crewai_integration.py
@@ -228,15 +259,10 @@ Framework runtime and orchestration controls are configured through `RunConfig.p
 - `loop_window_size`
 - `max_identical_tool_calls`
 
-## Performance Metrics
+## Runtime Expectations
 
-Expected results (mock mode):
-
-| Iteration | Response Rate | Meeting Rate | Learning |
-|-----------|---------------|--------------|----------|
-| 1         | ~15-20%       | ~5%          | Baseline |
-| 2         | ~25-30%       | ~10%         | Adapted  |
-| 3         | ~35-40%       | ~15%         | Optimized|
+Mock-mode runs are deterministic and primarily used to validate orchestration, guardrails, and end-to-end flow completion.
+Treat response/meeting metrics as run outputs to inspect, not fixed targets.
 
 ## Next Steps (Production)
 
@@ -254,7 +280,7 @@ To evolve this prototype into production:
 
 ### API & UI
 - [ ] Build FastAPI backend
-- [ ] Create web dashboard
+- [x] Create local live dashboard (`scripts/live_dashboard.py`)
 - [ ] Add authentication
 
 ### Deployment
