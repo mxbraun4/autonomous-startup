@@ -61,6 +61,7 @@ This runs 3 Build-Measure-Learn iterations and shows:
 - Agent coordination
 - Memory evolution
 - Performance improvement
+- Dynamic tool auto-registration/deployment artifacts under `data/generated_tools/`
 
 ### With Options
 
@@ -71,6 +72,12 @@ python scripts/run.py --mode crewai --iterations 5 --verbose 2
 # Web-autonomy mode
 python scripts/run.py --mode web --iterations 3 --target-url http://localhost:3000
 
+# Scheduler mode (single evaluation/dispatch pass)
+python scripts/run.py --mode scheduler --once --cron "* * * * *"
+
+# Scheduler mode from JSON schedule config file
+python scripts/run.py --mode scheduler --once --schedules-file data/seed/scheduler_schedules.json
+
 # Live dashboard mode
 python scripts/run.py --mode dashboard --events-path data/memory/web_autonomy_events.ndjson
 
@@ -79,6 +86,9 @@ python scripts/run.py --mode web --list-edit-templates
 
 # Run with one bounded edit template
 python scripts/run.py --mode web --edit-template readme_run_command_note --edit-replace "# Unified runner (default mode: crewai and web)"
+
+# Web autonomy with self-heal/adaptive/diagnostics controls
+python scripts/run.py --mode web --max-self-heal-attempts 2 --auto-resume-on-pause --pause-cooldown-seconds 15 --adaptive-policy-reliability-streak 3 --diagnostics-window-size 100
 
 # Load project-specific templates from JSON
 python scripts/run.py --mode web --list-edit-templates --edit-template-file data/seed/web_edit_templates.json
@@ -143,6 +153,11 @@ Framework safety/failover/delegation controls are set via `RunConfig.policies` i
 - `tool_loop_window`, `tool_loop_max_repeats`
 - `loop_window_size`, `max_identical_tool_calls`
 - `max_children_per_parent`, `max_total_delegated_tasks`, `dedupe_delegated_objectives`
+- `auto_resume_on_pause`, `pause_cooldown_seconds`, `max_self_heal_attempts`
+- `enable_rollback_self_heal`
+- `adaptive_policy_enabled`, `policy_adjustment_bounds`
+- `diagnostics_enabled`, `diagnostics_window_size`
+- `exploratory_task_limit`
 
 ### Customize Configuration
 
@@ -160,7 +175,14 @@ LOG_LEVEL=DEBUG
 CREWAI_LOCAL_APPDATA_DIR=data/crewai_local
 CREWAI_DB_STORAGE_DIR=data/crewai_storage
 CREWAI_STORAGE_NAMESPACE=autonomous-startup
+
+# Optional: dynamic tool artifact controls
+GENERATED_TOOLS_DIR=data/generated_tools
+GENERATED_TOOLS_RETENTION_DAYS=30
 ```
+
+If those directories are not writable, runtime automatically falls back to
+`data/crewai_local_runtime/` and `data/crewai_storage_runtime/`.
 
 ### Modify Seed Data
 

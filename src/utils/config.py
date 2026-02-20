@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     # New memory system settings (flat, loaded from env)
     memory_use_legacy: bool = False
     memory_data_dir: str = "data/memory"
+    generated_tools_dir: str = "data/generated_tools"
+    generated_tools_retention_days: int = 30
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -16,6 +16,9 @@ from .tools import (
     # Analysis
     data_validator_tool,
     analytics_tool,
+    register_dynamic_tool,
+    list_dynamic_tools,
+    execute_dynamic_tool,
     # Consensus memory
     share_insight,
     get_team_insights,
@@ -49,6 +52,9 @@ __all__ = [
     'content_generator_tool',
     'data_validator_tool',
     'analytics_tool',
+    'register_dynamic_tool',
+    'list_dynamic_tools',
+    'execute_dynamic_tool',
     'share_insight',
     'get_team_insights',
     # Agents

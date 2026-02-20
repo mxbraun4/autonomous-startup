@@ -1,11 +1,22 @@
 """CrewAI Tools - Including web-enabled data collection tools."""
 import atexit
 import json
+import re
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 
+from src.crewai_agents.runtime_env import (
+    configure_runtime_environment,
+    patch_crewai_storage_paths,
+)
+
+configure_runtime_environment()
 from crewai.tools import tool
+patch_crewai_storage_paths()
 
 from src.data.database import StartupDatabase
+from src.utils.config import settings
 from src.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -19,6 +30,10 @@ _db: Optional[StartupDatabase] = None
 # Global memory store instance (SyncUnifiedStore)
 _memory_store: Optional["SyncUnifiedStore"] = None
 
+# Dynamic runtime tool registry (autonomy gap: dynamic tool creation + self deployment)
+_dynamic_tool_specs: Dict[str, Dict[str, Any]] = {}
+_dynamic_tool_invocations: Dict[str, int] = {}
+
 
 def _cleanup_globals() -> None:
     """Close global singletons at interpreter shutdown."""
@@ -29,6 +44,7 @@ def _cleanup_globals() -> None:
     if _memory_store is not None:
         _memory_store.close()
         _memory_store = None
+    clear_dynamic_tool_registry()
 
 
 atexit.register(_cleanup_globals)
@@ -52,6 +68,133 @@ def set_memory_store(store: "SyncUnifiedStore") -> None:
 def get_memory_store() -> Optional["SyncUnifiedStore"]:
     """Get the current memory store (may be None if not initialised)."""
     return _memory_store
+
+
+def _tool_artifact_dir() -> Path:
+    root = Path(getattr(settings, "generated_tools_dir", "data/generated_tools"))
+    return root.resolve()
+
+
+def _slugify_tool_name(raw_name: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9_]+", "_", str(raw_name or "").strip().lower())
+    cleaned = cleaned.strip("_")
+    return cleaned or "generated_tool"
+
+
+def _unique_tool_name(base_name: str) -> str:
+    if base_name not in _dynamic_tool_specs:
+        return base_name
+
+    index = 2
+    while True:
+        candidate = f"{base_name}_{index}"
+        if candidate not in _dynamic_tool_specs:
+            return candidate
+        index += 1
+
+
+def _prune_old_tool_artifacts(root: Path) -> int:
+    retention_days = int(getattr(settings, "generated_tools_retention_days", 30))
+    if retention_days <= 0:
+        return 0
+
+    cutoff_epoch = (
+        datetime.now(timezone.utc).timestamp()
+        - (retention_days * 24 * 60 * 60)
+    )
+    removed = 0
+    for path in root.glob("*.json"):
+        try:
+            if path.stat().st_mtime < cutoff_epoch:
+                path.unlink(missing_ok=True)
+                removed += 1
+        except Exception:
+            continue
+    return removed
+
+
+def _persist_dynamic_tool_spec(record: Dict[str, Any]) -> Path:
+    root = _tool_artifact_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    _prune_old_tool_artifacts(root)
+
+    tool_name = str(record.get("tool_name", "generated_tool"))
+    artifact_path = root / f"{tool_name}.json"
+    artifact_path.write_text(
+        json.dumps(record, indent=2, ensure_ascii=True),
+        encoding="utf-8",
+    )
+    return artifact_path
+
+
+def _register_dynamic_tool_spec(
+    spec: Dict[str, Any],
+    *,
+    source: str,
+) -> Dict[str, Any]:
+    base_name = _slugify_tool_name(spec.get("tool_name") or spec.get("description") or "tool")
+    tool_name = _unique_tool_name(base_name)
+
+    record = dict(spec)
+    record["tool_name"] = tool_name
+    record["registered_source"] = source
+    record["registered_at_utc"] = datetime.now(timezone.utc).isoformat()
+    _dynamic_tool_specs[tool_name] = record
+    _dynamic_tool_invocations.setdefault(tool_name, 0)
+
+    artifact_path = _persist_dynamic_tool_spec(record)
+    return {
+        "tool_name": tool_name,
+        "status": "registered",
+        "deployment_status": "deployed",
+        "artifact_path": str(artifact_path),
+    }
+
+
+def _execute_dynamic_tool(
+    tool_name: str,
+    payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    spec = _dynamic_tool_specs.get(tool_name)
+    if spec is None:
+        return {
+            "status": "failed",
+            "reason": "dynamic_tool_not_found",
+            "tool_name": tool_name,
+        }
+
+    _dynamic_tool_invocations[tool_name] = _dynamic_tool_invocations.get(tool_name, 0) + 1
+
+    features = spec.get("features", [])
+    if not isinstance(features, list):
+        features = []
+
+    return {
+        "status": "success",
+        "tool_name": tool_name,
+        "description": spec.get("description", ""),
+        "features": [str(item) for item in features],
+        "payload": dict(payload),
+        "invocation_count": _dynamic_tool_invocations[tool_name],
+        "result": (
+            f"Executed {tool_name} with {len(payload)} input field(s); "
+            f"supported features={len(features)}"
+        ),
+    }
+
+
+def get_dynamic_tool_registry_snapshot() -> Dict[str, Dict[str, Any]]:
+    """Return a copy of dynamic tool specs for tests/introspection."""
+    return {
+        name: dict(spec)
+        for name, spec in _dynamic_tool_specs.items()
+    }
+
+
+def clear_dynamic_tool_registry() -> None:
+    """Clear dynamic tool registry (used by tests)."""
+    _dynamic_tool_specs.clear()
+    _dynamic_tool_invocations.clear()
 
 
 # =============================================================================
@@ -616,7 +759,107 @@ def tool_builder_tool(tool_idea: str, requirements: str = "") -> str:
         'estimated_complexity': 'medium'
     }
 
+    registration = _register_dynamic_tool_spec(spec, source="tool_builder_tool")
+    spec["tool_name"] = registration["tool_name"]
+    spec["runtime_registration"] = {
+        "status": registration["status"],
+        "tool_name": registration["tool_name"],
+    }
+    spec["deployment"] = {
+        "status": registration["deployment_status"],
+        "artifact_path": registration["artifact_path"],
+    }
+
     return json.dumps(spec, indent=2)
+
+
+@tool("Register Dynamic Tool")
+def register_dynamic_tool(tool_spec_json: str, source: str = "agent") -> str:
+    """Register a dynamic tool spec and deploy it as a local artifact."""
+    try:
+        parsed = json.loads(tool_spec_json)
+    except Exception as exc:
+        return json.dumps(
+            {
+                "status": "failed",
+                "reason": "invalid_json",
+                "error": str(exc),
+            },
+            indent=2,
+        )
+
+    if not isinstance(parsed, dict):
+        return json.dumps(
+            {
+                "status": "failed",
+                "reason": "tool_spec_must_be_object",
+            },
+            indent=2,
+        )
+
+    registration = _register_dynamic_tool_spec(parsed, source=source)
+    return json.dumps(
+        {
+            "status": "success",
+            "registration": registration,
+        },
+        indent=2,
+    )
+
+
+@tool("List Dynamic Tools")
+def list_dynamic_tools() -> str:
+    """List currently registered dynamic tools."""
+    tools = []
+    for name, spec in sorted(_dynamic_tool_specs.items()):
+        tools.append(
+            {
+                "tool_name": name,
+                "description": spec.get("description", ""),
+                "registered_source": spec.get("registered_source", ""),
+                "registered_at_utc": spec.get("registered_at_utc", ""),
+                "invocation_count": _dynamic_tool_invocations.get(name, 0),
+            }
+        )
+
+    return json.dumps(
+        {
+            "status": "success",
+            "count": len(tools),
+            "tools": tools,
+        },
+        indent=2,
+    )
+
+
+@tool("Execute Dynamic Tool")
+def execute_dynamic_tool(tool_name: str, payload_json: str = "{}") -> str:
+    """Execute a registered dynamic tool with JSON payload."""
+    try:
+        payload = json.loads(payload_json) if payload_json else {}
+    except Exception as exc:
+        return json.dumps(
+            {
+                "status": "failed",
+                "reason": "invalid_payload_json",
+                "error": str(exc),
+                "tool_name": tool_name,
+            },
+            indent=2,
+        )
+
+    if not isinstance(payload, dict):
+        return json.dumps(
+            {
+                "status": "failed",
+                "reason": "payload_must_be_object",
+                "tool_name": tool_name,
+            },
+            indent=2,
+        )
+
+    result = _execute_dynamic_tool(tool_name=tool_name, payload=payload)
+    return json.dumps(result, indent=2)
 
 
 @tool("Analyze Metrics")

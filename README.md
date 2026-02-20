@@ -11,6 +11,9 @@ This system demonstrates:
 - **Simulated ecosystem** with startup and VC agents
 - **Autonomous improvement** across iterations
 - **Framework guardrails** for tool failover, loop detection, and bounded delegation
+- **Framework autonomy controls** for scheduler triggers, rollback self-heal, adaptive policy tuning, and diagnostics actions
+- **Dynamic tool lifecycle** where product-generated specs auto-register and auto-deploy as local runtime artifacts
+- **Adaptive outreach staffing + prompt refinement** driven by prior-cycle outcomes
 - **Deterministic mock-mode execution** with local-only runtime storage
 
 ## CrewAI Benefits
@@ -79,6 +82,12 @@ python scripts/run.py --mode crewai --iterations 5 --verbose 2
 # Web-autonomy mode
 python scripts/run.py --mode web --iterations 3 --target-url http://localhost:3000
 
+# Scheduler mode (long-lived trigger loop for web autonomy)
+python scripts/run.py --mode scheduler --cron "*/30 * * * *" --interval-seconds 60
+
+# Scheduler mode from JSON schedule config file
+python scripts/run.py --mode scheduler --schedules-file data/seed/scheduler_schedules.json
+
 # Live dashboard mode (tail NDJSON events in real time)
 python scripts/run.py --mode dashboard --events-path data/memory/web_autonomy_events.ndjson
 
@@ -90,6 +99,9 @@ python scripts/run.py --mode web --edit-template readme_run_command_note --edit-
 
 # Use project-specific template catalog (JSON)
 python scripts/run.py --mode web --list-edit-templates --edit-template-file data/seed/web_edit_templates.json
+
+# Web autonomy with self-heal/adaptive/diagnostics controls
+python scripts/run.py --mode web --max-self-heal-attempts 2 --auto-resume-on-pause --pause-cooldown-seconds 15 --adaptive-policy-reliability-streak 3 --diagnostics-window-size 100
 
 # Quick integration test
 python scripts/test_crewai_quick.py
@@ -176,6 +188,10 @@ Strategic Coordinator (manager)
 - **Tool-call loop detection**: repeated identical tool signatures are denied by policy/runtime safeguards
 - **Bounded delegation**: orchestration enforces delegation depth and child-task limits
 - **Deterministic scheduling/retries**: seeded tie-breaks and transient-only retry policies
+- **Rollback self-heal**: gate-recommended rollback can revert policy/procedure updates and rerun from checkpoint
+- **Adaptive policy control**: per-cycle reliability/safety/efficiency/learning outcomes can tighten or widen limits
+- **Diagnostics actions**: event-window pattern detection can disable unstable tools, tighten policy, and request strategy shifts
+- **Autonomous scheduler**: cron/data/metric/event triggers can dispatch `RunController.run()` or `resume()` under a global lock
 
 ## Project Structure
 
@@ -275,10 +291,18 @@ MEMORY_DATA_DIR=data/memory
 MEMORY_EMBEDDING_MODEL=default
 MEMORY_WM_DECAY_RATE=0.95
 MEMORY_WM_DEFAULT_MAX_TOKENS=4000
+GENERATED_TOOLS_DIR=data/generated_tools
+GENERATED_TOOLS_RETENTION_DAYS=30
 CREWAI_LOCAL_APPDATA_DIR=data/crewai_local
 CREWAI_DB_STORAGE_DIR=data/crewai_storage
 CREWAI_STORAGE_NAMESPACE=autonomous-startup
 ```
+
+Generated tool specs produced by `tool_builder_tool` are persisted under `data/generated_tools/`.
+
+If preferred CrewAI paths are not writable, runtime falls back automatically to:
+- `data/crewai_local_runtime/`
+- `data/crewai_storage_runtime/`
 
 Framework runtime and orchestration controls are configured through `RunConfig.policies` (not environment variables), including:
 - `tool_loop_window`
@@ -288,6 +312,15 @@ Framework runtime and orchestration controls are configured through `RunConfig.p
 - `dedupe_delegated_objectives`
 - `loop_window_size`
 - `max_identical_tool_calls`
+- `auto_resume_on_pause`
+- `pause_cooldown_seconds`
+- `max_self_heal_attempts`
+- `enable_rollback_self_heal`
+- `policy_adjustment_bounds`
+- `adaptive_policy_enabled`
+- `diagnostics_enabled`
+- `diagnostics_window_size`
+- `exploratory_task_limit`
 
 ## Runtime Expectations
 
