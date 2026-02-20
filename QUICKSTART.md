@@ -99,6 +99,9 @@ python scripts/test_crewai_quick.py
 # Deterministic customer simulation scenario matrix
 python scripts/run_customer_simulation.py
 
+# Startup/VC framework adapter uses the same deterministic customer-environment
+# signals for MEASURE when running framework domain cycles
+
 # Optional: include visitor cohort/acquisition signals
 python scripts/run_customer_simulation.py --include-visitors
 

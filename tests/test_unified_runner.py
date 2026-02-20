@@ -25,6 +25,12 @@ def test_build_command_for_dashboard_mode():
     assert Path(command[1]).name == "live_dashboard.py"
 
 
+def test_build_command_for_scheduler_mode():
+    command = build_command("scheduler", ["--once"])
+    assert command[-1:] == ["--once"]
+    assert Path(command[1]).name == "run_scheduler.py"
+
+
 def test_build_command_rejects_unknown_mode():
     with pytest.raises(ValueError, match="Unsupported mode"):
         build_command("unknown", [])

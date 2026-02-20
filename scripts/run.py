@@ -14,6 +14,7 @@ def _mode_script(mode: str) -> Path:
     mapping = {
         "crewai": scripts_dir / "run_simulation.py",
         "web": scripts_dir / "run_web_autonomy.py",
+        "scheduler": scripts_dir / "run_scheduler.py",
         "dashboard": scripts_dir / "live_dashboard.py",
     }
     if mode not in mapping:
@@ -29,11 +30,11 @@ def build_command(mode: str, passthrough_args: List[str]) -> List[str]:
 
 def main(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Unified runner for CrewAI, web-autonomy, and live dashboard modes.",
+        description="Unified runner for CrewAI, web-autonomy, scheduler, and dashboard modes.",
     )
     parser.add_argument(
         "--mode",
-        choices=["crewai", "web", "dashboard"],
+        choices=["crewai", "web", "scheduler", "dashboard"],
         default="crewai",
         help="Execution mode (default: crewai)",
     )

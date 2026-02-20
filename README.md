@@ -152,6 +152,7 @@ Use this order to avoid duplication:
 
 - **CrewAI simulation path (active):** `src/crewai_agents/` + scripts in `scripts/`
 - **Framework kernel path (implemented modules):** `src/framework/` runtime, orchestration, safety, storage
+- **Startup/VC framework measurement path (integrated):** `StartupVCAdapter` now uses deterministic `customer_environment` outputs (with formula fallback) for cycle metrics
 
 The CrewAI simulation remains the default runnable path. Framework modules are available and tested, and are being progressively integrated.
 

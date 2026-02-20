@@ -125,6 +125,31 @@ class _EvaluatorAdapter:
         return self._fn(current_metrics, previous_metrics)
 
 
+class _SequenceEvaluator:
+    def __init__(self, actions):
+        self._actions = list(actions)
+
+    def evaluate(self, current_metrics, previous_metrics=None):
+        del previous_metrics
+        action = self._actions.pop(0) if self._actions else "continue"
+        status = "fail" if action == "rollback" else "pass"
+        gate_name = "learning" if action == "rollback" else "reliability"
+        return EvaluationResult(
+            run_id=current_metrics.run_id,
+            cycle_id=current_metrics.cycle_id,
+            gates=[
+                GateDecision(
+                    gate_name=gate_name,
+                    gate_status=status,
+                    recommended_action=action,
+                )
+            ],
+            overall_status=status,
+            recommended_action=action,
+            summary=action,
+        )
+
+
 def test_termination_policy_stops_on_budget_exhaustion():
     policy = TerminationPolicy(max_cycles=3, critical_failure_threshold=2)
     state = TerminationState()
@@ -286,3 +311,34 @@ def test_run_controller_emits_run_cycle_and_checkpoint_events(tmp_path):
     assert "cycle_end" in event_types
     assert "checkpoint_saved" in event_types
     assert "run_end" in event_types
+
+
+def test_run_controller_executes_rollback_self_heal_and_reruns_cycle(tmp_path):
+    run_config = RunConfig(run_id="run_self_heal", seed=1, max_cycles=2)
+    executor = _FakeExecutor(
+        [
+            _FakeCycleExecutionResult(total_tasks=1, completed_count=1),
+            _FakeCycleExecutionResult(total_tasks=1, completed_count=1),
+            _FakeCycleExecutionResult(total_tasks=1, completed_count=1),
+        ]
+    )
+    event_logger = EventLogger()
+    evaluator = _SequenceEvaluator(["continue", "rollback", "continue"])
+
+    controller = RunController(
+        run_config=run_config,
+        executor=executor,
+        task_builder=_build_tasks,
+        evaluator=evaluator,
+        measure_fn=_measure_fn,
+        checkpoint_dir=str(tmp_path),
+        event_emitter=event_logger,
+    )
+    result = controller.run()
+
+    assert result.final_status == "completed"
+    # cycle 2 is rerun after rollback self-heal
+    assert result.cycles_completed >= 3
+    event_types = {event.event_type for event in event_logger.get_events(run_id="run_self_heal")}
+    assert "run.self_heal_rollback" in event_types
+

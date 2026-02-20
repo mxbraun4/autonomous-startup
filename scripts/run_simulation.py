@@ -24,17 +24,50 @@ def _init_memory_store():
     from src.framework.storage.sync_wrapper import SyncUnifiedStore
     from src.crewai_agents.tools import set_memory_store
 
-    data_dir = str(Path(settings.memory_data_dir).resolve())
-    Path(data_dir).mkdir(parents=True, exist_ok=True)
-    store = UnifiedStore(data_dir=data_dir)
+    preferred_dir = Path(settings.memory_data_dir).resolve()
+    fallback_dir = Path("data/memory_runtime").resolve()
+    candidates = [preferred_dir]
+    if fallback_dir != preferred_dir:
+        candidates.append(fallback_dir)
+
+    store = None
+    selected_dir = None
+    last_error = None
+    for candidate in candidates:
+        candidate.mkdir(parents=True, exist_ok=True)
+        try:
+            _assert_writable_directory(candidate)
+            store = UnifiedStore(data_dir=str(candidate))
+            selected_dir = candidate
+            break
+        except Exception as exc:  # pragma: no cover - exercised via runtime fallback
+            last_error = exc
+            logger.warning(
+                "UnifiedStore init failed for data_dir=%s (%s)",
+                candidate,
+                exc,
+            )
+            continue
+
+    if store is None or selected_dir is None:
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("UnifiedStore initialisation failed for all memory directories")
 
     sync_store = SyncUnifiedStore(store)
     set_memory_store(sync_store)
     logger.info(
         "UnifiedStore initialised and injected into tools (data_dir=%s)",
-        data_dir,
+        selected_dir,
     )
     return sync_store
+
+
+def _assert_writable_directory(path: Path) -> None:
+    """Raise if a directory path cannot be written to."""
+    probe = path / ".write_probe"
+    probe.write_text("ok", encoding="utf-8")
+    probe.unlink(missing_ok=True)
 
 
 def _percentage_change(baseline: float, latest: float) -> float | None:

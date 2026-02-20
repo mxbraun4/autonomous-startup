@@ -200,6 +200,9 @@ Required artifacts:
 - `src/framework/autonomy/loop.py`
 - `src/framework/autonomy/checkpointing.py`
 - `src/framework/autonomy/termination.py`
+- `src/framework/autonomy/run_scheduler.py`
+- `src/framework/autonomy/adaptive_policy.py`
+- `src/framework/autonomy/diagnostics.py`
 
 Core loop:
 1. Build or fetch cycle task set.
@@ -207,8 +210,14 @@ Core loop:
 3. Measure cycle outcomes.
 4. Evaluate against gates.
 5. Update procedures/policies.
-6. Decide continue/pause/stop.
+6. Decide continue/pause/rollback/stop.
 7. Save checkpoint.
+
+Extended autonomy controls:
+- Trigger-based scheduler dispatches runs/resumes with a global concurrency lock.
+- Rollback self-heal can revert to last known-good checkpoint and rerun failed cycles.
+- Adaptive policy controller can auto-adjust autonomy level and step budgets within configured bounds.
+- Diagnostics agent can react to event windows and apply bounded interventions.
 
 Stop conditions:
 - Budget exhausted.
@@ -434,6 +443,7 @@ Migration step 3:
 
 Migration step 4:
 - Replace hardcoded measure formulas with adapter-driven simulation outcomes.
+  - Status update: `StartupVCAdapter` now consumes deterministic `customer_environment` outputs (with fallback formula path).
 
 Migration step 5:
 - Switch scripts to use run controller entrypoint.
@@ -587,6 +597,7 @@ Primary commands currently used:
 - `python scripts/seed_memory.py`
 - `python scripts/run.py --mode crewai --iterations 3`
 - `python scripts/run.py --mode web --iterations 3 --target-url http://localhost:3000`
+- `python scripts/run.py --mode scheduler --cron "*/30 * * * *"`
 - `python scripts/run.py --mode dashboard --events-path data/memory/web_autonomy_events.ndjson`
 - `pytest tests/ -v`
 

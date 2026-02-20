@@ -8,7 +8,9 @@ from typing import Any, Callable, Dict, List, Optional
 from pydantic import BaseModel
 
 from src.framework.adapters.base import BaseDomainAdapter
+from src.framework.autonomy.adaptive_policy import AdaptivePolicyController
 from src.framework.autonomy.checkpointing import CheckpointManager
+from src.framework.autonomy.diagnostics import DiagnosticsAgent
 from src.framework.autonomy.loop import AutonomyLoop, LoopResult
 from src.framework.autonomy.termination import TerminationPolicy
 from src.framework.contracts import CycleMetrics, RunConfig, TaskSpec
@@ -66,6 +68,8 @@ class RunController:
         policy_updater: Optional[PolicyUpdater] = None,
         procedure_updater: Optional[ProcedureUpdater] = None,
         procedure_recommendations_fn: Optional[Callable[..., List[Any]]] = None,
+        adaptive_policy_controller: Any = None,
+        diagnostics_agent: Any = None,
         checkpoint_dir: str = "data/memory/checkpoints",
         event_emitter: Any = None,
         context: Optional[ExecutionContext] = None,
@@ -80,8 +84,15 @@ class RunController:
         self._task_builder = task_builder or self._adapter_task_builder
         self._store = store
         self._evaluator = evaluator or Evaluator()
+        policies = dict(getattr(run_config, "policies", {}) or {})
         self._termination_policy = termination_policy or TerminationPolicy(
-            max_cycles=run_config.max_cycles
+            max_cycles=run_config.max_cycles,
+            max_self_heal_attempts=int(policies.get("max_self_heal_attempts", 2)),
+            auto_resume_on_pause=bool(policies.get("auto_resume_on_pause", False)),
+            pause_cooldown_seconds=float(policies.get("pause_cooldown_seconds", 0.0)),
+            enable_rollback_self_heal=bool(
+                policies.get("enable_rollback_self_heal", True)
+            ),
         )
         if measure_fn is not None:
             self._measure_fn = measure_fn
@@ -104,6 +115,53 @@ class RunController:
         else:
             self._procedure_recommendations_fn = None
         self._event_emitter = event_emitter
+
+        runtime = getattr(self._executor, "_runtime", None)
+        runtime_policy_engine = getattr(runtime, "_policy_engine", None)
+        bounds = policies.get("policy_adjustment_bounds")
+        adaptive_enabled = bool(policies.get("adaptive_policy_enabled", True))
+        if adaptive_policy_controller is not None:
+            self._adaptive_policy_controller = adaptive_policy_controller
+        elif adaptive_enabled:
+            self._adaptive_policy_controller = AdaptivePolicyController(
+                run_config=run_config,
+                policy_engine=runtime_policy_engine,
+                event_emitter=event_emitter,
+                reliability_pass_streak=int(
+                    policies.get("adaptive_policy_reliability_streak", 3)
+                ),
+                step_adjustment_ratio=float(
+                    policies.get("adaptive_policy_step_adjustment_ratio", 0.10)
+                ),
+                learning_improvement_threshold=float(
+                    policies.get("adaptive_policy_learning_threshold", 0.05)
+                ),
+                bounds=dict(bounds or {}),
+            )
+        else:
+            self._adaptive_policy_controller = None
+
+        diagnostics_enabled = bool(policies.get("diagnostics_enabled", True))
+        if diagnostics_agent is not None:
+            self._diagnostics_agent = diagnostics_agent
+        elif diagnostics_enabled and event_emitter is not None:
+            self._diagnostics_agent = DiagnosticsAgent(
+                event_source=event_emitter,
+                run_config=run_config,
+                adaptive_policy_controller=self._adaptive_policy_controller,
+                policy_engine=runtime_policy_engine,
+                event_emitter=event_emitter,
+                window_size=int(policies.get("diagnostics_window_size", 100)),
+                policy_violation_threshold=int(
+                    policies.get("diagnostics_policy_violation_threshold", 3)
+                ),
+                tool_denied_threshold=int(
+                    policies.get("diagnostics_tool_denied_threshold", 3)
+                ),
+                gate_drop_window=int(policies.get("diagnostics_gate_drop_window", 3)),
+            )
+        else:
+            self._diagnostics_agent = None
 
         self._checkpoint_manager = CheckpointManager(
             checkpoint_dir=checkpoint_dir,
@@ -149,6 +207,8 @@ class RunController:
                 policy_updater=self._policy_updater,
                 procedure_updater=self._procedure_updater,
                 procedure_recommendations_fn=self._procedure_recommendations_fn,
+                adaptive_policy_controller=self._adaptive_policy_controller,
+                diagnostics_agent=self._diagnostics_agent,
                 event_emitter=self._event_emitter,
             )
             loop_result: LoopResult = loop.run(start_cycle=start_cycle)
