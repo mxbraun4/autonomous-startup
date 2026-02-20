@@ -1,0 +1,134 @@
+[
+  {
+    "event_id": "evt_0001",
+    "timestamp": "2026-02-19T10:00:00Z",
+    "session_id": "sess_founder_001",
+    "actor_type": "founder",
+    "actor_id": "founder_001",
+    "event_name": "landing_view",
+    "page_id": "landing_founders",
+    "properties": {
+      "utm_source": "startup_community"
+    }
+  },
+  {
+    "event_id": "evt_0002",
+    "timestamp": "2026-02-19T10:00:02Z",
+    "session_id": "sess_founder_001",
+    "actor_type": "founder",
+    "actor_id": "founder_001",
+    "event_name": "cta_impression",
+    "page_id": "landing_founders",
+    "properties": {}
+  },
+  {
+    "event_id": "evt_0003",
+    "timestamp": "2026-02-19T10:00:03Z",
+    "session_id": "sess_founder_001",
+    "actor_type": "founder",
+    "actor_id": "founder_001",
+    "event_name": "cta_click",
+    "page_id": "landing_founders",
+    "properties": {}
+  },
+  {
+    "event_id": "evt_0004",
+    "timestamp": "2026-02-19T10:00:08Z",
+    "session_id": "sess_founder_001",
+    "actor_type": "founder",
+    "actor_id": "founder_001",
+    "event_name": "signup_start",
+    "page_id": "signup",
+    "properties": {
+      "form_complexity_score": 0.62
+    }
+  },
+  {
+    "event_id": "evt_0005",
+    "timestamp": "2026-02-19T10:00:12Z",
+    "session_id": "sess_founder_001",
+    "actor_type": "founder",
+    "actor_id": "founder_001",
+    "event_name": "trust_block_view",
+    "page_id": "signup",
+    "properties": {
+      "trust_score": 0.81
+    }
+  },
+  {
+    "event_id": "evt_0006",
+    "timestamp": "2026-02-19T10:00:14Z",
+    "session_id": "sess_founder_001",
+    "actor_type": "founder",
+    "actor_id": "founder_001",
+    "event_name": "proof_block_view",
+    "page_id": "signup",
+    "properties": {
+      "proof_of_outcomes": 0.77
+    }
+  },
+  {
+    "event_id": "evt_0007",
+    "timestamp": "2026-02-19T10:00:15Z",
+    "session_id": "sess_founder_001",
+    "actor_type": "founder",
+    "actor_id": "founder_001",
+    "event_name": "signup_submit",
+    "page_id": "signup",
+    "properties": {}
+  },
+  {
+    "event_id": "evt_0008",
+    "timestamp": "2026-02-19T11:10:00Z",
+    "session_id": "sess_founder_002",
+    "actor_type": "founder",
+    "actor_id": "founder_002",
+    "event_name": "landing_view",
+    "page_id": "landing_founders",
+    "properties": {
+      "utm_source": "generic_ads"
+    }
+  },
+  {
+    "event_id": "evt_0009",
+    "timestamp": "2026-02-19T11:10:04Z",
+    "session_id": "sess_founder_002",
+    "actor_type": "founder",
+    "actor_id": "founder_002",
+    "event_name": "cta_impression",
+    "page_id": "landing_founders",
+    "properties": {}
+  },
+  {
+    "event_id": "evt_0010",
+    "timestamp": "2026-02-19T11:10:07Z",
+    "session_id": "sess_founder_002",
+    "actor_type": "founder",
+    "actor_id": "founder_002",
+    "event_name": "signup_start",
+    "page_id": "signup",
+    "properties": {
+      "form_complexity_score": 0.84
+    }
+  },
+  {
+    "event_id": "evt_0011",
+    "timestamp": "2026-02-19T11:10:10Z",
+    "session_id": "sess_founder_002",
+    "actor_type": "founder",
+    "actor_id": "founder_002",
+    "event_name": "signup_field_error",
+    "page_id": "signup",
+    "properties": {}
+  },
+  {
+    "event_id": "evt_0012",
+    "timestamp": "2026-02-19T11:10:15Z",
+    "session_id": "sess_founder_002",
+    "actor_type": "founder",
+    "actor_id": "founder_002",
+    "event_name": "signup_abandon",
+    "page_id": "signup",
+    "properties": {}
+  }
+]
