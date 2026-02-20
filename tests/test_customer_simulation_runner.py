@@ -1,6 +1,14 @@
 """Tests for deterministic customer simulation runner script helpers."""
 
-from scripts.run_customer_simulation import _resolve_scenarios, run_scenario_matrix
+import json
+
+import pytest
+
+from scripts.run_customer_simulation import (
+    _load_product_events,
+    _resolve_scenarios,
+    run_scenario_matrix,
+)
 
 
 def test_resolve_scenarios_injects_baseline():
@@ -27,3 +35,34 @@ def test_run_scenario_matrix_returns_deltas_vs_baseline():
         ]
         == 0.0
     )
+
+
+def test_load_product_events_rejects_non_object_items(tmp_path):
+    events_path = tmp_path / "invalid_product_events.json"
+    events_path.write_text(json.dumps([{"event_name": "landing_view"}, 1]), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="only objects"):
+        _load_product_events(str(events_path))
+
+
+def test_load_product_events_rejects_invalid_event_schema(tmp_path):
+    events_path = tmp_path / "invalid_product_events_schema.json"
+    events_path.write_text(
+        json.dumps(
+            [
+                {
+                    "event_id": "evt_001",
+                    "timestamp": "2026-02-19T10:00:00Z",
+                    "session_id": "session_001",
+                    "actor_type": "founder",
+                    "actor_id": "founder_001",
+                    "event_name": "landing_view",
+                    "properties": {},
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Invalid product events"):
+        _load_product_events(str(events_path))

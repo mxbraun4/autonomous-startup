@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.simulation.customer_environment import run_customer_environment
+from src.simulation.customer_event_instrumentation import validate_product_events
 from src.simulation.customer_scenario_matrix import (
     build_customer_environment_input_for_scenario,
     get_customer_scenario,
@@ -24,9 +25,6 @@ logger = get_logger(__name__)
 SUMMARY_METRICS = [
     "founder_visit_to_signup",
     "vc_visit_to_signup",
-    "visitor_to_tool_use",
-    "tool_use_to_signup",
-    "signup_to_first_match",
     "founder_interested_rate",
     "vc_interested_rate",
     "mutual_interest_rate",
@@ -75,12 +73,57 @@ def _compute_deltas(
     return deltas
 
 
+def _resolve_llm_steps(requested: Optional[List[str]]) -> List[str]:
+    if not requested:
+        return []
+
+    expanded: List[str] = []
+    for item in requested:
+        parts = [part.strip() for part in item.split(",") if part.strip()]
+        expanded.extend(parts)
+
+    deduped: List[str] = []
+    seen = set()
+    for step in expanded:
+        if step not in seen:
+            seen.add(step)
+            deduped.append(step)
+    return deduped
+
+
+def _load_product_events(events_path: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+    if not events_path:
+        return None
+
+    path = Path(events_path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, list):
+        raise ValueError(f"Product events file must contain a list: {path}")
+    if not all(isinstance(item, dict) for item in payload):
+        raise ValueError(f"Product events list must contain only objects: {path}")
+
+    events = [dict(item) for item in payload]
+    validation_errors = validate_product_events(events)
+    if validation_errors:
+        lines = "\n".join(f"- {error}" for error in validation_errors)
+        raise ValueError(f"Invalid product events:\n{lines}")
+    return events
+
+
 def run_scenario_matrix(
     run_id_prefix: str,
     iteration: int,
     scenario_names: List[str],
     seed_override: Optional[int] = None,
     seed_path: Optional[str] = None,
+    product_events: Optional[List[Dict[str, Any]]] = None,
+    product_events_path: Optional[str] = None,
+    product_surface_only: bool = False,
+    include_visitors: bool = False,
+    use_llm_feedback: bool = False,
+    llm_feedback_steps: Optional[List[str]] = None,
+    llm_feedback_model: str = "claude-3-haiku-20240307",
+    llm_feedback_temperature: float = 0.0,
 ) -> Dict[str, Any]:
     """Execute selected deterministic scenarios and compare to baseline."""
     scenario_results: Dict[str, Dict[str, Any]] = {}
@@ -95,6 +138,15 @@ def run_scenario_matrix(
             scenario_name=scenario_name,
             seed=seed_override,
             seed_path=seed_path,
+            include_visitors=include_visitors,
+            use_llm_feedback=use_llm_feedback,
+            llm_feedback_steps=llm_feedback_steps,
+            product_events=product_events,
+            product_surface_only=product_surface_only,
+        )
+        environment_input["run_context"]["llm_feedback_model"] = llm_feedback_model
+        environment_input["run_context"]["llm_feedback_temperature"] = (
+            llm_feedback_temperature
         )
 
         first = run_customer_environment(environment_input)
@@ -129,6 +181,14 @@ def run_scenario_matrix(
             "iteration": iteration,
             "seed_override": seed_override,
             "scenario_names": scenario_names,
+            "product_events_path": product_events_path,
+            "product_events_count": 0 if product_events is None else len(product_events),
+            "product_surface_only": product_surface_only,
+            "include_visitors": include_visitors,
+            "use_llm_feedback": use_llm_feedback,
+            "llm_feedback_steps": list(llm_feedback_steps or []),
+            "llm_feedback_model": llm_feedback_model,
+            "llm_feedback_temperature": llm_feedback_temperature,
         },
         "baseline_scenario": "baseline",
         "determinism_failures": determinism_failures,
@@ -146,6 +206,15 @@ def _print_summary(summary: Dict[str, Any], verbose: int) -> None:
     print(f"Scenarios: {', '.join(scenario_names)}")
     print(f"Iteration: {summary['run_context']['iteration']}")
     print(f"Seed override: {summary['run_context']['seed_override']}")
+    print(f"Product events path: {summary['run_context'].get('product_events_path')}")
+    print(f"Product events count: {summary['run_context'].get('product_events_count', 0)}")
+    print(f"Product surface only: {summary['run_context'].get('product_surface_only', False)}")
+    print(f"Include visitors: {summary['run_context'].get('include_visitors', False)}")
+    print(
+        "LLM feedback: "
+        f"{summary['run_context'].get('use_llm_feedback', False)}"
+        f" (steps={summary['run_context'].get('llm_feedback_steps', [])})"
+    )
     print("-" * 72)
 
     for scenario_name in scenario_names:
@@ -209,6 +278,60 @@ def parse_args() -> argparse.Namespace:
         help="Optional path to customer seed cohort file.",
     )
     parser.add_argument(
+        "--product-events-path",
+        type=str,
+        default=None,
+        help=(
+            "Optional JSON path with instrumented product events "
+            "(used to derive deterministic signup-signal overrides)."
+        ),
+    )
+    parser.add_argument(
+        "--include-visitors",
+        action="store_true",
+        help=(
+            "Enable visitor cohort and acquisition signals. By default the customer "
+            "simulation runs founder/VC only."
+        ),
+    )
+    parser.add_argument(
+        "--product-surface-only",
+        action="store_true",
+        help=(
+            "Return only observable behavior payloads (no internal score snapshots) "
+            "for product-facing consumption."
+        ),
+    )
+    parser.add_argument(
+        "--use-llm-feedback",
+        action="store_true",
+        help=(
+            "Enable optional LLM feedback enrichment for selected interaction steps. "
+            "Transition decisions remain deterministic."
+        ),
+    )
+    parser.add_argument(
+        "--llm-feedback-steps",
+        nargs="*",
+        default=["matched_to_interested"],
+        help=(
+            "Interaction step ids for optional LLM feedback enrichment. "
+            "Can be comma-separated or space-separated."
+        ),
+    )
+    parser.add_argument(
+        "--llm-feedback-model",
+        type=str,
+        default="claude-3-haiku-20240307",
+        help="Model id used for optional LLM feedback generation.",
+    )
+    parser.add_argument(
+        "--llm-feedback-temperature",
+        type=float,
+        default=0.0,
+        help="Temperature for optional LLM feedback generation (default: 0.0).",
+    )
+    parser.add_argument(
         "--scenarios",
         nargs="*",
         default=None,
@@ -243,6 +366,7 @@ def main() -> int:
     setup_logging(settings.log_level)
 
     scenario_names = _resolve_scenarios(args.scenarios)
+    product_events = _load_product_events(args.product_events_path)
     logger.info("Running customer scenario matrix for %d scenarios", len(scenario_names))
 
     summary = run_scenario_matrix(
@@ -251,6 +375,14 @@ def main() -> int:
         scenario_names=scenario_names,
         seed_override=args.seed,
         seed_path=args.seed_path,
+        product_events=product_events,
+        product_events_path=args.product_events_path,
+        product_surface_only=args.product_surface_only,
+        include_visitors=args.include_visitors,
+        use_llm_feedback=args.use_llm_feedback,
+        llm_feedback_steps=_resolve_llm_steps(args.llm_feedback_steps),
+        llm_feedback_model=args.llm_feedback_model,
+        llm_feedback_temperature=args.llm_feedback_temperature,
     )
 
     if args.verbose > 0:

@@ -26,6 +26,11 @@ from .customer_hypotheses import (
     validate_customer_hypotheses_payload,
 )
 from .customer_hypothesis_evaluator import evaluate_customer_hypotheses
+from .customer_feedback import CustomerFeedbackGenerator
+from .customer_event_instrumentation import (
+    derive_signup_signal_overrides_from_events,
+    validate_product_events,
+)
 from .customer_transition_logic import (
     TRANSITION_LOGIC_VERSION,
     get_marketplace_transition_logic,
@@ -55,6 +60,9 @@ __all__ = [
     "normalize_customer_hypotheses",
     "validate_customer_hypotheses_payload",
     "evaluate_customer_hypotheses",
+    "CustomerFeedbackGenerator",
+    "validate_product_events",
+    "derive_signup_signal_overrides_from_events",
     "TRANSITION_LOGIC_VERSION",
     "get_marketplace_transition_logic",
     "list_marketplace_actors",

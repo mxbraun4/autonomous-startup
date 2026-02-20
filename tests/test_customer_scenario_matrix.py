@@ -61,3 +61,51 @@ def test_scenario_outputs_are_deterministic():
         second = run_customer_environment(environment_input)
 
         assert first == second
+
+
+def test_scenario_builder_passes_llm_feedback_options():
+    environment_input = build_customer_environment_input_for_scenario(
+        run_id="run_baseline_llm_feedback",
+        iteration=1,
+        scenario_name="baseline",
+        use_llm_feedback=True,
+        llm_feedback_steps=["matched_to_interested"],
+        product_surface_only=True,
+    )
+
+    assert environment_input["run_context"]["use_llm_feedback"] is True
+    assert environment_input["run_context"]["llm_feedback_steps"] == [
+        "matched_to_interested"
+    ]
+    assert environment_input["run_context"]["product_surface_only"] is True
+
+
+def test_scenario_builder_applies_product_events():
+    environment_input = build_customer_environment_input_for_scenario(
+        run_id="run_baseline_product_events",
+        iteration=1,
+        scenario_name="baseline",
+        product_events=[
+            {
+                "event_id": "evt_001",
+                "timestamp": "2026-02-19T10:00:00Z",
+                "session_id": "session_001",
+                "actor_type": "founder",
+                "actor_id": "founder_001",
+                "event_name": "cta_impression",
+                "properties": {},
+            },
+            {
+                "event_id": "evt_002",
+                "timestamp": "2026-02-19T10:00:01Z",
+                "session_id": "session_001",
+                "actor_type": "founder",
+                "actor_id": "founder_001",
+                "event_name": "cta_click",
+                "properties": {},
+            },
+        ],
+    )
+
+    assert environment_input["params"]["founder_signup_cta_clarity"] == pytest.approx(1.0)
+    assert environment_input["run_context"]["event_instrumentation"]["enabled"] is True

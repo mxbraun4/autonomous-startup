@@ -24,10 +24,15 @@ _BASELINE_PARAMS: Dict[str, Any] = {
     "vc_signup_cta_clarity": 0.68,
     "founder_signup_friction": 0.30,
     "vc_signup_friction": 0.33,
+    "founder_signup_trust_score": 0.72,
+    "founder_signup_form_complexity": 0.30,
+    "founder_signup_channel_intent_fit": 0.68,
+    "founder_signup_proof_of_outcomes": 0.64,
     "visitor_tool_click_rate": 0.20,
     "signup_rate_from_tool": 0.10,
     "meeting_rate_from_mutual_interest": 0.35,
     "match_score_threshold": 0.50,
+    "vc_match_score_threshold": 0.55,
     "shortlist_threshold": 0.55,
     "interest_threshold": 0.40,
     "max_steps_per_customer": 5,
@@ -297,13 +302,16 @@ def _build_scenario_matrix() -> Dict[str, Dict[str, Any]]:
             "signals": better_matching_signals,
         },
         "acquisition_push": {
-            "description": "Improved acquisition quality and funnel propensities.",
+            "description": (
+                "Improved acquisition quality and funnel propensities "
+                "(effective only when visitors are enabled)."
+            ),
             "seed": 42,
             "hypothesis": {
                 "id": "H_ACQ_001",
                 "summary": (
                     "Stronger acquisition signals should increase tool_use_to_signup "
-                    "and signup_to_first_match."
+                    "and signup_to_first_match when visitor simulation is enabled."
                 ),
                 "metric": "tool_use_to_signup",
                 "direction": "increase",
@@ -348,6 +356,11 @@ def build_customer_environment_input_for_scenario(
     scenario_name: str,
     seed: Optional[int] = None,
     seed_path: Optional[str] = None,
+    include_visitors: bool = False,
+    use_llm_feedback: bool = False,
+    llm_feedback_steps: Optional[List[str]] = None,
+    product_events: Optional[List[Dict[str, Any]]] = None,
+    product_surface_only: bool = False,
 ) -> Dict[str, Any]:
     """Build a contract-compliant environment input from a scenario row."""
     scenario = get_customer_scenario(scenario_name)
@@ -360,4 +373,9 @@ def build_customer_environment_input_for_scenario(
         params=scenario["params"],
         seed_path=seed_path,
         signals=scenario["signals"],
+        include_visitors=include_visitors,
+        use_llm_feedback=use_llm_feedback,
+        llm_feedback_steps=llm_feedback_steps,
+        product_events=product_events,
+        product_surface_only=product_surface_only,
     )

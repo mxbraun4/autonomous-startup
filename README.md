@@ -97,6 +97,18 @@ python scripts/test_crewai_quick.py
 # Deterministic customer simulation scenario matrix (Track D)
 python scripts/run_customer_simulation.py
 
+# Optional: include visitor cohort/acquisition signals
+python scripts/run_customer_simulation.py --include-visitors
+
+# Optional: enrich selected interaction feedback with LLM (transitions stay deterministic)
+python scripts/run_customer_simulation.py --use-llm-feedback --llm-feedback-steps matched_to_interested
+
+# Optional: apply deterministic signup-signal instrumentation from product events
+python scripts/run_customer_simulation.py --product-events-path data/seed/product_events.json
+
+# Optional: emit product-facing output only (observable behavior + failure feedback)
+python scripts/run_customer_simulation.py --product-surface-only
+
 # Evaluate Track D hypotheses against scenario summary
 python scripts/evaluate_customer_simulation.py --summary-path data/memory/customer_matrix_summary.json --allow-warn
 ```
