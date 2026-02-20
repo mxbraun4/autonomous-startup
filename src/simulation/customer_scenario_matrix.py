@@ -35,6 +35,8 @@ _BASELINE_PARAMS: Dict[str, Any] = {
     "vc_match_score_threshold": 0.55,
     "shortlist_threshold": 0.55,
     "interest_threshold": 0.40,
+    "derived_match_score_boost": 0.0,
+    "derived_explanation_quality_boost": 0.0,
     "max_steps_per_customer": 5,
 }
 
@@ -243,11 +245,6 @@ def _build_scenario_matrix() -> Dict[str, Dict[str, Any]]:
     )
 
     better_matching_signals = _clone_signals(_BASELINE_SIGNALS)
-    better_matching_signals["match_signals"] = _boost_signal_fields(
-        better_matching_signals["match_signals"],
-        ["match_score", "explanation_quality"],
-        delta=0.10,
-    )
 
     acquisition_push_signals = _clone_signals(_BASELINE_SIGNALS)
     acquisition_push_signals["acquisition_signals"] = _boost_signal_fields(
@@ -296,6 +293,8 @@ def _build_scenario_matrix() -> Dict[str, Dict[str, Any]]:
             },
             "params": {
                 **_BASELINE_PARAMS,
+                "derived_match_score_boost": 0.10,
+                "derived_explanation_quality_boost": 0.10,
                 "match_score_threshold": 0.55,
                 "shortlist_threshold": 0.60,
             },
@@ -359,6 +358,14 @@ def build_customer_environment_input_for_scenario(
     include_visitors: bool = False,
     use_llm_feedback: bool = False,
     llm_feedback_steps: Optional[List[str]] = None,
+    use_llm_explanation_quality: bool = False,
+    llm_explanation_model: str = "claude-3-haiku-20240307",
+    llm_explanation_temperature: float = 0.0,
+    use_llm_personalization_score: bool = False,
+    llm_personalization_model: str = "claude-3-haiku-20240307",
+    llm_personalization_temperature: float = 0.0,
+    match_calibration_path: Optional[str] = None,
+    match_calibration_min_samples: int = 20,
     product_events: Optional[List[Dict[str, Any]]] = None,
     product_surface_only: bool = False,
 ) -> Dict[str, Any]:
@@ -376,6 +383,14 @@ def build_customer_environment_input_for_scenario(
         include_visitors=include_visitors,
         use_llm_feedback=use_llm_feedback,
         llm_feedback_steps=llm_feedback_steps,
+        use_llm_explanation_quality=use_llm_explanation_quality,
+        llm_explanation_model=llm_explanation_model,
+        llm_explanation_temperature=llm_explanation_temperature,
+        use_llm_personalization_score=use_llm_personalization_score,
+        llm_personalization_model=llm_personalization_model,
+        llm_personalization_temperature=llm_personalization_temperature,
+        match_calibration_path=match_calibration_path,
+        match_calibration_min_samples=match_calibration_min_samples,
         product_events=product_events,
         product_surface_only=product_surface_only,
     )

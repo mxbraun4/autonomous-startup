@@ -113,7 +113,7 @@ Goal: validate the growth model around the core matching product.
 ### Track D: Customer Behavior Simulation (Constrained Environment)
 Goal: validate customer-side dynamics without leaving the simulation environment.
 
-- Variable: cohort mix, transition thresholds, and behavior parameters
+- Variable: cohort mix, transition thresholds, behavior parameters, deterministic data-based match scoring boosts (`derived_match_score_boost`, `derived_explanation_quality_boost`), and optional labeled-outcome calibration input (`match_calibration_path`)
 - Deterministic scenario matrix:
   - `baseline`
   - `high_personalization`
@@ -124,8 +124,12 @@ Goal: validate customer-side dynamics without leaving the simulation environment
 - Metrics:
   - founder visit -> signup conversion
   - VC visit -> signup conversion
+  - founder engaged -> matched conversion
+  - VC engaged -> matched conversion
   - founder interest rate, VC interest rate, mutual interest rate
   - mutual interest -> meeting conversion
+  - explanation quality source diagnostics (`deterministic|llm_blended`) and fallback frequency
+  - personalization quality source diagnostics (`deterministic|llm_blended`) and fallback frequency
   - deterministic event-instrumentation coverage for signup signal drivers
   - failed-transition feedback frequency by reason code
   - interaction quality notes from selected LLM-enhanced steps

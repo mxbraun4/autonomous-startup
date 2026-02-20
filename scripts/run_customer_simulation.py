@@ -25,6 +25,8 @@ logger = get_logger(__name__)
 SUMMARY_METRICS = [
     "founder_visit_to_signup",
     "vc_visit_to_signup",
+    "founder_engaged_to_matched_rate",
+    "vc_engaged_to_matched_rate",
     "founder_interested_rate",
     "vc_interested_rate",
     "mutual_interest_rate",
@@ -124,6 +126,14 @@ def run_scenario_matrix(
     llm_feedback_steps: Optional[List[str]] = None,
     llm_feedback_model: str = "claude-3-haiku-20240307",
     llm_feedback_temperature: float = 0.0,
+    use_llm_explanation_quality: bool = False,
+    llm_explanation_model: str = "claude-3-haiku-20240307",
+    llm_explanation_temperature: float = 0.0,
+    use_llm_personalization_score: bool = False,
+    llm_personalization_model: str = "claude-3-haiku-20240307",
+    llm_personalization_temperature: float = 0.0,
+    match_calibration_path: Optional[str] = None,
+    match_calibration_min_samples: int = 20,
 ) -> Dict[str, Any]:
     """Execute selected deterministic scenarios and compare to baseline."""
     scenario_results: Dict[str, Dict[str, Any]] = {}
@@ -141,6 +151,14 @@ def run_scenario_matrix(
             include_visitors=include_visitors,
             use_llm_feedback=use_llm_feedback,
             llm_feedback_steps=llm_feedback_steps,
+            use_llm_explanation_quality=use_llm_explanation_quality,
+            llm_explanation_model=llm_explanation_model,
+            llm_explanation_temperature=llm_explanation_temperature,
+            use_llm_personalization_score=use_llm_personalization_score,
+            llm_personalization_model=llm_personalization_model,
+            llm_personalization_temperature=llm_personalization_temperature,
+            match_calibration_path=match_calibration_path,
+            match_calibration_min_samples=match_calibration_min_samples,
             product_events=product_events,
             product_surface_only=product_surface_only,
         )
@@ -189,6 +207,14 @@ def run_scenario_matrix(
             "llm_feedback_steps": list(llm_feedback_steps or []),
             "llm_feedback_model": llm_feedback_model,
             "llm_feedback_temperature": llm_feedback_temperature,
+            "use_llm_explanation_quality": use_llm_explanation_quality,
+            "llm_explanation_model": llm_explanation_model,
+            "llm_explanation_temperature": llm_explanation_temperature,
+            "use_llm_personalization_score": use_llm_personalization_score,
+            "llm_personalization_model": llm_personalization_model,
+            "llm_personalization_temperature": llm_personalization_temperature,
+            "match_calibration_path": match_calibration_path,
+            "match_calibration_min_samples": match_calibration_min_samples,
         },
         "baseline_scenario": "baseline",
         "determinism_failures": determinism_failures,
@@ -214,6 +240,18 @@ def _print_summary(summary: Dict[str, Any], verbose: int) -> None:
         "LLM feedback: "
         f"{summary['run_context'].get('use_llm_feedback', False)}"
         f" (steps={summary['run_context'].get('llm_feedback_steps', [])})"
+    )
+    print(
+        "LLM explanation quality: "
+        f"{summary['run_context'].get('use_llm_explanation_quality', False)}"
+    )
+    print(
+        "LLM personalization score: "
+        f"{summary['run_context'].get('use_llm_personalization_score', False)}"
+    )
+    print(
+        "Match calibration path: "
+        f"{summary['run_context'].get('match_calibration_path')}"
     )
     print("-" * 72)
 
@@ -332,6 +370,64 @@ def parse_args() -> argparse.Namespace:
         help="Temperature for optional LLM feedback generation (default: 0.0).",
     )
     parser.add_argument(
+        "--use-llm-explanation-quality",
+        action="store_true",
+        help=(
+            "Enable optional LLM scoring for explanation_quality during match derivation. "
+            "Falls back to deterministic scoring in mock mode."
+        ),
+    )
+    parser.add_argument(
+        "--llm-explanation-model",
+        type=str,
+        default="claude-3-haiku-20240307",
+        help="Model id used for optional LLM explanation-quality scoring.",
+    )
+    parser.add_argument(
+        "--llm-explanation-temperature",
+        type=float,
+        default=0.0,
+        help="Temperature for optional LLM explanation-quality scoring (default: 0.0).",
+    )
+    parser.add_argument(
+        "--use-llm-personalization-score",
+        action="store_true",
+        help=(
+            "Enable optional LLM scoring for personalization_score during outreach derivation. "
+            "Falls back to deterministic scoring in mock mode."
+        ),
+    )
+    parser.add_argument(
+        "--llm-personalization-model",
+        type=str,
+        default="claude-3-haiku-20240307",
+        help="Model id used for optional LLM personalization scoring.",
+    )
+    parser.add_argument(
+        "--llm-personalization-temperature",
+        type=float,
+        default=0.0,
+        help="Temperature for optional LLM personalization scoring (default: 0.0).",
+    )
+    parser.add_argument(
+        "--match-calibration-path",
+        type=str,
+        default=None,
+        help=(
+            "Optional JSON path with labeled match outcomes used to calibrate "
+            "match-score component weights."
+        ),
+    )
+    parser.add_argument(
+        "--match-calibration-min-samples",
+        type=int,
+        default=20,
+        help=(
+            "Minimum number of valid labeled samples required to activate "
+            "match-score calibration (default: 20)."
+        ),
+    )
+    parser.add_argument(
         "--scenarios",
         nargs="*",
         default=None,
@@ -383,6 +479,14 @@ def main() -> int:
         llm_feedback_steps=_resolve_llm_steps(args.llm_feedback_steps),
         llm_feedback_model=args.llm_feedback_model,
         llm_feedback_temperature=args.llm_feedback_temperature,
+        use_llm_explanation_quality=args.use_llm_explanation_quality,
+        llm_explanation_model=args.llm_explanation_model,
+        llm_explanation_temperature=args.llm_explanation_temperature,
+        use_llm_personalization_score=args.use_llm_personalization_score,
+        llm_personalization_model=args.llm_personalization_model,
+        llm_personalization_temperature=args.llm_personalization_temperature,
+        match_calibration_path=args.match_calibration_path,
+        match_calibration_min_samples=args.match_calibration_min_samples,
     )
 
     if args.verbose > 0:

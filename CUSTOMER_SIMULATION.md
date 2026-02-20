@@ -37,6 +37,14 @@ The simulator must consume a single environment input object with the following 
   - `use_llm_feedback`: `bool`
   - `llm_feedback_steps`: list of step ids (for selective LLM enrichment)
   - `llm_feedback_temperature`: float in `[0.0, 1.0]`
+  - `use_llm_explanation_quality`: `bool` (optional LLM scoring for explanation quality)
+  - `llm_explanation_model`: non-empty model id string
+  - `llm_explanation_temperature`: float in `[0.0, 1.0]`
+  - `use_llm_personalization_score`: `bool` (optional LLM scoring for personalization quality)
+  - `llm_personalization_model`: non-empty model id string
+  - `llm_personalization_temperature`: float in `[0.0, 1.0]`
+  - `match_calibration_path`: optional local JSON path with labeled match outcomes
+  - `match_calibration_min_samples`: integer `>= 1`
   - `product_surface_only`: `bool` (if true, output strips internal score snapshots)
 
 #### 2) `params`
@@ -60,6 +68,12 @@ All values are numeric and bounded in `[0.0, 1.0]` unless noted:
   - `vc_match_score_threshold` (preferred VC match gate)
   - `shortlist_threshold` (legacy fallback for VC match gate)
   - `interest_threshold`
+  - `derived_match_score_boost`
+  - `derived_explanation_quality_boost`
+  - `derived_personalization_score_boost`
+  - `derived_timing_score_boost`
+  - `llm_explanation_blend_weight`
+  - `llm_personalization_blend_weight`
   - `max_steps_per_customer` (integer, `>= 1`)
 - Optional acquisition params (visitor mode only):
   - `visitor_tool_click_rate`
@@ -85,9 +99,29 @@ Required visitor fields:
 
 #### 4) `signals`
 Signals are produced by system components and consumed by the environment:
-- `match_signals`: list of `{founder_id, vc_id, match_score, explanation_quality}`
-- `outreach_signals`: list of `{founder_id, vc_id, personalization_score, timing_score}`
+- `match_signals`: optional compatibility bucket; transition scoring now derives match quality directly from founder/VC profile data
+- `outreach_signals`: optional compatibility bucket; transition scoring now derives personalization and timing from product-perception + pair context
 - `acquisition_signals`: optional list of `{visitor_id, article_relevance, tool_usefulness, cta_clarity}`
+
+### Deterministic Match Scoring (Data-Based)
+- `match_score` is computed inside the environment for every founder/VC pair from profile data:
+  - sector alignment (founder `sector` vs VC `thesis_sectors`)
+  - stage alignment (founder `stage` vs VC `stage_focus`)
+  - geography alignment (founder `geography` vs VC `geography`)
+  - founder fundraising readiness (`fundraising_status`)
+- Default component weights:
+  - `sector=0.52`, `stage=0.30`, `geo=0.13`, `fundraising=0.05`
+- Optional calibration from labeled outcomes:
+  - provide `run_context.match_calibration_path`
+  - if enough valid samples are present (`match_calibration_min_samples`), component weights are learned deterministically and used for this run
+- `explanation_quality` is also derived from the same profile alignment signals plus VC confidence.
+- `personalization_score` is derived from product-perception and pair context, with optional LLM scoring.
+- `timing_score` is derived from product-perception/readiness context (not required as external signal).
+- Scenario tuning can apply deterministic global boosts via:
+  - `derived_match_score_boost`
+  - `derived_explanation_quality_boost`
+  - `derived_personalization_score_boost`
+  - `derived_timing_score_boost`
 
 ### Website Event Instrumentation (Pre-Processing)
 - Optional `product_events` can be provided to `build_customer_environment_input(...)`.
@@ -121,6 +155,8 @@ Each environment run must return a JSON-serializable object with:
 Required `metrics` keys:
 - `founder_visit_to_signup`
 - `vc_visit_to_signup`
+- `founder_engaged_to_matched_rate`
+- `vc_engaged_to_matched_rate`
 - `founder_interested_rate`
 - `vc_interested_rate`
 - `mutual_interest_rate`
@@ -155,6 +191,9 @@ Event shape (`events[]`):
 - `failure_feedback`: normalized list of failed-transition feedback records
 - `feedback_contract_version`: version number for feedback payload schema
 - `product_surface`: product-facing view containing only observable events/interactions and failure feedback
+- `llm_explanation_quality`: source/fallback/cache diagnostics when optional LLM explanation scoring is enabled
+- `llm_personalization_score`: source/fallback/cache diagnostics when optional LLM personalization scoring is enabled
+- `match_calibration`: diagnostics for optional labeled-outcome calibration (`active`, sample counts, weights before/after, loss delta, reason)
 
 ### Determinism and Safety Invariants
 - No external network dependency for customer behavior decisions
@@ -248,11 +287,14 @@ Transition drivers:
      - `signup_prob = clamp(founder_signup_base_rate * (0.60 + 0.40 * founder_signup_cta_clarity) * (1.00 - 0.35 * founder_signup_friction) * (1.00 - 0.35 * form_complexity_score) * (0.60 + 0.40 * trust_score) * (0.60 + 0.40 * channel_intent_fit) * (0.60 + 0.40 * proof_of_outcomes) * (0.60 + 0.40 * urgency_score))`
    - Decision: `signup_complete and (rng.random() < signup_prob)`
 2. `signup -> engaged`
+   - `match_score` is deterministic and data-derived from founder/VC profile alignment
    - `engaged_prob = clamp(0.20 + 0.45 * match_score + 0.25 * urgency_score)`
    - Decision: `rng.random() < engaged_prob`
 3. `engaged -> matched`
    - Gate: `match_score >= match_score_threshold`
 4. `matched -> interested`
+   - `personalization_score` is data-derived from product-perception and pair fit (optional LLM scoring)
+   - `timing_score` is data-derived from product-perception/readiness context
    - `interest_prob = clamp(founder_base_interest + 0.35 * personalization_score + 0.20 * explanation_quality + 0.15 * timing_score + 0.15 * urgency_score)`
    - Gate + decision: `interest_prob >= interest_threshold` and `rng.random() < interest_prob`
 5. `interested -> meeting`
@@ -270,12 +312,15 @@ Transition drivers:
      - `signup_prob = clamp(vc_signup_base_rate * (0.60 + 0.40 * vc_signup_cta_clarity) * (0.50 + 0.50 * preview_match_quality) * (1.00 - 0.35 * vc_signup_friction) * (0.55 + 0.45 * confidence_factor))`
    - Decision: `signup_complete and (rng.random() < signup_prob)`
 2. `signup -> engaged`
+   - `match_score` and `explanation_quality` are deterministic and data-derived from founder/VC profile alignment
    - `engaged_prob = clamp(0.15 + 0.55 * match_score + 0.20 * explanation_quality)`
    - Decision: `rng.random() < engaged_prob`
 3. `engaged -> matched`
    - Gate: `match_score >= vc_match_score_threshold` (fallback to `shortlist_threshold` for compatibility)
 4. `matched -> interested`
-   - `interest_prob = clamp(vc_base_interest + 0.40 * match_score + 0.20 * explanation_quality + 0.15 * timing_score)`
+   - `personalization_score` is data-derived from product-perception and pair fit (optional LLM scoring)
+   - `timing_score` is data-derived from product-perception/readiness context
+   - `interest_prob = clamp(vc_base_interest + 0.25 * match_score + 0.30 * personalization_score + 0.20 * explanation_quality + 0.15 * timing_score)`
    - `gate_threshold = max(confidence_threshold, interest_threshold)`
    - Gate + decision: `interest_prob >= gate_threshold` and `rng.random() < interest_prob`
 5. `interested -> meeting`
@@ -323,6 +368,8 @@ These are simulation defaults and should be tuned through experiments, not treat
   - tool use -> signup
   - signup -> first qualified match
 - Marketplace metrics:
+  - founder engaged -> matched rate
+  - VC engaged -> matched rate
   - founder interested rate
   - VC interested rate
   - mutual interest rate
@@ -359,7 +406,7 @@ These are simulation defaults and should be tuned through experiments, not treat
 ## Initial Experiment Scenarios
 1. Baseline customer flow with default parameters
 2. High personalization variant (higher outreach quality)
-3. Better matching variant (higher fit score thresholds)
+3. Better matching variant (higher deterministic match/explanation boosts with stricter thresholds)
 4. Acquisition variant (stronger article/tool CTA design)
 
 ## Deterministic Scenario Runner
@@ -369,6 +416,12 @@ These are simulation defaults and should be tuned through experiments, not treat
   - `python scripts/run_customer_simulation.py --include-visitors`
 - Enable optional LLM feedback for selected steps (transitions remain deterministic):
   - `python scripts/run_customer_simulation.py --use-llm-feedback --llm-feedback-steps matched_to_interested`
+- Enable optional LLM scoring for explanation quality:
+  - `python scripts/run_customer_simulation.py --use-llm-explanation-quality --llm-explanation-model claude-3-haiku-20240307 --llm-explanation-temperature 0.0`
+- Enable optional LLM scoring for personalization quality:
+  - `python scripts/run_customer_simulation.py --use-llm-personalization-score --llm-personalization-model claude-3-haiku-20240307 --llm-personalization-temperature 0.0`
+- Enable optional data-based calibration from labeled outcomes:
+  - `python scripts/run_customer_simulation.py --match-calibration-path data/seed/match_outcomes_sample.json --match-calibration-min-samples 4`
 - Run with product-event instrumentation input:
   - `python scripts/run_customer_simulation.py --product-events-path data/seed/product_events.json`
 - Product-facing output only (no internal score snapshots):

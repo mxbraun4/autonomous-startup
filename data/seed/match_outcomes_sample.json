@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "samples": [
+    {
+      "founder": {
+        "sector": "fintech",
+        "stage": "seed",
+        "geography": "Germany",
+        "fundraising_status": "active"
+      },
+      "vc": {
+        "thesis_sectors": [
+          "fintech",
+          "ai_ml"
+        ],
+        "stage_focus": "seed",
+        "geography": "Europe"
+      },
+      "outcome_label": 1
+    },
+    {
+      "founder": {
+        "sector": "edtech",
+        "stage": "seed",
+        "geography": "Germany",
+        "fundraising_status": "preparing"
+      },
+      "vc": {
+        "thesis_sectors": [
+          "cybersecurity"
+        ],
+        "stage_focus": "series_c",
+        "geography": "United States"
+      },
+      "outcome_label": 0
+    },
+    {
+      "feature_scores": {
+        "sector_score": 0.0,
+        "stage_score": 1.0,
+        "geo_score": 1.0,
+        "fundraising_score": 1.0
+      },
+      "outcome_score": 0.9
+    },
+    {
+      "feature_scores": {
+        "sector_score": 1.0,
+        "stage_score": 0.0,
+        "geo_score": 0.0,
+        "fundraising_score": 0.8
+      },
+      "outcome_score": 0.1
+    }
+  ]
+}

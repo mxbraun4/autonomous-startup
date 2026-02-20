@@ -14,7 +14,9 @@ from src.simulation.customer_agent import (
 from src.simulation.customer_event_instrumentation import (
     derive_signup_signal_overrides_from_events,
 )
+from src.simulation.customer_explanation_quality import ExplanationQualityEvaluator
 from src.simulation.customer_feedback import CustomerFeedbackGenerator
+from src.simulation.customer_personalization_quality import PersonalizationScoreEvaluator
 from src.utils.config import settings
 
 REQUIRED_COHORT_KEYS = ("founders", "vcs")
@@ -62,8 +64,8 @@ PROBABILITY_FIELDS = {
     "visitors": {"tool_need_score", "cta_friction"},
 }
 
-REQUIRED_SIGNAL_KEYS = ("match_signals", "outreach_signals")
-OPTIONAL_SIGNAL_KEYS = ("acquisition_signals",)
+REQUIRED_SIGNAL_KEYS = ()
+OPTIONAL_SIGNAL_KEYS = ("match_signals", "outreach_signals", "acquisition_signals")
 SIGNAL_KEYS = REQUIRED_SIGNAL_KEYS + OPTIONAL_SIGNAL_KEYS
 SIGNAL_REQUIRED_FIELDS = {
     "match_signals": {
@@ -106,7 +108,69 @@ DEFAULT_ENV_PARAMS = {
     "vc_match_score_threshold": 0.55,
     "shortlist_threshold": 0.55,
     "interest_threshold": 0.40,
+    "derived_match_score_boost": 0.0,
+    "derived_explanation_quality_boost": 0.0,
+    "derived_personalization_score_boost": 0.0,
+    "derived_timing_score_boost": 0.0,
+    "llm_explanation_blend_weight": 0.60,
+    "llm_personalization_blend_weight": 0.60,
     "max_steps_per_customer": 5,
+}
+
+_DEFAULT_MATCH_COMPONENT_WEIGHTS = {
+    "sector": 0.52,
+    "stage": 0.30,
+    "geo": 0.13,
+    "fundraising": 0.05,
+}
+_MATCH_COMPONENT_KEYS = ("sector", "stage", "geo", "fundraising")
+
+_SECTOR_RELATEDNESS = {
+    "fintech": {"ai_ml", "devtools"},
+    "healthtech": {"biotech", "ai_ml"},
+    "biotech": {"healthtech"},
+    "ai_ml": {"fintech", "healthtech", "devtools", "cybersecurity"},
+    "devtools": {"ai_ml", "cybersecurity", "fintech"},
+    "cybersecurity": {"devtools", "ai_ml"},
+    "climate": {"energy", "cleantech"},
+    "energy": {"climate", "cleantech"},
+    "edtech": {"future_of_work"},
+    "future_of_work": {"edtech"},
+}
+
+_STAGE_ADJACENCY = {
+    "seed": {"pre_seed", "series_a"},
+    "series_a": {"seed", "series_b"},
+    "series_b": {"series_a", "series_c"},
+    "series_c": {"series_b", "growth"},
+    "growth": {"series_c"},
+}
+
+_COUNTRY_TO_REGION = {
+    "germany": "europe",
+    "united_kingdom": "europe",
+    "france": "europe",
+    "spain": "europe",
+    "italy": "europe",
+    "netherlands": "europe",
+    "sweden": "europe",
+    "switzerland": "europe",
+    "austria": "europe",
+    "united_states": "north_america",
+    "usa": "north_america",
+    "us": "north_america",
+    "canada": "north_america",
+    "mexico": "north_america",
+    "israel": "middle_east",
+}
+
+_REGION_ALIASES = {
+    "eu": "europe",
+    "europe": "europe",
+    "european_union": "europe",
+    "north_america": "north_america",
+    "middle_east": "middle_east",
+    "global": "global",
 }
 
 
@@ -130,6 +194,33 @@ def run_customer_environment(environment_input: Dict[str, Any]) -> Dict[str, Any
         run_context.get("llm_feedback_temperature"),
         default=0.0,
     )
+    use_llm_explanation_quality = _safe_bool(
+        run_context.get("use_llm_explanation_quality"),
+        default=False,
+    )
+    llm_explanation_model = str(
+        run_context.get("llm_explanation_model", llm_feedback_model)
+    )
+    llm_explanation_temperature = _safe_float(
+        run_context.get("llm_explanation_temperature"),
+        default=0.0,
+    )
+    use_llm_personalization_score = _safe_bool(
+        run_context.get("use_llm_personalization_score"),
+        default=False,
+    )
+    llm_personalization_model = str(
+        run_context.get("llm_personalization_model", llm_feedback_model)
+    )
+    llm_personalization_temperature = _safe_float(
+        run_context.get("llm_personalization_temperature"),
+        default=0.0,
+    )
+    match_calibration_path = run_context.get("match_calibration_path")
+    match_calibration_min_samples = _safe_int(
+        run_context.get("match_calibration_min_samples"),
+        default=20,
+    )
     product_surface_only = _safe_bool(
         run_context.get("product_surface_only"),
         default=False,
@@ -141,13 +232,43 @@ def run_customer_environment(environment_input: Dict[str, Any]) -> Dict[str, Any
         llm_temperature=llm_feedback_temperature,
     )
 
-    match_signals = [dict(item) for item in signals["match_signals"]]
-    outreach_signals = [dict(item) for item in signals["outreach_signals"]]
+    input_match_signals = [dict(item) for item in signals.get("match_signals", [])]
+    input_outreach_signals = [dict(item) for item in signals.get("outreach_signals", [])]
     acquisition_signals = [dict(item) for item in signals.get("acquisition_signals", [])]
 
     founders = sorted(cohorts["founders"], key=lambda item: str(item.get("id", "")))
     vcs = sorted(cohorts["vcs"], key=lambda item: str(item.get("id", "")))
     visitors = sorted(cohorts["visitors"], key=lambda item: str(item.get("id", "")))
+    explanation_quality_evaluator = ExplanationQualityEvaluator(
+        use_llm=use_llm_explanation_quality,
+        llm_model=llm_explanation_model,
+        llm_temperature=llm_explanation_temperature,
+        llm_blend_weight=_clamp_signal_value(params.get("llm_explanation_blend_weight")),
+    )
+    match_component_weights, match_calibration_diagnostics = _resolve_match_component_weights(
+        calibration_path=match_calibration_path,
+        min_samples=match_calibration_min_samples,
+    )
+    match_signals = _derive_match_signals_from_data(
+        founders,
+        vcs,
+        params,
+        match_component_weights=match_component_weights,
+        explanation_quality_evaluator=explanation_quality_evaluator,
+    )
+    personalization_score_evaluator = PersonalizationScoreEvaluator(
+        use_llm=use_llm_personalization_score,
+        llm_model=llm_personalization_model,
+        llm_temperature=llm_personalization_temperature,
+        llm_blend_weight=_clamp_signal_value(params.get("llm_personalization_blend_weight")),
+    )
+    outreach_signals = _derive_outreach_signals_from_data(
+        founders=founders,
+        vcs=vcs,
+        params=params,
+        match_signals=match_signals,
+        personalization_score_evaluator=personalization_score_evaluator,
+    )
 
     rng = Random(int(run_context["seed"]))
     max_steps = int(params["max_steps_per_customer"])
@@ -530,6 +651,19 @@ def run_customer_environment(environment_input: Dict[str, Any]) -> Dict[str, Any
             "llm_feedback_requested": llm_feedback_enabled,
             "llm_feedback_active": feedback_generator.llm_active,
             "llm_feedback_steps": sorted(feedback_generator.llm_steps),
+            "llm_explanation_quality_requested": use_llm_explanation_quality,
+            "llm_explanation_quality_active": explanation_quality_evaluator.llm_active,
+            "llm_explanation_quality": explanation_quality_evaluator.diagnostics(),
+            "llm_personalization_score_requested": use_llm_personalization_score,
+            "llm_personalization_score_active": personalization_score_evaluator.llm_active,
+            "llm_personalization_score": personalization_score_evaluator.diagnostics(),
+            "match_signal_source": "derived_from_cohort_data",
+            "input_match_signal_count": len(input_match_signals),
+            "derived_match_signal_count": len(match_signals),
+            "outreach_signal_source": "derived_from_product_perception",
+            "input_outreach_signal_count": len(input_outreach_signals),
+            "derived_outreach_signal_count": len(outreach_signals),
+            "match_calibration": match_calibration_diagnostics,
             "feedback_contract_version": feedback_generator.contract_version,
             "event_instrumentation": event_instrumentation,
             "product_surface_only": product_surface_only,
@@ -669,6 +803,14 @@ def build_customer_environment_input(
     include_visitors: bool = False,
     use_llm_feedback: bool = False,
     llm_feedback_steps: Optional[List[str]] = None,
+    use_llm_explanation_quality: bool = False,
+    llm_explanation_model: str = "claude-3-haiku-20240307",
+    llm_explanation_temperature: float = 0.0,
+    use_llm_personalization_score: bool = False,
+    llm_personalization_model: str = "claude-3-haiku-20240307",
+    llm_personalization_temperature: float = 0.0,
+    match_calibration_path: Optional[str] = None,
+    match_calibration_min_samples: int = 20,
     product_events: Optional[List[Dict[str, Any]]] = None,
     product_surface_only: bool = False,
 ) -> Dict[str, Any]:
@@ -734,6 +876,22 @@ def build_customer_environment_input(
             "seed": seed,
             "use_llm_feedback": bool(use_llm_feedback),
             "llm_feedback_steps": list(llm_feedback_steps or []),
+            "use_llm_explanation_quality": bool(use_llm_explanation_quality),
+            "llm_explanation_model": str(llm_explanation_model),
+            "llm_explanation_temperature": float(llm_explanation_temperature),
+            "use_llm_personalization_score": bool(use_llm_personalization_score),
+            "llm_personalization_model": str(llm_personalization_model),
+            "llm_personalization_temperature": float(llm_personalization_temperature),
+            "match_calibration_path": (
+                str(match_calibration_path)
+                if isinstance(match_calibration_path, str) and match_calibration_path.strip()
+                else None
+            ),
+            "match_calibration_min_samples": (
+                int(match_calibration_min_samples)
+                if isinstance(match_calibration_min_samples, int)
+                else 20
+            ),
             "product_surface_only": bool(product_surface_only),
             "event_instrumentation": instrumentation_summary,
         },
@@ -808,6 +966,74 @@ def validate_environment_input(environment_input: Dict[str, Any]) -> List[str]:
         ):
             errors.append(
                 "run_context.llm_feedback_temperature must be in [0.0, 1.0] when provided."
+            )
+
+        use_llm_explanation_quality = run_context.get("use_llm_explanation_quality")
+        if use_llm_explanation_quality is not None and not isinstance(
+            use_llm_explanation_quality, bool
+        ):
+            errors.append(
+                "run_context.use_llm_explanation_quality must be boolean when provided."
+            )
+
+        llm_explanation_model = run_context.get("llm_explanation_model")
+        if llm_explanation_model is not None and (
+            not isinstance(llm_explanation_model, str) or not llm_explanation_model.strip()
+        ):
+            errors.append(
+                "run_context.llm_explanation_model must be a non-empty string when provided."
+            )
+
+        llm_explanation_temperature = run_context.get("llm_explanation_temperature")
+        if llm_explanation_temperature is not None and not _is_probability(
+            llm_explanation_temperature
+        ):
+            errors.append(
+                "run_context.llm_explanation_temperature must be in [0.0, 1.0] when provided."
+            )
+
+        use_llm_personalization_score = run_context.get("use_llm_personalization_score")
+        if use_llm_personalization_score is not None and not isinstance(
+            use_llm_personalization_score, bool
+        ):
+            errors.append(
+                "run_context.use_llm_personalization_score must be boolean when provided."
+            )
+
+        llm_personalization_model = run_context.get("llm_personalization_model")
+        if llm_personalization_model is not None and (
+            not isinstance(llm_personalization_model, str)
+            or not llm_personalization_model.strip()
+        ):
+            errors.append(
+                "run_context.llm_personalization_model must be a non-empty string when provided."
+            )
+
+        llm_personalization_temperature = run_context.get(
+            "llm_personalization_temperature"
+        )
+        if llm_personalization_temperature is not None and not _is_probability(
+            llm_personalization_temperature
+        ):
+            errors.append(
+                "run_context.llm_personalization_temperature must be in [0.0, 1.0] when provided."
+            )
+
+        match_calibration_path = run_context.get("match_calibration_path")
+        if match_calibration_path is not None and (
+            not isinstance(match_calibration_path, str) or not match_calibration_path.strip()
+        ):
+            errors.append(
+                "run_context.match_calibration_path must be a non-empty string when provided."
+            )
+
+        match_calibration_min_samples = run_context.get("match_calibration_min_samples")
+        if match_calibration_min_samples is not None and (
+            not isinstance(match_calibration_min_samples, int)
+            or match_calibration_min_samples < 1
+        ):
+            errors.append(
+                "run_context.match_calibration_min_samples must be an integer >= 1 when provided."
             )
 
     params = environment_input.get("params")
@@ -1096,6 +1322,8 @@ def _empty_environment_output(iteration: int, errors: List[str]) -> Dict[str, An
         "metrics": {
             "founder_visit_to_signup": 0.0,
             "vc_visit_to_signup": 0.0,
+            "founder_engaged_to_matched_rate": 0.0,
+            "vc_engaged_to_matched_rate": 0.0,
             "visitor_to_tool_use": 0.0,
             "tool_use_to_signup": 0.0,
             "signup_to_first_match": 0.0,
@@ -1117,6 +1345,31 @@ def _empty_environment_output(iteration: int, errors: List[str]) -> Dict[str, An
             "llm_feedback_requested": False,
             "llm_feedback_active": False,
             "llm_feedback_steps": [],
+            "llm_explanation_quality_requested": False,
+            "llm_explanation_quality_active": False,
+            "llm_explanation_quality": {},
+            "llm_personalization_score_requested": False,
+            "llm_personalization_score_active": False,
+            "llm_personalization_score": {},
+            "match_signal_source": "derived_from_cohort_data",
+            "input_match_signal_count": 0,
+            "derived_match_signal_count": 0,
+            "outreach_signal_source": "derived_from_product_perception",
+            "input_outreach_signal_count": 0,
+            "derived_outreach_signal_count": 0,
+            "match_calibration": {
+                "requested": False,
+                "active": False,
+                "path": None,
+                "min_samples": 0,
+                "valid_samples": 0,
+                "invalid_samples": 0,
+                "weights_before": dict(_DEFAULT_MATCH_COMPONENT_WEIGHTS),
+                "weights_after": dict(_DEFAULT_MATCH_COMPONENT_WEIGHTS),
+                "loss_before": None,
+                "loss_after": None,
+                "reason": "not_requested",
+            },
             "feedback_contract_version": 0,
             "product_surface_only": False,
             "event_instrumentation": {
@@ -1187,6 +1440,626 @@ def _best_signals_by_actor(
             best[actor_id] = signal
 
     return best
+
+
+def _normalize_match_component_weights(
+    weights: Optional[Dict[str, Any]]
+) -> Dict[str, float]:
+    """Return non-negative normalized component weights that sum to 1.0."""
+    base = dict(_DEFAULT_MATCH_COMPONENT_WEIGHTS)
+    if not isinstance(weights, dict):
+        return base
+
+    resolved: Dict[str, float] = {}
+    for key in _MATCH_COMPONENT_KEYS:
+        value = _clamp_signal_value(weights.get(key))
+        resolved[key] = max(0.0, float(value))
+
+    total = sum(resolved.values())
+    if total <= 0.0:
+        return base
+
+    return {key: resolved[key] / total for key in _MATCH_COMPONENT_KEYS}
+
+
+def _resolve_match_component_weights(
+    calibration_path: Any,
+    min_samples: int,
+) -> Tuple[Dict[str, float], Dict[str, Any]]:
+    """Load optional labeled outcomes and calibrate match component weights."""
+    default_weights = dict(_DEFAULT_MATCH_COMPONENT_WEIGHTS)
+    normalized_defaults = _normalize_match_component_weights(default_weights)
+
+    requested = isinstance(calibration_path, str) and bool(calibration_path.strip())
+    resolved_min_samples = max(1, int(min_samples))
+    diagnostics: Dict[str, Any] = {
+        "requested": requested,
+        "active": False,
+        "path": calibration_path if isinstance(calibration_path, str) else None,
+        "min_samples": resolved_min_samples,
+        "valid_samples": 0,
+        "invalid_samples": 0,
+        "weights_before": normalized_defaults,
+        "weights_after": normalized_defaults,
+        "loss_before": None,
+        "loss_after": None,
+        "reason": "not_requested",
+    }
+
+    if not requested:
+        return normalized_defaults, diagnostics
+
+    path_text = str(calibration_path).strip()
+    diagnostics["path"] = path_text
+    path = Path(path_text)
+    if not path.exists():
+        diagnostics["reason"] = "file_not_found"
+        return normalized_defaults, diagnostics
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        diagnostics["reason"] = "invalid_json"
+        return normalized_defaults, diagnostics
+
+    rows, labels, invalid_samples = _load_match_calibration_samples(payload)
+    diagnostics["valid_samples"] = len(rows)
+    diagnostics["invalid_samples"] = invalid_samples
+    if len(rows) < resolved_min_samples:
+        diagnostics["reason"] = "insufficient_samples"
+        return normalized_defaults, diagnostics
+
+    learned, loss_before, loss_after = _fit_match_component_weights(
+        rows=rows,
+        labels=labels,
+        default_weights=normalized_defaults,
+        l2_strength=0.10,
+        learning_rate=0.20,
+        steps=350,
+    )
+    learned = _normalize_match_component_weights(learned)
+
+    diagnostics["active"] = True
+    diagnostics["reason"] = "calibrated_from_labeled_outcomes"
+    diagnostics["weights_after"] = learned
+    diagnostics["loss_before"] = loss_before
+    diagnostics["loss_after"] = loss_after
+    return learned, diagnostics
+
+
+def _load_match_calibration_samples(
+    payload: Any,
+) -> Tuple[List[Tuple[float, float, float, float]], List[float], int]:
+    """Return model rows and labels from calibration payload."""
+    samples: Any
+    if isinstance(payload, dict):
+        samples = payload.get("samples", [])
+    elif isinstance(payload, list):
+        samples = payload
+    else:
+        return [], [], 0
+
+    if not isinstance(samples, list):
+        return [], [], 0
+
+    rows: List[Tuple[float, float, float, float]] = []
+    labels: List[float] = []
+    invalid_samples = 0
+    for sample in samples:
+        row, label = _extract_match_calibration_row(sample)
+        if row is None or label is None:
+            invalid_samples += 1
+            continue
+        rows.append(row)
+        labels.append(label)
+
+    return rows, labels, invalid_samples
+
+
+def _extract_match_calibration_row(
+    sample: Any,
+) -> Tuple[Optional[Tuple[float, float, float, float]], Optional[float]]:
+    if not isinstance(sample, dict):
+        return None, None
+
+    label = _extract_match_calibration_outcome(sample)
+    if label is None:
+        return None, None
+
+    feature_scores = sample.get("feature_scores")
+    if isinstance(feature_scores, dict):
+        row = (
+            _clamp_signal_value(feature_scores.get("sector_score")),
+            _clamp_signal_value(feature_scores.get("stage_score")),
+            _clamp_signal_value(feature_scores.get("geo_score")),
+            _clamp_signal_value(feature_scores.get("fundraising_score")),
+        )
+        return row, label
+
+    founder = sample.get("founder")
+    vc = sample.get("vc")
+    if not isinstance(founder, dict) or not isinstance(vc, dict):
+        return None, None
+
+    row = (
+        _sector_alignment_score(
+            founder_sector=founder.get("sector"),
+            vc_sectors=vc.get("thesis_sectors"),
+        ),
+        _stage_alignment_score(
+            founder_stage=founder.get("stage"),
+            vc_stage=vc.get("stage_focus"),
+        ),
+        _geography_alignment_score(
+            founder_geo=founder.get("geography"),
+            vc_geo=vc.get("geography"),
+        ),
+        _fundraising_readiness_score(founder.get("fundraising_status")),
+    )
+    return row, label
+
+
+def _extract_match_calibration_outcome(sample: Dict[str, Any]) -> Optional[float]:
+    score_value = sample.get("outcome_score")
+    if _is_probability(score_value):
+        return float(score_value)
+
+    label_value = sample.get("outcome_label")
+    if isinstance(label_value, bool):
+        return 1.0 if label_value else 0.0
+    if _is_probability(label_value):
+        return float(label_value)
+
+    success_value = sample.get("successful_match")
+    if isinstance(success_value, bool):
+        return 1.0 if success_value else 0.0
+
+    return None
+
+
+def _fit_match_component_weights(
+    rows: List[Tuple[float, float, float, float]],
+    labels: List[float],
+    default_weights: Dict[str, float],
+    l2_strength: float,
+    learning_rate: float,
+    steps: int,
+) -> Tuple[Dict[str, float], float, float]:
+    default_vector = [float(default_weights[key]) for key in _MATCH_COMPONENT_KEYS]
+    weight_vector = list(default_vector)
+
+    loss_before = _mean_squared_error(rows, labels, default_vector)
+    sample_count = float(len(rows))
+
+    for _ in range(max(1, int(steps))):
+        predictions = [
+            sum(weight_vector[idx] * row[idx] for idx in range(len(_MATCH_COMPONENT_KEYS)))
+            for row in rows
+        ]
+        gradients = [0.0 for _ in _MATCH_COMPONENT_KEYS]
+        for idx in range(len(_MATCH_COMPONENT_KEYS)):
+            grad = 0.0
+            for row_idx, row in enumerate(rows):
+                grad += (predictions[row_idx] - labels[row_idx]) * row[idx]
+            grad = (2.0 / sample_count) * grad
+            grad += 2.0 * float(l2_strength) * (weight_vector[idx] - default_vector[idx])
+            gradients[idx] = grad
+
+        for idx in range(len(_MATCH_COMPONENT_KEYS)):
+            weight_vector[idx] = weight_vector[idx] - (float(learning_rate) * gradients[idx])
+
+        weight_vector = _project_to_simplex(weight_vector)
+
+    loss_after = _mean_squared_error(rows, labels, weight_vector)
+    return (
+        {
+            key: float(weight_vector[idx])
+            for idx, key in enumerate(_MATCH_COMPONENT_KEYS)
+        },
+        float(loss_before),
+        float(loss_after),
+    )
+
+
+def _mean_squared_error(
+    rows: List[Tuple[float, float, float, float]],
+    labels: List[float],
+    weight_vector: List[float],
+) -> float:
+    if not rows:
+        return 0.0
+    errors = []
+    for idx, row in enumerate(rows):
+        prediction = sum(weight_vector[j] * row[j] for j in range(len(weight_vector)))
+        errors.append((prediction - labels[idx]) ** 2)
+    return float(sum(errors) / len(errors))
+
+
+def _project_to_simplex(values: List[float]) -> List[float]:
+    """Project vector onto the probability simplex."""
+    if not values:
+        return values
+
+    sorted_values = sorted(values, reverse=True)
+    cumulative = 0.0
+    rho = -1
+    for idx, value in enumerate(sorted_values):
+        cumulative += value
+        threshold = (cumulative - 1.0) / float(idx + 1)
+        if value - threshold > 0.0:
+            rho = idx
+
+    if rho == -1:
+        return [1.0 / float(len(values)) for _ in values]
+
+    theta = (sum(sorted_values[: rho + 1]) - 1.0) / float(rho + 1)
+    projected = [max(value - theta, 0.0) for value in values]
+    projected_sum = sum(projected)
+    if projected_sum <= 0.0:
+        return [1.0 / float(len(values)) for _ in values]
+    return [value / projected_sum for value in projected]
+
+
+def _founder_product_perception_score(
+    founder_profile: Dict[str, Any],
+    params: Dict[str, Any],
+) -> float:
+    trust_score = _clamp_signal_value(
+        founder_profile.get("trust_score", params.get("founder_signup_trust_score", 1.0))
+    )
+    channel_intent_fit = _clamp_signal_value(
+        founder_profile.get(
+            "channel_intent_fit", params.get("founder_signup_channel_intent_fit", 1.0)
+        )
+    )
+    proof_of_outcomes = _clamp_signal_value(
+        founder_profile.get(
+            "proof_of_outcomes", params.get("founder_signup_proof_of_outcomes", 1.0)
+        )
+    )
+    form_complexity = _clamp_signal_value(
+        founder_profile.get(
+            "form_complexity_score",
+            params.get("founder_signup_form_complexity", 0.0),
+        )
+    )
+    signup_cta_clarity = _clamp_signal_value(params.get("founder_signup_cta_clarity", 0.72))
+    signup_friction = _clamp_signal_value(params.get("founder_signup_friction", 0.30))
+    return _clamp_signal_value(
+        (0.28 * trust_score)
+        + (0.22 * channel_intent_fit)
+        + (0.20 * proof_of_outcomes)
+        + (0.15 * (1.0 - form_complexity))
+        + (0.10 * signup_cta_clarity)
+        + (0.05 * (1.0 - signup_friction))
+    )
+
+
+def _vc_product_perception_score(
+    vc_profile: Dict[str, Any],
+    params: Dict[str, Any],
+) -> float:
+    confidence_factor = _clamp_signal_value(
+        1.0 - _clamp_signal_value(vc_profile.get("confidence_threshold"))
+    )
+    signup_cta_clarity = _clamp_signal_value(params.get("vc_signup_cta_clarity", 0.68))
+    signup_friction = _clamp_signal_value(params.get("vc_signup_friction", 0.33))
+    return _clamp_signal_value(
+        (0.45 * confidence_factor)
+        + (0.30 * signup_cta_clarity)
+        + (0.25 * (1.0 - signup_friction))
+    )
+
+
+def _derive_outreach_signals_from_data(
+    founders: List[Dict[str, Any]],
+    vcs: List[Dict[str, Any]],
+    params: Dict[str, Any],
+    match_signals: List[Dict[str, Any]],
+    personalization_score_evaluator: Optional[PersonalizationScoreEvaluator] = None,
+) -> List[Dict[str, Any]]:
+    """Build deterministic outreach quality from product-perception and pair fit."""
+    signals: List[Dict[str, Any]] = []
+    personalization_boost = _clamp_signal_value(
+        params.get("derived_personalization_score_boost", 0.0)
+    )
+    timing_boost = _clamp_signal_value(params.get("derived_timing_score_boost", 0.0))
+
+    match_by_pair: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for match_signal in match_signals:
+        founder_id = match_signal.get("founder_id")
+        vc_id = match_signal.get("vc_id")
+        if not isinstance(founder_id, str) or not isinstance(vc_id, str):
+            continue
+        match_by_pair[(founder_id, vc_id)] = match_signal
+
+    for founder in founders:
+        founder_id = founder.get("id")
+        if not isinstance(founder_id, str) or not founder_id.strip():
+            continue
+
+        founder_perception = _founder_product_perception_score(founder, params)
+        urgency_score = _clamp_signal_value(founder.get("urgency_score"))
+        fundraising_score = _fundraising_readiness_score(founder.get("fundraising_status"))
+
+        for vc in vcs:
+            vc_id = vc.get("id")
+            if not isinstance(vc_id, str) or not vc_id.strip():
+                continue
+
+            vc_perception = _vc_product_perception_score(vc, params)
+            confidence_factor = _clamp_signal_value(
+                1.0 - _clamp_signal_value(vc.get("confidence_threshold"))
+            )
+            product_perception = _clamp_signal_value(
+                (0.60 * founder_perception) + (0.40 * vc_perception)
+            )
+            timing_score = _clamp_signal_value(
+                (0.45 * product_perception)
+                + (0.25 * urgency_score)
+                + (0.20 * fundraising_score)
+                + (0.10 * confidence_factor)
+                + timing_boost
+            )
+
+            match_signal = match_by_pair.get((founder_id, vc_id), {})
+            match_score = _clamp_signal_value(match_signal.get("match_score"))
+            explanation_quality = _clamp_signal_value(
+                match_signal.get("explanation_quality")
+            )
+            sector_score = _sector_alignment_score(
+                founder_sector=founder.get("sector"),
+                vc_sectors=vc.get("thesis_sectors"),
+            )
+            stage_score = _stage_alignment_score(
+                founder_stage=founder.get("stage"),
+                vc_stage=vc.get("stage_focus"),
+            )
+            geo_score = _geography_alignment_score(
+                founder_geo=founder.get("geography"),
+                vc_geo=vc.get("geography"),
+            )
+
+            base_personalization_score = _clamp_signal_value(
+                (0.35 * product_perception)
+                + (0.30 * match_score)
+                + (0.15 * explanation_quality)
+                + (0.10 * sector_score)
+                + (0.05 * stage_score)
+                + (0.05 * geo_score)
+                + personalization_boost
+            )
+            personalization_eval = (
+                personalization_score_evaluator.evaluate(
+                    founder_profile=founder,
+                    vc_profile=vc,
+                    base_personalization_score=base_personalization_score,
+                    context={
+                        "product_perception_score": product_perception,
+                        "founder_product_perception": founder_perception,
+                        "vc_product_perception": vc_perception,
+                        "timing_score": timing_score,
+                        "match_score": match_score,
+                        "explanation_quality": explanation_quality,
+                        "sector_score": sector_score,
+                        "stage_score": stage_score,
+                        "geo_score": geo_score,
+                        "base_personalization_score": base_personalization_score,
+                    },
+                )
+                if personalization_score_evaluator is not None
+                else {
+                    "score": base_personalization_score,
+                    "source": "deterministic",
+                    "llm_score": None,
+                    "is_personalized": base_personalization_score >= 0.5,
+                }
+            )
+            personalization_score = _clamp_signal_value(personalization_eval["score"])
+
+            signals.append(
+                {
+                    "founder_id": founder_id,
+                    "vc_id": vc_id,
+                    "personalization_score": personalization_score,
+                    "timing_score": timing_score,
+                    "product_perception_score": product_perception,
+                    "timing_score_source": "product_perception",
+                    "personalization_score_base": base_personalization_score,
+                    "personalization_score_source": personalization_eval.get(
+                        "source", "deterministic"
+                    ),
+                    "personalization_score_llm_score": personalization_eval.get(
+                        "llm_score"
+                    ),
+                    "personalization_is_personalized": personalization_eval.get(
+                        "is_personalized", False
+                    ),
+                }
+            )
+
+    return sorted(signals, key=lambda item: (item["founder_id"], item["vc_id"]))
+
+
+def _derive_match_signals_from_data(
+    founders: List[Dict[str, Any]],
+    vcs: List[Dict[str, Any]],
+    params: Dict[str, Any],
+    match_component_weights: Optional[Dict[str, float]] = None,
+    explanation_quality_evaluator: Optional[ExplanationQualityEvaluator] = None,
+) -> List[Dict[str, Any]]:
+    """Build deterministic founder/VC match signals from cohort profiles."""
+    signals: List[Dict[str, Any]] = []
+    resolved_weights = _normalize_match_component_weights(match_component_weights)
+    match_score_boost = _clamp_signal_value(params.get("derived_match_score_boost", 0.0))
+    explanation_boost = _clamp_signal_value(
+        params.get("derived_explanation_quality_boost", 0.0)
+    )
+
+    for founder in founders:
+        founder_id = founder.get("id")
+        if not isinstance(founder_id, str) or not founder_id.strip():
+            continue
+        for vc in vcs:
+            vc_id = vc.get("id")
+            if not isinstance(vc_id, str) or not vc_id.strip():
+                continue
+
+            sector_score = _sector_alignment_score(
+                founder_sector=founder.get("sector"),
+                vc_sectors=vc.get("thesis_sectors"),
+            )
+            stage_score = _stage_alignment_score(
+                founder_stage=founder.get("stage"),
+                vc_stage=vc.get("stage_focus"),
+            )
+            geo_score = _geography_alignment_score(
+                founder_geo=founder.get("geography"),
+                vc_geo=vc.get("geography"),
+            )
+            fundraising_score = _fundraising_readiness_score(
+                founder.get("fundraising_status")
+            )
+            confidence_factor = _clamp_signal_value(
+                1.0 - _clamp_signal_value(vc.get("confidence_threshold"))
+            )
+
+            match_score = _clamp_signal_value(
+                (resolved_weights["sector"] * sector_score)
+                + (resolved_weights["stage"] * stage_score)
+                + (resolved_weights["geo"] * geo_score)
+                + (resolved_weights["fundraising"] * fundraising_score)
+                + match_score_boost
+            )
+            base_explanation_quality = _clamp_signal_value(
+                (0.50 * sector_score)
+                + (0.20 * stage_score)
+                + (0.15 * geo_score)
+                + (0.15 * confidence_factor)
+                + explanation_boost
+            )
+            explanation_eval = (
+                explanation_quality_evaluator.evaluate(
+                    founder_profile=founder,
+                    vc_profile=vc,
+                    base_explanation_quality=base_explanation_quality,
+                    context={
+                        "sector_score": sector_score,
+                        "stage_score": stage_score,
+                        "geo_score": geo_score,
+                        "fundraising_score": fundraising_score,
+                        "confidence_factor": confidence_factor,
+                        "match_score": match_score,
+                        "base_explanation_quality": base_explanation_quality,
+                    },
+                )
+                if explanation_quality_evaluator is not None
+                else {
+                    "score": base_explanation_quality,
+                    "source": "deterministic",
+                    "llm_score": None,
+                    "makes_sense": base_explanation_quality >= 0.5,
+                }
+            )
+            explanation_quality = _clamp_signal_value(explanation_eval["score"])
+
+            signals.append(
+                {
+                    "founder_id": founder_id,
+                    "vc_id": vc_id,
+                    "match_score": match_score,
+                    "explanation_quality": explanation_quality,
+                    "explanation_quality_base": base_explanation_quality,
+                    "explanation_quality_source": explanation_eval.get("source", "deterministic"),
+                    "explanation_quality_llm_score": explanation_eval.get("llm_score"),
+                    "explanation_makes_sense": explanation_eval.get("makes_sense", False),
+                }
+            )
+
+    return sorted(signals, key=lambda item: (item["founder_id"], item["vc_id"]))
+
+
+def _sector_alignment_score(founder_sector: Any, vc_sectors: Any) -> float:
+    founder_key = _normalize_label(founder_sector)
+    if not founder_key:
+        return 0.0
+
+    sector_values = []
+    if isinstance(vc_sectors, list):
+        sector_values = [_normalize_label(item) for item in vc_sectors]
+    else:
+        one_value = _normalize_label(vc_sectors)
+        if one_value:
+            sector_values = [one_value]
+
+    sector_set = {item for item in sector_values if item}
+    if founder_key in sector_set:
+        return 1.0
+
+    related = _SECTOR_RELATEDNESS.get(founder_key, set())
+    if any(sector in related for sector in sector_set):
+        return 0.65
+
+    if any(founder_key in _SECTOR_RELATEDNESS.get(sector, set()) for sector in sector_set):
+        return 0.65
+
+    return 0.0
+
+
+def _stage_alignment_score(founder_stage: Any, vc_stage: Any) -> float:
+    founder_key = _normalize_label(founder_stage)
+    vc_key = _normalize_label(vc_stage)
+    if not founder_key or not vc_key:
+        return 0.0
+    if founder_key == vc_key:
+        return 1.0
+    if vc_key in _STAGE_ADJACENCY.get(founder_key, set()):
+        return 0.60
+    return 0.0
+
+
+def _geography_alignment_score(founder_geo: Any, vc_geo: Any) -> float:
+    founder_key = _normalize_label(founder_geo)
+    vc_key = _normalize_label(vc_geo)
+    if not founder_key or not vc_key:
+        return 0.0
+    if vc_key == "global":
+        return 1.0
+    if founder_key == vc_key:
+        return 1.0
+
+    founder_region = _resolve_region(founder_key)
+    vc_region = _resolve_region(vc_key)
+    if founder_region and vc_region and founder_region == vc_region:
+        return 0.80
+
+    return 0.0
+
+
+def _fundraising_readiness_score(status: Any) -> float:
+    value = _normalize_label(status)
+    if value == "active":
+        return 1.0
+    if value == "preparing":
+        return 0.75
+    if value == "paused":
+        return 0.30
+    return 0.50
+
+
+def _resolve_region(geo_value: str) -> str:
+    if geo_value in _REGION_ALIASES:
+        return _REGION_ALIASES[geo_value]
+    return _COUNTRY_TO_REGION.get(geo_value, "")
+
+
+def _normalize_label(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    while "__" in normalized:
+        normalized = normalized.replace("__", "_")
+    return normalized
 
 
 def _signals_by_pair(
@@ -1289,6 +2162,22 @@ def _compute_environment_metrics(
         state in {"signup", "engaged", "matched", "interested", "meeting"}
         for state in vc_states
     )
+    founder_engaged_count = sum(
+        state in {"engaged", "matched", "interested", "meeting"}
+        for state in founder_states
+    )
+    founder_matched_count = sum(
+        state in {"matched", "interested", "meeting"}
+        for state in founder_states
+    )
+    vc_engaged_count = sum(
+        state in {"engaged", "matched", "interested", "meeting"}
+        for state in vc_states
+    )
+    vc_matched_count = sum(
+        state in {"matched", "interested", "meeting"}
+        for state in vc_states
+    )
 
     founder_interested = sum(
         state in {"interested", "meeting"} for state in founder_states
@@ -1308,6 +2197,14 @@ def _compute_environment_metrics(
     return {
         "founder_visit_to_signup": _safe_rate(founder_signup_count, len(founder_states)),
         "vc_visit_to_signup": _safe_rate(vc_signup_count, len(vc_states)),
+        "founder_engaged_to_matched_rate": _safe_rate(
+            founder_matched_count,
+            founder_engaged_count,
+        ),
+        "vc_engaged_to_matched_rate": _safe_rate(
+            vc_matched_count,
+            vc_engaged_count,
+        ),
         "visitor_to_tool_use": _safe_rate(tool_use_count, len(visitor_states)),
         "tool_use_to_signup": _safe_rate(signup_count, tool_use_count),
         "signup_to_first_match": _safe_rate(first_match_count, signup_count),

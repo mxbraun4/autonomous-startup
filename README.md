@@ -103,6 +103,15 @@ python scripts/run_customer_simulation.py --include-visitors
 # Optional: enrich selected interaction feedback with LLM (transitions stay deterministic)
 python scripts/run_customer_simulation.py --use-llm-feedback --llm-feedback-steps matched_to_interested
 
+# Optional: score explanation quality with LLM (falls back to deterministic in mock mode)
+python scripts/run_customer_simulation.py --use-llm-explanation-quality --llm-explanation-model claude-3-haiku-20240307 --llm-explanation-temperature 0.0
+
+# Optional: score personalization quality with LLM (falls back to deterministic in mock mode)
+python scripts/run_customer_simulation.py --use-llm-personalization-score --llm-personalization-model claude-3-haiku-20240307 --llm-personalization-temperature 0.0
+
+# Optional: calibrate match-score component weights from labeled outcome data
+python scripts/run_customer_simulation.py --match-calibration-path data/seed/match_outcomes_sample.json --match-calibration-min-samples 4
+
 # Optional: apply deterministic signup-signal instrumentation from product events
 python scripts/run_customer_simulation.py --product-events-path data/seed/product_events.json
 
