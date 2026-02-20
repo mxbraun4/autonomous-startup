@@ -70,6 +70,14 @@ def test_scenario_builder_passes_llm_feedback_options():
         scenario_name="baseline",
         use_llm_feedback=True,
         llm_feedback_steps=["matched_to_interested"],
+        use_llm_explanation_quality=True,
+        llm_explanation_model="claude-3-haiku-20240307",
+        llm_explanation_temperature=0.0,
+        use_llm_personalization_score=True,
+        llm_personalization_model="claude-3-haiku-20240307",
+        llm_personalization_temperature=0.0,
+        match_calibration_path="data/seed/match_outcomes_sample.json",
+        match_calibration_min_samples=5,
         product_surface_only=True,
     )
 
@@ -77,6 +85,23 @@ def test_scenario_builder_passes_llm_feedback_options():
     assert environment_input["run_context"]["llm_feedback_steps"] == [
         "matched_to_interested"
     ]
+    assert environment_input["run_context"]["use_llm_explanation_quality"] is True
+    assert (
+        environment_input["run_context"]["llm_explanation_model"]
+        == "claude-3-haiku-20240307"
+    )
+    assert environment_input["run_context"]["llm_explanation_temperature"] == pytest.approx(0.0)
+    assert environment_input["run_context"]["use_llm_personalization_score"] is True
+    assert (
+        environment_input["run_context"]["llm_personalization_model"]
+        == "claude-3-haiku-20240307"
+    )
+    assert environment_input["run_context"]["llm_personalization_temperature"] == pytest.approx(0.0)
+    assert (
+        environment_input["run_context"]["match_calibration_path"]
+        == "data/seed/match_outcomes_sample.json"
+    )
+    assert environment_input["run_context"]["match_calibration_min_samples"] == 5
     assert environment_input["run_context"]["product_surface_only"] is True
 
 

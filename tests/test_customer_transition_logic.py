@@ -56,6 +56,7 @@ def test_founder_and_vc_transition_dependencies_include_signup_drivers():
     assert "thesis_sectors" in vc_params["visit_to_signup"]
     assert "stage_focus" in vc_params["visit_to_signup"]
     assert "geography" in vc_params["visit_to_signup"]
+    assert "personalization_score" in vc_params["matched_to_interested"]
 
 
 def test_transition_logic_contains_interaction_labels():

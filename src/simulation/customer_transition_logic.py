@@ -223,14 +223,20 @@ _MARKETPLACE_TRANSITION_LOGIC: Dict[str, Any] = {
                     "llm_capable": True,
                     "success_reason_code": "vc_interest_passed",
                     "failure_reason_code": "vc_not_interested",
-                    "signals": ["match_score", "explanation_quality", "timing_score"],
+                    "signals": [
+                        "match_score",
+                        "personalization_score",
+                        "explanation_quality",
+                        "timing_score",
+                    ],
                     "profile_fields": ["confidence_threshold"],
                     "params": ["vc_base_interest", "interest_threshold"],
                     "derived_inputs": ["gate_threshold"],
                     "formulas": {
                         "probability": (
                             "clamp(vc_base_interest "
-                            "+ 0.40 * match_score "
+                            "+ 0.25 * match_score "
+                            "+ 0.30 * personalization_score "
                             "+ 0.20 * explanation_quality "
                             "+ 0.15 * timing_score)"
                         ),

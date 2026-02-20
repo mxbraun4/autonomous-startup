@@ -17,9 +17,12 @@ def test_validate_payload_accepts_empty_hypotheses():
     assert validate_customer_hypotheses_payload(payload) == []
 
 
-def test_load_default_hypotheses_file_is_empty_and_valid():
+def test_load_default_hypotheses_file_contains_track_d_hypotheses():
     hypotheses = load_customer_hypotheses()
-    assert hypotheses == []
+    assert hypotheses
+    metrics = {str(hypothesis.get("metric", "")) for hypothesis in hypotheses}
+    assert "founder_engaged_to_matched_rate" in metrics
+    assert "vc_engaged_to_matched_rate" in metrics
 
 
 def test_validate_payload_rejects_invalid_direction():

@@ -35,6 +35,10 @@ def test_run_scenario_matrix_returns_deltas_vs_baseline():
         ]
         == 0.0
     )
+    assert summary["run_context"]["use_llm_explanation_quality"] is False
+    assert summary["run_context"]["use_llm_personalization_score"] is False
+    assert summary["run_context"]["match_calibration_path"] is None
+    assert summary["run_context"]["match_calibration_min_samples"] == 20
 
 
 def test_load_product_events_rejects_non_object_items(tmp_path):

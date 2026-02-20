@@ -1,6 +1,6 @@
 ﻿# Framework Plan: Autonomous Multi-Agent Simulation System (Detailed)
 
-Last updated: 2026-02-18
+Last updated: 2026-02-20
 
 ## 1) Purpose and Framing
 This document is the implementation blueprint for building an autonomous multi-agent simulation framework that can run repeatedly with minimal human intervention, while remaining constrained, reproducible, and inspectable.
@@ -47,6 +47,10 @@ Near-term execution priorities now that framework layers are implemented:
 3. Controlled real-LLM readiness:
    - run first `MOCK_MODE=false` cycles under strict budgets and policy limits
    - compare traces against mock-mode behavior
+4. Customer simulation quality loop:
+   - keep `match_score` deterministic and data-derived from founder/VC profiles
+   - derive `timing_score` from product-perception/readiness signals (not external input buckets)
+   - keep qualitative scoring (`explanation_quality`, `personalization_score`) optional via LLM with deterministic fallback
 
 ## 4) Current Repository Baseline
 Existing useful assets already in repository.

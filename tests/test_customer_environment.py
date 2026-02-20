@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from src.simulation.customer_environment import (
+    _derive_outreach_signals_from_data,
     build_customer_environment_input,
     load_customer_cohorts,
     run_customer_environment,
@@ -388,6 +389,8 @@ def test_run_customer_environment_returns_contract_shape():
     expected_metric_keys = {
         "founder_visit_to_signup",
         "vc_visit_to_signup",
+        "founder_engaged_to_matched_rate",
+        "vc_engaged_to_matched_rate",
         "visitor_to_tool_use",
         "tool_use_to_signup",
         "signup_to_first_match",
@@ -450,6 +453,89 @@ def test_run_customer_environment_is_deterministic():
     second = run_customer_environment(environment_input)
 
     assert first == second
+
+
+def test_match_score_is_derived_from_profiles_not_input_signal(tmp_path: Path):
+    """Match quality should be derived from cohort data even if input match signals are low."""
+    seed_payload = {
+        "version": 1,
+        "founders": [
+            {
+                "id": "founder_001",
+                "sector": "fintech",
+                "stage": "seed",
+                "geography": "Germany",
+                "fundraising_status": "active",
+                "urgency_score": 1.0,
+            }
+        ],
+        "vcs": [
+            {
+                "id": "vc_001",
+                "thesis_sectors": ["fintech"],
+                "stage_focus": "seed",
+                "geography": "Europe",
+                "confidence_threshold": 0.5,
+            }
+        ],
+        "visitors": [],
+    }
+    seed_path = tmp_path / "customers_match_derived.json"
+    seed_path.write_text(json.dumps(seed_payload), encoding="utf-8")
+
+    params = {
+        "founder_base_interest": 0.15,
+        "vc_base_interest": 0.12,
+        "founder_signup_base_rate": 1.0,
+        "founder_signup_cta_clarity": 1.0,
+        "founder_signup_friction": 0.0,
+        "founder_signup_trust_score": 1.0,
+        "founder_signup_form_complexity": 0.0,
+        "founder_signup_channel_intent_fit": 1.0,
+        "founder_signup_proof_of_outcomes": 1.0,
+        "vc_signup_base_rate": 0.0,
+        "meeting_rate_from_mutual_interest": 0.35,
+    }
+    signals = {
+        "match_signals": [
+            {
+                "founder_id": "founder_001",
+                "vc_id": "vc_001",
+                "match_score": 0.0,
+                "explanation_quality": 0.0,
+            }
+        ],
+        "outreach_signals": [
+            {
+                "founder_id": "founder_001",
+                "vc_id": "vc_001",
+                "personalization_score": 0.5,
+                "timing_score": 0.5,
+            }
+        ],
+        "acquisition_signals": [],
+    }
+
+    environment_input = build_customer_environment_input(
+        run_id="run_match_derived_001",
+        iteration=1,
+        seed=42,
+        params=params,
+        seed_path=str(seed_path),
+        signals=signals,
+    )
+    output = run_customer_environment(environment_input)
+
+    founder_interactions = output["diagnostics"]["interaction_logs"]["founders"]["founder_001"]
+    engaged_interaction = next(
+        item for item in founder_interactions if item["step_id"] == "signup_to_engaged"
+    )
+
+    assert engaged_interaction["score_snapshot"]["match_score"] > 0.5
+    assert output["metrics"]["average_match_relevance"] > 0.5
+    assert output["diagnostics"]["match_signal_source"] == "derived_from_cohort_data"
+    assert output["diagnostics"]["input_match_signal_count"] == 1
+    assert output["diagnostics"]["derived_match_signal_count"] == 1
 
 
 def test_founder_and_vc_journeys_start_with_signup_transition(tmp_path: Path):
@@ -722,8 +808,8 @@ def test_vc_signup_requires_complete_signup_payload(tmp_path: Path):
     assert "thesis_sectors" in vc_interactions[0]["score_snapshot"]["missing_required_fields"]
 
 
-def test_validate_environment_input_flags_missing_signal_bucket():
-    """Validation should catch missing required signal keys."""
+def test_validate_environment_input_allows_missing_outreach_bucket():
+    """Outreach signal bucket is optional because outreach quality is data-derived."""
     params = {
         "founder_base_interest": 0.15,
         "vc_base_interest": 0.12,
@@ -737,14 +823,10 @@ def test_validate_environment_input_flags_missing_signal_bucket():
         seed=42,
         params=params,
     )
-    del environment_input["signals"]["match_signals"]
+    del environment_input["signals"]["outreach_signals"]
 
     errors = validate_environment_input(environment_input)
-    output = run_customer_environment(environment_input)
-
-    assert any("match_signals" in error for error in errors)
-    assert output["diagnostics"]["input_validation_errors"]
-    assert output["metrics"]["founder_interested_rate"] == 0.0
+    assert not any("outreach_signals" in error for error in errors)
 
 
 def test_validate_environment_input_rejects_invalid_signup_payload_type():
@@ -999,6 +1081,400 @@ def test_validate_environment_input_allows_missing_acquisition_signals():
 
     errors = validate_environment_input(environment_input)
     assert not any("acquisition_signals" in error for error in errors)
+
+
+def test_validate_environment_input_allows_missing_match_signals():
+    """Match signal bucket is optional because match quality is data-derived."""
+    params = {
+        "founder_base_interest": 0.15,
+        "vc_base_interest": 0.12,
+        "meeting_rate_from_mutual_interest": 0.35,
+    }
+    environment_input = build_customer_environment_input(
+        run_id="run_optional_match_001",
+        iteration=1,
+        seed=42,
+        params=params,
+    )
+    del environment_input["signals"]["match_signals"]
+
+    errors = validate_environment_input(environment_input)
+    assert not any("match_signals" in error for error in errors)
+
+
+def test_validate_environment_input_rejects_invalid_llm_explanation_controls():
+    """Validation should reject invalid LLM explanation-quality control types."""
+    params = {
+        "founder_base_interest": 0.15,
+        "vc_base_interest": 0.12,
+        "meeting_rate_from_mutual_interest": 0.35,
+    }
+    environment_input = build_customer_environment_input(
+        run_id="run_invalid_llm_expl_001",
+        iteration=1,
+        seed=42,
+        params=params,
+    )
+    environment_input["run_context"]["use_llm_explanation_quality"] = "yes"
+    environment_input["run_context"]["llm_explanation_model"] = ""
+    environment_input["run_context"]["llm_explanation_temperature"] = 1.5
+
+    errors = validate_environment_input(environment_input)
+
+    assert any("use_llm_explanation_quality" in error for error in errors)
+    assert any("llm_explanation_model" in error for error in errors)
+    assert any("llm_explanation_temperature" in error for error in errors)
+
+
+def test_validate_environment_input_rejects_invalid_llm_personalization_controls():
+    """Validation should reject invalid LLM personalization control types."""
+    params = {
+        "founder_base_interest": 0.15,
+        "vc_base_interest": 0.12,
+        "meeting_rate_from_mutual_interest": 0.35,
+    }
+    environment_input = build_customer_environment_input(
+        run_id="run_invalid_llm_personalization_001",
+        iteration=1,
+        seed=42,
+        params=params,
+    )
+    environment_input["run_context"]["use_llm_personalization_score"] = "yes"
+    environment_input["run_context"]["llm_personalization_model"] = ""
+    environment_input["run_context"]["llm_personalization_temperature"] = 1.5
+
+    errors = validate_environment_input(environment_input)
+
+    assert any("use_llm_personalization_score" in error for error in errors)
+    assert any("llm_personalization_model" in error for error in errors)
+    assert any("llm_personalization_temperature" in error for error in errors)
+
+
+def test_validate_environment_input_rejects_invalid_match_calibration_controls():
+    """Validation should reject invalid match-calibration control types."""
+    params = {
+        "founder_base_interest": 0.15,
+        "vc_base_interest": 0.12,
+        "meeting_rate_from_mutual_interest": 0.35,
+    }
+    environment_input = build_customer_environment_input(
+        run_id="run_invalid_match_calibration_001",
+        iteration=1,
+        seed=42,
+        params=params,
+    )
+    environment_input["run_context"]["match_calibration_path"] = 123
+    environment_input["run_context"]["match_calibration_min_samples"] = 0
+
+    errors = validate_environment_input(environment_input)
+
+    assert any("match_calibration_path" in error for error in errors)
+    assert any("match_calibration_min_samples" in error for error in errors)
+
+
+def test_match_score_can_be_calibrated_from_labeled_outcomes(tmp_path: Path):
+    """Labeled outcomes should update match component weights and affect scores."""
+    seed_payload = {
+        "version": 1,
+        "founders": [
+            {
+                "id": "founder_001",
+                "sector": "fintech",
+                "stage": "seed",
+                "geography": "Germany",
+                "fundraising_status": "active",
+                "urgency_score": 1.0,
+            }
+        ],
+        "vcs": [
+            {
+                "id": "vc_001",
+                "thesis_sectors": ["fintech"],
+                "stage_focus": "series_c",
+                "geography": "Israel",
+                "confidence_threshold": 0.5,
+            }
+        ],
+        "visitors": [],
+    }
+    seed_path = tmp_path / "customers_match_calibration.json"
+    seed_path.write_text(json.dumps(seed_payload), encoding="utf-8")
+
+    labeled_outcomes = {
+        "version": 1,
+        "samples": [
+            {
+                "feature_scores": {
+                    "sector_score": 1.0,
+                    "stage_score": 0.0,
+                    "geo_score": 0.0,
+                    "fundraising_score": 1.0,
+                },
+                "outcome_label": 0.0,
+            },
+            {
+                "feature_scores": {
+                    "sector_score": 0.0,
+                    "stage_score": 1.0,
+                    "geo_score": 1.0,
+                    "fundraising_score": 1.0,
+                },
+                "outcome_label": 1.0,
+            },
+            {
+                "feature_scores": {
+                    "sector_score": 1.0,
+                    "stage_score": 0.0,
+                    "geo_score": 0.0,
+                    "fundraising_score": 0.0,
+                },
+                "outcome_label": 0.0,
+            },
+            {
+                "feature_scores": {
+                    "sector_score": 0.0,
+                    "stage_score": 1.0,
+                    "geo_score": 1.0,
+                    "fundraising_score": 0.0,
+                },
+                "outcome_label": 1.0,
+            },
+        ],
+    }
+    outcomes_path = tmp_path / "match_outcomes.json"
+    outcomes_path.write_text(json.dumps(labeled_outcomes), encoding="utf-8")
+
+    params = {
+        "founder_base_interest": 0.15,
+        "vc_base_interest": 0.12,
+        "founder_signup_base_rate": 1.0,
+        "founder_signup_cta_clarity": 1.0,
+        "founder_signup_friction": 0.0,
+        "founder_signup_trust_score": 1.0,
+        "founder_signup_form_complexity": 0.0,
+        "founder_signup_channel_intent_fit": 1.0,
+        "founder_signup_proof_of_outcomes": 1.0,
+        "vc_signup_base_rate": 0.0,
+        "meeting_rate_from_mutual_interest": 0.35,
+    }
+    signals = {
+        "match_signals": [],
+        "outreach_signals": [
+            {
+                "founder_id": "founder_001",
+                "vc_id": "vc_001",
+                "personalization_score": 0.5,
+                "timing_score": 0.5,
+            }
+        ],
+        "acquisition_signals": [],
+    }
+
+    baseline_input = build_customer_environment_input(
+        run_id="run_match_calibration_baseline",
+        iteration=1,
+        seed=42,
+        params=params,
+        seed_path=str(seed_path),
+        signals=signals,
+    )
+    calibrated_input = build_customer_environment_input(
+        run_id="run_match_calibration_active",
+        iteration=1,
+        seed=42,
+        params=params,
+        seed_path=str(seed_path),
+        signals=signals,
+        match_calibration_path=str(outcomes_path),
+        match_calibration_min_samples=2,
+    )
+
+    baseline_output = run_customer_environment(baseline_input)
+    calibrated_output = run_customer_environment(calibrated_input)
+
+    baseline_step = next(
+        item
+        for item in baseline_output["diagnostics"]["interaction_logs"]["founders"]["founder_001"]
+        if item["step_id"] == "signup_to_engaged"
+    )
+    calibrated_step = next(
+        item
+        for item in calibrated_output["diagnostics"]["interaction_logs"]["founders"]["founder_001"]
+        if item["step_id"] == "signup_to_engaged"
+    )
+
+    calibration = calibrated_output["diagnostics"]["match_calibration"]
+    assert calibration["active"] is True
+    assert calibration["valid_samples"] == 4
+    assert calibration["reason"] == "calibrated_from_labeled_outcomes"
+    assert (
+        calibration["weights_after"]["sector"]
+        < calibration["weights_before"]["sector"]
+    )
+    assert (
+        calibrated_step["score_snapshot"]["match_score"]
+        < baseline_step["score_snapshot"]["match_score"]
+    )
+
+
+def test_timing_score_is_derived_from_product_perception():
+    """Timing should increase when product perception is stronger for the founder."""
+    founders = [
+        {
+            "id": "founder_high",
+            "sector": "fintech",
+            "stage": "seed",
+            "geography": "Germany",
+            "fundraising_status": "active",
+            "urgency_score": 0.6,
+            "trust_score": 1.0,
+            "channel_intent_fit": 1.0,
+            "proof_of_outcomes": 1.0,
+            "form_complexity_score": 0.0,
+        },
+        {
+            "id": "founder_low",
+            "sector": "fintech",
+            "stage": "seed",
+            "geography": "Germany",
+            "fundraising_status": "active",
+            "urgency_score": 0.6,
+            "trust_score": 0.0,
+            "channel_intent_fit": 0.0,
+            "proof_of_outcomes": 0.0,
+            "form_complexity_score": 1.0,
+        },
+    ]
+    vcs = [
+        {
+            "id": "vc_001",
+            "thesis_sectors": ["fintech"],
+            "stage_focus": "seed",
+            "geography": "Europe",
+            "confidence_threshold": 0.4,
+        }
+    ]
+    params = {
+        "founder_signup_cta_clarity": 0.72,
+        "founder_signup_friction": 0.30,
+        "founder_signup_trust_score": 1.0,
+        "founder_signup_form_complexity": 0.0,
+        "founder_signup_channel_intent_fit": 1.0,
+        "founder_signup_proof_of_outcomes": 1.0,
+        "vc_signup_cta_clarity": 0.68,
+        "vc_signup_friction": 0.33,
+        "derived_personalization_score_boost": 0.0,
+        "derived_timing_score_boost": 0.0,
+    }
+    match_signals = [
+        {
+            "founder_id": "founder_high",
+            "vc_id": "vc_001",
+            "match_score": 0.80,
+            "explanation_quality": 0.75,
+        },
+        {
+            "founder_id": "founder_low",
+            "vc_id": "vc_001",
+            "match_score": 0.80,
+            "explanation_quality": 0.75,
+        },
+    ]
+
+    outreach = _derive_outreach_signals_from_data(
+        founders=founders,
+        vcs=vcs,
+        params=params,
+        match_signals=match_signals,
+        personalization_score_evaluator=None,
+    )
+    by_founder = {item["founder_id"]: item for item in outreach}
+    high = by_founder["founder_high"]
+    low = by_founder["founder_low"]
+
+    assert high["timing_score_source"] == "product_perception"
+    assert high["product_perception_score"] > low["product_perception_score"]
+    assert high["timing_score"] > low["timing_score"]
+
+
+def test_personalization_score_is_derived_from_product_perception_context():
+    """Personalization should increase when product perception is stronger."""
+    founders = [
+        {
+            "id": "founder_high",
+            "sector": "fintech",
+            "stage": "seed",
+            "geography": "Germany",
+            "fundraising_status": "active",
+            "urgency_score": 0.6,
+            "trust_score": 1.0,
+            "channel_intent_fit": 1.0,
+            "proof_of_outcomes": 1.0,
+            "form_complexity_score": 0.0,
+        },
+        {
+            "id": "founder_low",
+            "sector": "fintech",
+            "stage": "seed",
+            "geography": "Germany",
+            "fundraising_status": "active",
+            "urgency_score": 0.6,
+            "trust_score": 0.0,
+            "channel_intent_fit": 0.0,
+            "proof_of_outcomes": 0.0,
+            "form_complexity_score": 1.0,
+        },
+    ]
+    vcs = [
+        {
+            "id": "vc_001",
+            "thesis_sectors": ["fintech"],
+            "stage_focus": "seed",
+            "geography": "Europe",
+            "confidence_threshold": 0.4,
+        }
+    ]
+    params = {
+        "founder_signup_cta_clarity": 0.72,
+        "founder_signup_friction": 0.30,
+        "founder_signup_trust_score": 1.0,
+        "founder_signup_form_complexity": 0.0,
+        "founder_signup_channel_intent_fit": 1.0,
+        "founder_signup_proof_of_outcomes": 1.0,
+        "vc_signup_cta_clarity": 0.68,
+        "vc_signup_friction": 0.33,
+        "derived_personalization_score_boost": 0.0,
+        "derived_timing_score_boost": 0.0,
+    }
+    match_signals = [
+        {
+            "founder_id": "founder_high",
+            "vc_id": "vc_001",
+            "match_score": 0.80,
+            "explanation_quality": 0.75,
+        },
+        {
+            "founder_id": "founder_low",
+            "vc_id": "vc_001",
+            "match_score": 0.80,
+            "explanation_quality": 0.75,
+        },
+    ]
+
+    outreach = _derive_outreach_signals_from_data(
+        founders=founders,
+        vcs=vcs,
+        params=params,
+        match_signals=match_signals,
+        personalization_score_evaluator=None,
+    )
+    by_founder = {item["founder_id"]: item for item in outreach}
+    high = by_founder["founder_high"]
+    low = by_founder["founder_low"]
+
+    assert high["personalization_score_source"] == "deterministic"
+    assert high["product_perception_score"] > low["product_perception_score"]
+    assert high["personalization_score"] > low["personalization_score"]
 
 
 def test_vc_journey_uses_matched_state_transition():

@@ -517,6 +517,9 @@ class VCCustomerAgent:
         explanation_quality = _clamp(
             float((match_signal or {}).get("explanation_quality", 0.0))
         )
+        personalization = _clamp(
+            float((outreach_signal or {}).get("personalization_score", 0.0))
+        )
         timing_score = _clamp(float((outreach_signal or {}).get("timing_score", 0.0)))
         confidence_threshold = _clamp(float(self.profile.get("confidence_threshold", 0.5)))
         preview_match_quality = _clamp((0.70 * match_score) + (0.30 * explanation_quality))
@@ -668,7 +671,8 @@ class VCCustomerAgent:
 
         interest_prob = _clamp(
             float(self.params["vc_base_interest"])
-            + (0.40 * match_score)
+            + (0.25 * match_score)
+            + (0.30 * personalization)
             + (0.20 * explanation_quality)
             + (0.15 * timing_score)
         )
@@ -681,6 +685,7 @@ class VCCustomerAgent:
                 {
                     "interest_prob": interest_prob,
                     "gate_threshold": gate_threshold,
+                    "personalization_score": personalization,
                 },
                 max_steps,
             )
@@ -694,6 +699,7 @@ class VCCustomerAgent:
                 score_snapshot={
                     "interest_prob": interest_prob,
                     "gate_threshold": gate_threshold,
+                    "personalization_score": personalization,
                     "match_score": match_score,
                     "explanation_quality": explanation_quality,
                     "timing_score": timing_score,
@@ -711,6 +717,7 @@ class VCCustomerAgent:
                 score_snapshot={
                     "interest_prob": interest_prob,
                     "gate_threshold": gate_threshold,
+                    "personalization_score": personalization,
                     "match_score": match_score,
                     "explanation_quality": explanation_quality,
                     "timing_score": timing_score,

@@ -65,6 +65,7 @@ Initial tool ideas:
 - Tooling for data collection, match-oriented outreach content, and analytics
 - Framework-level guardrails for tool failover, loop detection, and bounded delegation
 - Deterministic mock-mode execution with local runtime storage for constrained environments
+- Customer simulation with data-derived match scoring and product-perception-driven interest drivers (`timing_score`, `personalization_score`), plus optional LLM quality evaluators for explanation/personalization
 
 ### Near-term MVP deliverables
 - Deterministic match scoring function with transparent scoring factors
