@@ -7,6 +7,7 @@ reactivates an older version.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sqlite3
@@ -28,6 +29,14 @@ class ProceduralStoreBackend:
         self._conn.row_factory = sqlite3.Row
         self._init_schema()
         logger.info(f"ProceduralStoreBackend initialised (db={db_path})")
+
+    def close(self) -> None:
+        """Close the SQLite connection (idempotent)."""
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            finally:
+                self._conn = None
 
     def _init_schema(self) -> None:
         self._conn.executescript("""
@@ -60,20 +69,48 @@ class ProceduralStoreBackend:
         created_by: str = "",
         provenance: str = "",
     ) -> Procedure:
-        # Determine next version
+        await asyncio.to_thread(self._sync_save, task_type, workflow, score, created_by, provenance)
+        return (await self.proc_get(task_type))  # type: ignore[return-value]
+
+    async def proc_get(self, task_type: str) -> Optional[Procedure]:
+        return await asyncio.to_thread(self._sync_get, task_type)
+
+    async def proc_get_history(self, task_type: str) -> List[Procedure]:
+        proc = await self.proc_get(task_type)
+        return [proc] if proc else []
+
+    async def proc_rollback(self, task_type: str, target_version: int) -> Optional[Procedure]:
+        ok = await asyncio.to_thread(self._sync_rollback, task_type, target_version)
+        if not ok:
+            return None
+        return await self.proc_get(task_type)
+
+    async def proc_list_types(self) -> List[str]:
+        return await asyncio.to_thread(self._sync_list_types)
+
+    # ------------------------------------------------------------------
+    # Synchronous helpers (run via asyncio.to_thread)
+    # ------------------------------------------------------------------
+
+    def _sync_save(
+        self,
+        task_type: str,
+        workflow: Dict[str, Any],
+        score: float,
+        created_by: str,
+        provenance: str,
+    ) -> None:
         row = self._conn.execute(
             "SELECT MAX(version) as max_v FROM procedures WHERE task_type = ?",
             (task_type,),
         ).fetchone()
         next_version = (row["max_v"] or 0) + 1
 
-        # Deactivate current active version
         self._conn.execute(
             "UPDATE procedures SET is_active = 0 WHERE task_type = ? AND is_active = 1",
             (task_type,),
         )
 
-        # Insert new version
         now = datetime.now(timezone.utc).isoformat()
         self._conn.execute(
             """INSERT INTO procedures (task_type, version, workflow, score,
@@ -83,9 +120,7 @@ class ProceduralStoreBackend:
         )
         self._conn.commit()
 
-        return (await self.proc_get(task_type))  # type: ignore[return-value]
-
-    async def proc_get(self, task_type: str) -> Optional[Procedure]:
+    def _sync_get(self, task_type: str) -> Optional[Procedure]:
         rows = self._conn.execute(
             "SELECT * FROM procedures WHERE task_type = ? ORDER BY version",
             (task_type,),
@@ -94,21 +129,15 @@ class ProceduralStoreBackend:
             return None
         return self._rows_to_procedure(task_type, rows)
 
-    async def proc_get_history(self, task_type: str) -> List[Procedure]:
-        proc = await self.proc_get(task_type)
-        return [proc] if proc else []
-
-    async def proc_rollback(self, task_type: str, target_version: int) -> Optional[Procedure]:
-        # Check target version exists
+    def _sync_rollback(self, task_type: str, target_version: int) -> bool:
         row = self._conn.execute(
             "SELECT version FROM procedures WHERE task_type = ? AND version = ?",
             (task_type, target_version),
         ).fetchone()
         if not row:
             logger.warning(f"Rollback failed: version {target_version} not found for {task_type}")
-            return None
+            return False
 
-        # Deactivate all, activate target
         self._conn.execute(
             "UPDATE procedures SET is_active = 0 WHERE task_type = ?",
             (task_type,),
@@ -118,10 +147,9 @@ class ProceduralStoreBackend:
             (task_type, target_version),
         )
         self._conn.commit()
+        return True
 
-        return await self.proc_get(task_type)
-
-    async def proc_list_types(self) -> List[str]:
+    def _sync_list_types(self) -> List[str]:
         rows = self._conn.execute(
             "SELECT DISTINCT task_type FROM procedures"
         ).fetchall()

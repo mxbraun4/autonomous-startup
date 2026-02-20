@@ -18,71 +18,20 @@ setup_logging(settings.log_level)
 logger = get_logger(__name__)
 
 
-def _is_writable_directory(path: Path) -> bool:
-    """Return True when directory exists and supports write operations."""
-    try:
-        path.mkdir(parents=True, exist_ok=True)
-        probe = path / ".write_probe"
-        probe.write_text("ok", encoding="utf-8")
-        probe.unlink()
-        return True
-    except Exception:
-        return False
-
-
-def _resolve_non_legacy_memory_dir(preferred_data_dir: str) -> str:
-    """Select a writable directory for non-legacy memory backends."""
-    preferred = Path(preferred_data_dir).resolve()
-    fallback_runtime = (preferred.parent / f"{preferred.name}_runtime").resolve()
-    fallback_project_default = (Path("data") / "memory_runtime").resolve()
-
-    candidates = []
-    for candidate in (preferred, fallback_runtime, fallback_project_default):
-        if candidate not in candidates:
-            candidates.append(candidate)
-
-    checked = []
-    for candidate in candidates:
-        checked.append(str(candidate))
-        # Chroma backend persists under <data_dir>/chroma; both roots must be writable.
-        if _is_writable_directory(candidate) and _is_writable_directory(candidate / "chroma"):
-            if candidate != preferred:
-                logger.warning(
-                    "Configured memory directory is not writable for non-legacy storage. "
-                    "Using %s (preferred: %s)",
-                    candidate,
-                    preferred,
-                )
-            return str(candidate)
-
-    raise RuntimeError(
-        "No writable non-legacy memory directory available. Checked: "
-        + ", ".join(checked)
-    )
-
-
 def _init_memory_store():
     """Initialise the UnifiedStore and inject it into CrewAI tools."""
-    use_legacy = getattr(settings, "memory_use_legacy", False)
-    if use_legacy:
-        raise RuntimeError(
-            "Legacy memory mode is disabled for simulation runs. "
-            "Set MEMORY_USE_LEGACY=false."
-        )
-
     from src.framework.storage.unified_store import UnifiedStore
     from src.framework.storage.sync_wrapper import SyncUnifiedStore
     from src.crewai_agents.tools import set_memory_store
 
-    configured_data_dir = getattr(settings, "memory_data_dir", "data/memory")
-    data_dir = _resolve_non_legacy_memory_dir(configured_data_dir)
-    store = UnifiedStore(use_legacy_stores=False, data_dir=data_dir)
+    data_dir = str(Path(settings.memory_data_dir).resolve())
+    Path(data_dir).mkdir(parents=True, exist_ok=True)
+    store = UnifiedStore(data_dir=data_dir)
 
     sync_store = SyncUnifiedStore(store)
     set_memory_store(sync_store)
     logger.info(
-        "UnifiedStore initialised and injected into tools "
-        "(legacy=False, data_dir=%s)",
+        "UnifiedStore initialised and injected into tools (data_dir=%s)",
         data_dir,
     )
     return sync_store
@@ -157,11 +106,46 @@ def display_results(results: dict) -> None:
     print("\n" + "="*60)
     print("SIMULATION COMPLETE")
     print("="*60)
-    print("\nKey Takeaways:")
-    print("  [OK] CrewAI agents coordinated hierarchically")
-    print("  [OK] Memory enabled learning across iterations")
-    print("  [OK] Performance improved through adaptation")
-    print("  [OK] Tools (scraper, content generator, etc.) integrated successfully")
+
+    # --- Evidence-based takeaways instead of unconditional claims -----------
+    metrics = results.get("metrics_evolution", [])
+    learnings = results.get("learnings", [])
+
+    # Did agents actually execute?
+    if metrics:
+        print(f"\n  Iterations executed: {len(metrics)}")
+    else:
+        print("\n  [WARN] No iterations completed.")
+
+    # Was any real outreach logged?
+    sources = [m.get("measurement_source", "unknown") for m in metrics]
+    has_real_signal = any(s == "outreach_logs" for s in sources)
+    if has_real_signal:
+        print("  [OK] Measurement based on real outreach logs")
+    else:
+        no_signal = all(s == "no_signal" for s in sources)
+        if no_signal:
+            print("  [--] No outreach was logged; metrics are zero (no signal)")
+        else:
+            print(f"  [--] Measurement sources: {', '.join(set(sources))}")
+
+    # Did performance actually improve?
+    if len(metrics) >= 2:
+        first_rr = metrics[0].get("response_rate", 0)
+        last_rr = metrics[-1].get("response_rate", 0)
+        if last_rr > first_rr:
+            print("  [OK] Response rate improved across iterations")
+        elif last_rr == first_rr:
+            print("  [--] Response rate unchanged across iterations")
+        else:
+            print("  [!!] Response rate decreased across iterations")
+
+    # Were learnings captured?
+    if learnings:
+        print(f"  [OK] {len(learnings)} learning(s) captured")
+    else:
+        print("  [--] No structured learnings captured")
+
     print()
 
 

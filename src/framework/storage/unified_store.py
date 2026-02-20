@@ -1,7 +1,6 @@
 """UnifiedStore - in-process implementation of MemoryStoreProtocol.
 
 Composes all five memory backends and delegates each method group.
-A ``use_legacy_stores`` flag switches between legacy adapters and new backends.
 """
 
 from __future__ import annotations
@@ -29,65 +28,75 @@ class UnifiedStore(MemoryStoreProtocol):
 
     Parameters
     ----------
-    use_legacy_stores : bool
-        If True, use legacy adapters for semantic/episodic/procedural.
-        If False (default), use new ChromaDB/SQLite backends.
     data_dir : str
         Root directory for persistent data.
     """
 
-    def __init__(
-        self,
-        use_legacy_stores: bool = False,
-        data_dir: str = "data/memory",
-    ):
+    def __init__(self, data_dir: str = "data/memory"):
         self._data_dir = data_dir
-        self._use_legacy = use_legacy_stores
         self._current_run_id: Optional[str] = None
 
-        # Working memory is always the new backend (no legacy)
+        # Working memory is always the in-memory backend.
         self._working = WorkingMemoryBackend()
 
         # Semantic
-        if use_legacy_stores:
-            from src.framework.storage.adapters.legacy_semantic import LegacySemanticAdapter
-            self._semantic: Any = LegacySemanticAdapter()
-        else:
-            from src.framework.storage.backends.semantic_store import SemanticStoreBackend
-            self._semantic = SemanticStoreBackend(
-                persist_dir=os.path.join(data_dir, "chroma"),
-            )
+        from src.framework.storage.backends.semantic_store import SemanticStoreBackend
+
+        self._semantic = SemanticStoreBackend(
+            persist_dir=os.path.join(data_dir, "chroma"),
+        )
 
         # Episodic
-        if use_legacy_stores:
-            from src.framework.storage.adapters.legacy_episodic import LegacyEpisodicAdapter
-            self._episodic: Any = LegacyEpisodicAdapter()
-        else:
-            from src.framework.storage.backends.episodic_store import EpisodicStoreBackend
-            self._episodic = EpisodicStoreBackend(
-                db_path=os.path.join(data_dir, "episodic_v2.db"),
-                chroma_dir=os.path.join(data_dir, "chroma"),
-            )
+        from src.framework.storage.backends.episodic_store import EpisodicStoreBackend
+
+        self._episodic = EpisodicStoreBackend(
+            db_path=os.path.join(data_dir, "episodic_v2.db"),
+            chroma_dir=os.path.join(data_dir, "chroma"),
+        )
 
         # Procedural
-        if use_legacy_stores:
-            from src.framework.storage.adapters.legacy_procedural import LegacyProceduralAdapter
-            self._procedural: Any = LegacyProceduralAdapter()
-        else:
-            from src.framework.storage.backends.procedural_store import ProceduralStoreBackend
-            self._procedural = ProceduralStoreBackend(
-                db_path=os.path.join(data_dir, "procedural.db"),
-            )
+        from src.framework.storage.backends.procedural_store import ProceduralStoreBackend
 
-        # Consensus (no legacy — always new backend)
+        self._procedural = ProceduralStoreBackend(
+            db_path=os.path.join(data_dir, "procedural.db"),
+        )
+
+        # Consensus
         from src.framework.storage.backends.consensus_store import ConsensusStoreBackend
+
         self._consensus = ConsensusStoreBackend(
             db_path=os.path.join(data_dir, "consensus.db"),
         )
 
-        logger.info(
-            f"UnifiedStore initialised (legacy={use_legacy_stores}, data_dir={data_dir})"
-        )
+        logger.info("UnifiedStore initialised (data_dir=%s)", data_dir)
+
+    # -- context-manager & cleanup ------------------------------------------
+
+    def close(self) -> None:
+        """Close all backend connections (idempotent)."""
+        for backend in (self._episodic, self._procedural, self._consensus):
+            try:
+                backend.close()
+            except Exception:
+                pass
+
+    def __enter__(self) -> "UnifiedStore":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    async def __aenter__(self) -> "UnifiedStore":
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -95,11 +104,11 @@ class UnifiedStore(MemoryStoreProtocol):
 
     async def start_run(self, run_id: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         self._current_run_id = run_id
-        logger.info(f"Run started: {run_id}")
+        logger.info("Run started: %s", run_id)
 
     async def end_run(self, run_id: str) -> None:
         self._current_run_id = None
-        logger.info(f"Run ended: {run_id}")
+        logger.info("Run ended: %s", run_id)
 
     async def save_checkpoint(self, run_id: str, path: str) -> None:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -109,7 +118,7 @@ class UnifiedStore(MemoryStoreProtocol):
         self._working.load_checkpoint(path)
 
     # ------------------------------------------------------------------
-    # Working Memory — delegates to in-memory backend
+    # Working Memory - delegates to in-memory backend
     # ------------------------------------------------------------------
 
     async def wm_put(self, item: WorkingMemoryItem) -> str:
@@ -133,7 +142,7 @@ class UnifiedStore(MemoryStoreProtocol):
         return self._working.get_context_for_prompt(agent_id, max_tokens)
 
     # ------------------------------------------------------------------
-    # Semantic Memory — delegates to adapter or backend
+    # Semantic Memory - delegates to backend
     # ------------------------------------------------------------------
 
     async def sem_add(self, doc: SemanticDocument) -> str:
@@ -160,7 +169,7 @@ class UnifiedStore(MemoryStoreProtocol):
         return await self._semantic.sem_count(collection)
 
     # ------------------------------------------------------------------
-    # Episodic Memory — delegates to adapter or backend
+    # Episodic Memory - delegates to backend
     # ------------------------------------------------------------------
 
     async def ep_record(self, episode: Episode) -> str:
@@ -197,7 +206,7 @@ class UnifiedStore(MemoryStoreProtocol):
         return await self._episodic.ep_get_success_rate(agent_id, episode_type)
 
     # ------------------------------------------------------------------
-    # Procedural Memory — delegates to adapter or backend
+    # Procedural Memory - delegates to backend
     # ------------------------------------------------------------------
 
     async def proc_save(
@@ -223,7 +232,7 @@ class UnifiedStore(MemoryStoreProtocol):
         return await self._procedural.proc_list_types()
 
     # ------------------------------------------------------------------
-    # Consensus Memory — always new backend
+    # Consensus Memory - delegates to backend
     # ------------------------------------------------------------------
 
     async def cons_set(self, entry: ConsensusEntry) -> str:

@@ -1,13 +1,11 @@
 """CrewAI Tools - Including web-enabled data collection tools."""
+import atexit
 import json
-import time
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
-from pathlib import Path
 
 from crewai.tools import tool
 
 from src.data.database import StartupDatabase
-from src.utils.config import settings
 from src.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -16,10 +14,24 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Global database instance
-_db = None
+_db: Optional[StartupDatabase] = None
 
 # Global memory store instance (SyncUnifiedStore)
 _memory_store: Optional["SyncUnifiedStore"] = None
+
+
+def _cleanup_globals() -> None:
+    """Close global singletons at interpreter shutdown."""
+    global _db, _memory_store
+    if _db is not None:
+        _db.close()
+        _db = None
+    if _memory_store is not None:
+        _memory_store.close()
+        _memory_store = None
+
+
+atexit.register(_cleanup_globals)
 
 
 def get_database() -> StartupDatabase:
@@ -733,42 +745,4 @@ def get_team_insights(topic: str = "") -> str:
         "count": len(insights),
         "topic": topic or "all",
         "insights": insights,
-    }, indent=2)
-
-
-# =============================================================================
-# LEGACY COMPATIBILITY - Scraper tool that uses database
-# =============================================================================
-
-@tool("Scrape Startup Data")
-def scraper_tool(sector: str = "all", stage: str = "all") -> str:
-    """Get startup data from the database (collected via web search).
-
-    If database is empty, this indicates web collection needs to be done first.
-
-    Args:
-        sector: Target sector or 'all'
-        stage: Target stage or 'all'
-
-    Returns:
-        JSON string with startup data
-    """
-    logger.info(f"Scraper tool: Getting {sector} startups at {stage} stage")
-
-    db = get_database()
-    startups = db.get_startups(sector=sector, stage=stage, limit=50)
-
-    if not startups:
-        return json.dumps({
-            'status': 'empty',
-            'message': 'No startups in database. Use web search tools to collect data first.',
-            'suggestion': 'Use "Search Web for Startups" tool to find and collect startup data'
-        }, indent=2)
-
-    return json.dumps({
-        'status': 'success',
-        'sector': sector,
-        'stage': stage,
-        'count': len(startups),
-        'startups': startups
     }, indent=2)

@@ -12,7 +12,13 @@ logger = get_logger(__name__)
 
 
 class StartupDatabase:
-    """SQLite database for persistent startup and VC data storage."""
+    """SQLite database for persistent startup and VC data storage.
+
+    Supports the context-manager protocol for deterministic cleanup::
+
+        with StartupDatabase() as db:
+            db.add_startup({...})
+    """
 
     def __init__(self, db_path: str = None):
         """Initialize database connection.
@@ -22,13 +28,27 @@ class StartupDatabase:
         """
         self.db_path = Path(db_path or settings.startup_db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.db_path))
+        # check_same_thread=False: CrewAI Flows execute listeners in worker
+        # threads via asyncio.to_thread, so the connection must be shareable.
+        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        # WAL mode prevents "database is locked" / "readonly" errors from
-        # concurrent readers (e.g. measure phase reading while build writes).
         self.conn.execute("PRAGMA journal_mode=WAL")
         self._create_tables()
         logger.info(f"Database initialized at {self.db_path}")
+
+    # -- context-manager & cleanup ------------------------------------------
+
+    def __enter__(self) -> "StartupDatabase":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def _create_tables(self):
         """Create database tables if they don't exist."""
@@ -226,7 +246,7 @@ class StartupDatabase:
                 if vc.get(field):
                     try:
                         vc[field] = json.loads(vc[field])
-                    except:
+                    except (json.JSONDecodeError, TypeError):
                         pass
             results.append(vc)
         return results
@@ -356,6 +376,10 @@ class StartupDatabase:
         self.conn.commit()
         return cursor.rowcount > 0
 
-    def close(self):
-        """Close database connection."""
-        self.conn.close()
+    def close(self) -> None:
+        """Close database connection (idempotent)."""
+        if self.conn is not None:
+            try:
+                self.conn.close()
+            finally:
+                self.conn = None

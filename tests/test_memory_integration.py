@@ -24,8 +24,8 @@ from src.framework.types import (
 
 @pytest.fixture
 def store(tmp_path):
-    """Create a UnifiedStore with new backends in a temp directory."""
-    s = UnifiedStore(use_legacy_stores=False, data_dir=str(tmp_path))
+    """Create a UnifiedStore in a temp directory."""
+    s = UnifiedStore(data_dir=str(tmp_path))
     return SyncUnifiedStore(s)
 
 

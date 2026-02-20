@@ -6,6 +6,7 @@ to the ``episodic_summaries`` ChromaDB collection.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sqlite3
@@ -51,6 +52,14 @@ class EpisodicStoreBackend:
         )
         logger.info(f"EpisodicStoreBackend initialised (db={db_path}, chroma={chroma_dir})")
 
+    def close(self) -> None:
+        """Close the SQLite connection (idempotent)."""
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            finally:
+                self._conn = None
+
     def _init_schema(self) -> None:
         self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS episodes_v2 (
@@ -86,7 +95,46 @@ class EpisodicStoreBackend:
     # ------------------------------------------------------------------
 
     async def ep_record(self, episode: Episode) -> str:
-        # SQLite write
+        return await asyncio.to_thread(self._sync_record, episode)
+
+    async def ep_get(self, entity_id: str) -> Optional[Episode]:
+        return await asyncio.to_thread(self._sync_get, entity_id)
+
+    async def ep_search_similar(
+        self,
+        query: str,
+        agent_id: Optional[str] = None,
+        episode_type: Optional[EpisodeType] = None,
+        top_k: int = 10,
+    ) -> List[Episode]:
+        """Query ChromaDB first, then fetch full records from SQLite."""
+        return await asyncio.to_thread(
+            self._sync_search_similar, query, agent_id, episode_type, top_k,
+        )
+
+    async def ep_search_structured(
+        self,
+        agent_id: Optional[str] = None,
+        episode_type: Optional[EpisodeType] = None,
+        success_only: bool = False,
+        limit: int = 10,
+    ) -> List[Episode]:
+        return await asyncio.to_thread(
+            self._sync_search_structured, agent_id, episode_type, success_only, limit,
+        )
+
+    async def ep_get_success_rate(
+        self,
+        agent_id: Optional[str] = None,
+        episode_type: Optional[EpisodeType] = None,
+    ) -> float:
+        return await asyncio.to_thread(self._sync_get_success_rate, agent_id, episode_type)
+
+    # ------------------------------------------------------------------
+    # Synchronous helpers (run via asyncio.to_thread)
+    # ------------------------------------------------------------------
+
+    def _sync_record(self, episode: Episode) -> str:
         self._conn.execute(
             """INSERT OR REPLACE INTO episodes_v2
                (entity_id, agent_id, episode_type, context, action, outcome,
@@ -114,7 +162,6 @@ class EpisodicStoreBackend:
         )
         self._conn.commit()
 
-        # ChromaDB write (only if there's a summary to embed)
         embed_text = episode.summary_text or episode.action or json.dumps(episode.context)
         if embed_text.strip():
             self._collection.upsert(
@@ -129,20 +176,19 @@ class EpisodicStoreBackend:
 
         return episode.entity_id
 
-    async def ep_get(self, entity_id: str) -> Optional[Episode]:
+    def _sync_get(self, entity_id: str) -> Optional[Episode]:
         row = self._conn.execute(
             "SELECT * FROM episodes_v2 WHERE entity_id = ?", (entity_id,)
         ).fetchone()
         return self._row_to_episode(row) if row else None
 
-    async def ep_search_similar(
+    def _sync_search_similar(
         self,
         query: str,
-        agent_id: Optional[str] = None,
-        episode_type: Optional[EpisodeType] = None,
-        top_k: int = 10,
+        agent_id: Optional[str],
+        episode_type: Optional[EpisodeType],
+        top_k: int,
     ) -> List[Episode]:
-        """Query ChromaDB first, then fetch full records from SQLite."""
         count = self._collection.count()
         if count == 0:
             return []
@@ -167,12 +213,12 @@ class EpisodicStoreBackend:
 
         return [self._row_to_episode(r) for r in rows]
 
-    async def ep_search_structured(
+    def _sync_search_structured(
         self,
-        agent_id: Optional[str] = None,
-        episode_type: Optional[EpisodeType] = None,
-        success_only: bool = False,
-        limit: int = 10,
+        agent_id: Optional[str],
+        episode_type: Optional[EpisodeType],
+        success_only: bool,
+        limit: int,
     ) -> List[Episode]:
         query = "SELECT * FROM episodes_v2 WHERE 1=1"
         params: list = []
@@ -192,10 +238,10 @@ class EpisodicStoreBackend:
         rows = self._conn.execute(query, params).fetchall()
         return [self._row_to_episode(r) for r in rows]
 
-    async def ep_get_success_rate(
+    def _sync_get_success_rate(
         self,
-        agent_id: Optional[str] = None,
-        episode_type: Optional[EpisodeType] = None,
+        agent_id: Optional[str],
+        episode_type: Optional[EpisodeType],
     ) -> float:
         query = "SELECT AVG(CAST(success AS FLOAT)) as rate FROM episodes_v2 WHERE 1=1"
         params: list = []

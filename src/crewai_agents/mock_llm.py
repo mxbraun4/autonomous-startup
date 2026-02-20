@@ -73,20 +73,8 @@ class DeterministicMockLLM(BaseLLM):
 
     def _build_structured_response(self, response_model: Any) -> str:
         """Build a JSON string that satisfies *response_model* (Pydantic)."""
-        try:
-            # Use model's own defaults by constructing a default instance.
-            instance = response_model()
-            return instance.model_dump_json()
-        except Exception:
-            # Fallback: build field-by-field
-            try:
-                fields = response_model.model_fields
-                payload: dict[str, Any] = {}
-                for name, finfo in fields.items():
-                    payload[name] = self._default_for_field(finfo)
-                return json.dumps(payload)
-            except Exception:
-                return "{}"
+        instance = response_model()
+        return instance.model_dump_json()
 
     @staticmethod
     def _try_build_json_from_prompt(text: str) -> str | None:

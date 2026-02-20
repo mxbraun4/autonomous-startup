@@ -140,7 +140,7 @@ The CrewAI simulation remains the default runnable path. Framework modules are a
 Strategic Coordinator (manager)
     |
     |-> Data Strategy Expert
-    |       |-> scraper_tool
+    |       |-> get_startups_tool
     |       |-> data_validator_tool
     |
     |-> Product Strategy Expert
@@ -271,8 +271,10 @@ MOCK_MODE=true
 LOG_LEVEL=INFO
 
 # Paths (auto-configured, override if needed)
-EPISODIC_DB_PATH=data/memory/episodic.db
-PROCEDURAL_JSON_PATH=data/memory/workflows.json
+MEMORY_DATA_DIR=data/memory
+MEMORY_EMBEDDING_MODEL=default
+MEMORY_WM_DECAY_RATE=0.95
+MEMORY_WM_DEFAULT_MAX_TOKENS=4000
 CREWAI_LOCAL_APPDATA_DIR=data/crewai_local
 CREWAI_DB_STORAGE_DIR=data/crewai_storage
 CREWAI_STORAGE_NAMESPACE=autonomous-startup

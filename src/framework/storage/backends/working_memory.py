@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -18,54 +19,64 @@ _CHARS_PER_TOKEN = 4
 
 
 class WorkingMemoryBackend:
-    """Per-agent in-memory store with time-decay relevance and TTL eviction."""
+    """Per-agent in-memory store with time-decay relevance and TTL eviction.
+
+    All public methods are protected by a reentrant lock so the store is
+    safe to use from CrewAI worker threads (``asyncio.to_thread``).
+    """
 
     def __init__(self, decay_rate: float = 0.95):
         # agent_id -> { entity_id -> WorkingMemoryItem }
         self._store: Dict[str, Dict[str, WorkingMemoryItem]] = {}
         self._decay_rate = decay_rate
+        self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # CRUD
     # ------------------------------------------------------------------
 
     def put(self, item: WorkingMemoryItem) -> str:
-        bucket = self._store.setdefault(item.agent_id, {})
-        bucket[item.entity_id] = item
-        return item.entity_id
+        with self._lock:
+            bucket = self._store.setdefault(item.agent_id, {})
+            bucket[item.entity_id] = item
+            return item.entity_id
 
     def get(self, agent_id: str, entity_id: str) -> Optional[WorkingMemoryItem]:
-        bucket = self._store.get(agent_id, {})
-        item = bucket.get(entity_id)
-        if item is None:
-            return None
-        if self._is_expired(item):
-            del bucket[entity_id]
-            return None
-        return item
+        with self._lock:
+            bucket = self._store.get(agent_id, {})
+            item = bucket.get(entity_id)
+            if item is None:
+                return None
+            if self._is_expired(item):
+                del bucket[entity_id]
+                return None
+            return item
 
     def list_items(
         self,
         agent_id: str,
         item_type: Optional[ItemType] = None,
     ) -> List[WorkingMemoryItem]:
-        self._evict_expired(agent_id)
-        bucket = self._store.get(agent_id, {})
-        items = list(bucket.values())
-        if item_type is not None:
-            items = [i for i in items if i.item_type == item_type]
-        return items
+        with self._lock:
+            self._evict_expired(agent_id)
+            bucket = self._store.get(agent_id, {})
+            items = list(bucket.values())
+            if item_type is not None:
+                items = [i for i in items if i.item_type == item_type]
+            return items
 
     def remove(self, agent_id: str, entity_id: str) -> bool:
-        bucket = self._store.get(agent_id, {})
-        if entity_id in bucket:
-            del bucket[entity_id]
-            return True
-        return False
+        with self._lock:
+            bucket = self._store.get(agent_id, {})
+            if entity_id in bucket:
+                del bucket[entity_id]
+                return True
+            return False
 
     def clear(self, agent_id: str) -> int:
-        bucket = self._store.pop(agent_id, {})
-        return len(bucket)
+        with self._lock:
+            bucket = self._store.pop(agent_id, {})
+            return len(bucket)
 
     # ------------------------------------------------------------------
     # Relevance scoring
@@ -89,38 +100,40 @@ class WorkingMemoryBackend:
         Uses a greedy approach: sort by effective relevance descending,
         append items until the token budget is exhausted.
         """
-        self._evict_expired(agent_id)
-        bucket = self._store.get(agent_id, {})
-        if not bucket:
-            return ""
+        with self._lock:
+            self._evict_expired(agent_id)
+            bucket = self._store.get(agent_id, {})
+            if not bucket:
+                return ""
 
-        scored = [
-            (self.effective_relevance(item), item) for item in bucket.values()
-        ]
-        scored.sort(key=lambda t: t[0], reverse=True)
+            scored = [
+                (self.effective_relevance(item), item) for item in bucket.values()
+            ]
+            scored.sort(key=lambda t: t[0], reverse=True)
 
-        max_chars = max_tokens * _CHARS_PER_TOKEN
-        parts: List[str] = []
-        used = 0
+            max_chars = max_tokens * _CHARS_PER_TOKEN
+            parts: List[str] = []
+            used = 0
 
-        for _score, item in scored:
-            line = self._format_item(item)
-            length = len(line)
-            if used + length > max_chars:
-                break
-            parts.append(line)
-            used += length
+            for _score, item in scored:
+                line = self._format_item(item)
+                length = len(line)
+                if used + length > max_chars:
+                    break
+                parts.append(line)
+                used += length
 
-        return "\n".join(parts)
+            return "\n".join(parts)
 
     # ------------------------------------------------------------------
     # Checkpoint support
     # ------------------------------------------------------------------
 
     def save_checkpoint(self, path: str) -> None:
-        data: Dict[str, list] = {}
-        for agent_id, bucket in self._store.items():
-            data[agent_id] = [item.model_dump(mode="json") for item in bucket.values()]
+        with self._lock:
+            data: Dict[str, list] = {}
+            for agent_id, bucket in self._store.items():
+                data[agent_id] = [item.model_dump(mode="json") for item in bucket.values()]
         with open(path, "w") as f:
             json.dump(data, f, default=str)
         logger.info(f"Working memory checkpoint saved to {path}")
@@ -128,13 +141,14 @@ class WorkingMemoryBackend:
     def load_checkpoint(self, path: str) -> None:
         with open(path, "r") as f:
             data = json.load(f)
-        self._store.clear()
-        for agent_id, items_data in data.items():
-            bucket: Dict[str, WorkingMemoryItem] = {}
-            for raw in items_data:
-                item = WorkingMemoryItem.model_validate(raw)
-                bucket[item.entity_id] = item
-            self._store[agent_id] = bucket
+        with self._lock:
+            self._store.clear()
+            for agent_id, items_data in data.items():
+                bucket: Dict[str, WorkingMemoryItem] = {}
+                for raw in items_data:
+                    item = WorkingMemoryItem.model_validate(raw)
+                    bucket[item.entity_id] = item
+                self._store[agent_id] = bucket
         logger.info(f"Working memory checkpoint loaded from {path}")
 
     # ------------------------------------------------------------------
