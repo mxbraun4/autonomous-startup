@@ -31,7 +31,7 @@ except Exception as e:
 print("\nTest 2: Importing tools...")
 try:
     from src.crewai_agents.tools import (
-        scraper_tool,
+        get_startups_tool,
         content_generator_tool,
         tool_builder_tool
     )
@@ -84,19 +84,14 @@ except Exception as e:
 print("\nTest 6: Testing tool execution...")
 try:
     import json
-    from src.crewai_agents.tools import scraper_tool
+    from src.crewai_agents.tools import get_startups_tool
 
-    # Execute scraper tool
-    result_json = scraper_tool.run(sector="fintech", stage="all")
+    result_json = get_startups_tool.run(sector="fintech", stage="all")
     result = json.loads(result_json)
 
-    # Database may be empty, so both statuses are valid
-    assert result['status'] in ('success', 'empty'), "Unexpected scraper status"
-    if result['status'] == 'success':
-        assert result['sector'] == 'fintech', "Should return correct sector"
-        print(f"  [OK] Scraper tool executed: collected {result['count']} startups")
-    else:
-        print("  [OK] Scraper tool executed: database currently empty (expected on fresh setup)")
+    assert result['status'] == 'success', "Unexpected status"
+    assert result['sector'] == 'fintech', "Should return correct sector"
+    print(f"  [OK] get_startups_tool executed: found {result['count']} startups")
 
     # Execute content generator
     from src.crewai_agents.tools import content_generator_tool

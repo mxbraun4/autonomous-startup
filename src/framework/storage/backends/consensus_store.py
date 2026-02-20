@@ -6,6 +6,7 @@ workflow for gated writes on decisions and strategies.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sqlite3
@@ -27,6 +28,14 @@ class ConsensusStoreBackend:
         self._conn.row_factory = sqlite3.Row
         self._init_schema()
         logger.info(f"ConsensusStoreBackend initialised (db={db_path})")
+
+    def close(self) -> None:
+        """Close the SQLite connection (idempotent)."""
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            finally:
+                self._conn = None
 
     def _init_schema(self) -> None:
         self._conn.executescript("""
@@ -64,10 +73,42 @@ class ConsensusStoreBackend:
     async def cons_set(self, entry: ConsensusEntry) -> str:
         """Set (approve immediately) a consensus entry.  Supersedes any
         existing approved entry for the same key."""
+        return await asyncio.to_thread(self._sync_set, entry)
+
+    async def cons_get(self, key: str) -> Optional[ConsensusEntry]:
+        return await asyncio.to_thread(self._sync_get, key)
+
+    async def cons_propose(self, entry: ConsensusEntry) -> str:
+        return await asyncio.to_thread(self._sync_propose, entry)
+
+    async def cons_approve(self, entity_id: str) -> bool:
+        return await asyncio.to_thread(self._sync_approve, entity_id)
+
+    async def cons_list(
+        self,
+        prefix: Optional[str] = None,
+        entry_type: Optional[EntryType] = None,
+    ) -> List[ConsensusEntry]:
+        return await asyncio.to_thread(self._sync_list, prefix, entry_type)
+
+    async def cons_history(self, key: str) -> List[ConsensusEntry]:
+        return await asyncio.to_thread(self._sync_history, key)
+
+    # ------------------------------------------------------------------
+    # Synchronous helpers (run via asyncio.to_thread)
+    # ------------------------------------------------------------------
+
+    def _sync_get(self, key: str) -> Optional[ConsensusEntry]:
+        row = self._conn.execute(
+            "SELECT * FROM consensus_entries WHERE key = ? AND consensus_status = ? ORDER BY timestamp_utc DESC LIMIT 1",
+            (key, ConsensusStatus.APPROVED.value),
+        ).fetchone()
+        return self._row_to_entry(row) if row else None
+
+    def _sync_set(self, entry: ConsensusEntry) -> str:
         entry.consensus_status = ConsensusStatus.APPROVED
 
-        # Mark old approved entry as superseded
-        old = await self.cons_get(entry.key)
+        old = self._sync_get(entry.key)
         if old is not None:
             self._conn.execute(
                 "UPDATE consensus_entries SET consensus_status = ? WHERE entity_id = ?",
@@ -78,19 +119,12 @@ class ConsensusStoreBackend:
         self._upsert(entry)
         return entry.entity_id
 
-    async def cons_get(self, key: str) -> Optional[ConsensusEntry]:
-        row = self._conn.execute(
-            "SELECT * FROM consensus_entries WHERE key = ? AND consensus_status = ? ORDER BY timestamp_utc DESC LIMIT 1",
-            (key, ConsensusStatus.APPROVED.value),
-        ).fetchone()
-        return self._row_to_entry(row) if row else None
-
-    async def cons_propose(self, entry: ConsensusEntry) -> str:
+    def _sync_propose(self, entry: ConsensusEntry) -> str:
         entry.consensus_status = ConsensusStatus.PROPOSED
         self._upsert(entry)
         return entry.entity_id
 
-    async def cons_approve(self, entity_id: str) -> bool:
+    def _sync_approve(self, entity_id: str) -> bool:
         row = self._conn.execute(
             "SELECT * FROM consensus_entries WHERE entity_id = ?",
             (entity_id,),
@@ -100,8 +134,7 @@ class ConsensusStoreBackend:
 
         entry = self._row_to_entry(row)
 
-        # Mark previous approved entry for this key as superseded
-        old = await self.cons_get(entry.key)
+        old = self._sync_get(entry.key)
         if old is not None and old.entity_id != entity_id:
             self._conn.execute(
                 "UPDATE consensus_entries SET consensus_status = ? WHERE entity_id = ?",
@@ -115,7 +148,7 @@ class ConsensusStoreBackend:
         self._conn.commit()
         return True
 
-    async def cons_list(
+    def _sync_list(
         self,
         prefix: Optional[str] = None,
         entry_type: Optional[EntryType] = None,
@@ -134,7 +167,7 @@ class ConsensusStoreBackend:
         rows = self._conn.execute(query, params).fetchall()
         return [self._row_to_entry(r) for r in rows]
 
-    async def cons_history(self, key: str) -> List[ConsensusEntry]:
+    def _sync_history(self, key: str) -> List[ConsensusEntry]:
         rows = self._conn.execute(
             "SELECT * FROM consensus_entries WHERE key = ? ORDER BY timestamp_utc",
             (key,),

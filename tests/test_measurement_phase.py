@@ -30,8 +30,12 @@ def test_collect_measure_metrics_prefers_outreach_logs(monkeypatch):
     assert result["meeting_rate"] == 0.25
 
 
-def test_collect_measure_metrics_falls_back_to_predicted_rates(monkeypatch):
-    """When no logs exist, parse predicted rates from build output text."""
+def test_collect_measure_metrics_returns_no_signal_when_no_logs(monkeypatch):
+    """When no logs exist, return zero metrics with 'no_signal' source.
+
+    Agent-predicted rates in build output text are NOT used as measurements
+    because that would be self-referential (predictions != measurements).
+    """
 
     class FakeDB:
         def get_outreach_history(self, campaign_id=None, limit=500):
@@ -46,13 +50,13 @@ def test_collect_measure_metrics_falls_back_to_predicted_rates(monkeypatch):
     """
     result = crews._collect_measure_metrics(1, build_result_text=build_output)
 
-    assert result["measurement_source"] == "build_output_prediction"
+    assert result["measurement_source"] == "no_signal"
     assert result["campaign_id"] == "iteration_1"
     assert result["total_sent"] == 0
     assert result["responses"] == 0
     assert result["meetings"] == 0
-    assert result["response_rate"] == 0.35
-    assert result["meeting_rate"] == 0.12
+    assert result["response_rate"] == 0.0
+    assert result["meeting_rate"] == 0.0
 
 
 def test_collect_measure_metrics_handles_no_signal(monkeypatch):

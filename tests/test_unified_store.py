@@ -1,6 +1,5 @@
-"""Tests for UnifiedStore with legacy adapters: CRUD across all 5 memory types."""
+"""Tests for UnifiedStore CRUD across all 5 memory types."""
 
-import asyncio
 import pytest
 
 from src.framework.contracts import (
@@ -19,14 +18,14 @@ from src.framework.types import (
 
 
 @pytest.fixture
-def legacy_store(tmp_path):
-    """Create a UnifiedStore with legacy adapters in a temp directory."""
-    return UnifiedStore(use_legacy_stores=True, data_dir=str(tmp_path))
+def store(tmp_path):
+    """Create a UnifiedStore in a temp directory."""
+    return UnifiedStore(data_dir=str(tmp_path))
 
 
 @pytest.fixture
-def sync_store(legacy_store):
-    return SyncUnifiedStore(legacy_store)
+def sync_store(store):
+    return SyncUnifiedStore(store)
 
 
 # -----------------------------------------------------------------------
@@ -66,7 +65,7 @@ class TestWorkingMemory:
 
 
 # -----------------------------------------------------------------------
-# Semantic Memory (Legacy)
+# Semantic Memory
 # -----------------------------------------------------------------------
 
 class TestSemanticMemory:
@@ -96,7 +95,7 @@ class TestSemanticMemory:
 
 
 # -----------------------------------------------------------------------
-# Episodic Memory (Legacy)
+# Episodic Memory
 # -----------------------------------------------------------------------
 
 class TestEpisodicMemory:
@@ -131,7 +130,7 @@ class TestEpisodicMemory:
 
 
 # -----------------------------------------------------------------------
-# Procedural Memory (Legacy)
+# Procedural Memory
 # -----------------------------------------------------------------------
 
 class TestProceduralMemory:

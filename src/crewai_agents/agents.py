@@ -1,6 +1,6 @@
 """CrewAI Agents - Convert our Planners to Agents."""
 
-from typing import Optional, List
+from typing import Optional
 
 from src.crewai_agents.runtime_env import configure_runtime_environment
 from src.utils.config import settings
@@ -24,7 +24,6 @@ from src.crewai_agents.tools import (
     get_outreach_history,
     record_outreach_response,
     # Analysis tools
-    scraper_tool,
     data_validator_tool,
     content_generator_tool,
     tool_builder_tool,
@@ -45,27 +44,23 @@ def get_llm() -> LLM | DeterministicMockLLM:
         LLM instance (uses fake LLM in mock mode)
     """
     if settings.mock_mode:
-        # Fully local deterministic model; no network/API dependency.
         return DeterministicMockLLM()
 
-    # Use Anthropic Claude as primary
     if settings.anthropic_api_key:
         return LLM(
-            model="anthropic/claude-3-haiku-20240307",
-            api_key=settings.anthropic_api_key
+            model=settings.anthropic_model,
+            api_key=settings.anthropic_api_key,
         )
 
-    # Fallback to OpenAI
     if settings.openai_api_key:
         return LLM(
-            model="gpt-4o-mini",
-            api_key=settings.openai_api_key
+            model=settings.openai_model,
+            api_key=settings.openai_api_key,
         )
 
-    logger.warning(
-        "No API keys configured with MOCK_MODE=false; falling back to deterministic mock LLM."
+    raise RuntimeError(
+        "No LLM configured: set MOCK_MODE=true or provide ANTHROPIC_API_KEY / OPENAI_API_KEY"
     )
-    return DeterministicMockLLM()
 
 
 def create_master_coordinator(llm: LLM = None) -> Agent:
@@ -232,20 +227,3 @@ def create_outreach_strategist(llm: LLM = None) -> Agent:
         allow_delegation=True,
         memory=True  # Critical: remembers past campaign results
     )
-
-
-def create_all_agents(llm: Optional[LLM] = None) -> dict:
-    """Create all agents.
-
-    Args:
-        llm: LLM instance to use for all agents
-
-    Returns:
-        Dict mapping agent names to agent instances
-    """
-    return {
-        'coordinator': create_master_coordinator(llm),
-        'data_strategist': create_data_strategist(llm),
-        'product_strategist': create_product_strategist(llm),
-        'outreach_strategist': create_outreach_strategist(llm)
-    }

@@ -7,6 +7,8 @@ via ``asyncio.run()`` (or a private event loop if one is already running).
 from __future__ import annotations
 
 import asyncio
+import atexit
+import concurrent.futures
 from typing import Any, Dict, List, Optional
 
 from src.framework.contracts import (
@@ -19,12 +21,34 @@ from src.framework.contracts import (
 from src.framework.storage.unified_store import UnifiedStore
 from src.framework.types import EntryType, EpisodeType, ItemType
 
+# Module-level pool reused across all _run() calls when an event loop is
+# already running.  Lazily initialised; cleaned up via atexit.
+_FALLBACK_POOL: Optional[concurrent.futures.ThreadPoolExecutor] = None
+
+
+def _get_fallback_pool() -> concurrent.futures.ThreadPoolExecutor:
+    global _FALLBACK_POOL
+    if _FALLBACK_POOL is None:
+        _FALLBACK_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    return _FALLBACK_POOL
+
+
+def _shutdown_pool() -> None:
+    global _FALLBACK_POOL
+    if _FALLBACK_POOL is not None:
+        _FALLBACK_POOL.shutdown(wait=False)
+        _FALLBACK_POOL = None
+
+
+atexit.register(_shutdown_pool)
+
 
 def _run(coro):  # type: ignore[no-untyped-def]
     """Run an async coroutine from synchronous code.
 
-    Uses ``asyncio.run()`` when no loop is running, otherwise spins up a
-    background thread with its own loop so we never nest ``run()``.
+    Uses ``asyncio.run()`` when no loop is running, otherwise dispatches
+    to a cached background thread with its own loop so we never nest
+    ``run()``.
     """
     try:
         loop = asyncio.get_running_loop()
@@ -35,12 +59,8 @@ def _run(coro):  # type: ignore[no-untyped-def]
         return asyncio.run(coro)
 
     # An event loop is already running (e.g. Jupyter / some frameworks).
-    # Use a new loop in a thread.
-    import concurrent.futures
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(asyncio.run, coro)
-        return future.result()
+    future = _get_fallback_pool().submit(asyncio.run, coro)
+    return future.result()
 
 
 class SyncUnifiedStore:
@@ -56,6 +76,18 @@ class SyncUnifiedStore:
     def async_store(self) -> UnifiedStore:
         """Access the underlying async store if needed."""
         return self._store
+
+    # -- context-manager & cleanup ------------------------------------------
+
+    def close(self) -> None:
+        """Close the underlying async store (idempotent)."""
+        self._store.close()
+
+    def __enter__(self) -> "SyncUnifiedStore":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
 
     # ------------------------------------------------------------------
     # Lifecycle

@@ -1,11 +1,10 @@
 """CrewAI Crews - Orchestration of agents and tasks.
 
-Provides both the legacy ``run_build_measure_learn_cycle`` function and the
-new ``BuildMeasureLearnFlow`` (CrewAI Flows) for typed, event-driven BML
+Provides both the public ``run_build_measure_learn_cycle`` function and the
+``BuildMeasureLearnFlow`` (CrewAI Flows) for typed, event-driven BML
 execution with evaluation gates and learning feedback.
 """
 
-import re
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -23,21 +22,12 @@ from crewai.flow.flow import Flow, start, listen, router
 # internal kickoff_task_outputs.db doesn't land in a read-only system folder.
 def _patch_crewai_db_storage_path() -> None:
     from pathlib import Path
+    from crewai.utilities import paths as crewai_paths
 
     storage_path = crewai_db_storage_path()
     Path(storage_path).mkdir(parents=True, exist_ok=True)
 
-    try:
-        from crewai.utilities import paths as crewai_paths
-        crewai_paths.db_storage_path = lambda: storage_path  # type: ignore[attr-defined]
-    except Exception:
-        pass
-
-    try:
-        from crewai.memory.storage import kickoff_task_outputs_storage
-        kickoff_task_outputs_storage.db_storage_path = lambda: storage_path  # type: ignore[attr-defined]
-    except Exception:
-        pass
+    crewai_paths.db_storage_path = lambda: storage_path  # type: ignore[attr-defined]
 
 _patch_crewai_db_storage_path()
 
@@ -106,44 +96,8 @@ def _campaign_id_for_iteration(iteration: int) -> str:
     return f"iteration_{iteration}"
 
 
-def _normalize_rate(raw_value: float, has_percent_symbol: bool = False) -> float:
-    """Normalize rate-like values to [0.0, 1.0]."""
-    if has_percent_symbol or raw_value > 1.0:
-        raw_value = raw_value / 100.0
-    return max(0.0, min(raw_value, 1.0))
-
-
-def _extract_rate(text: str, prefix: str) -> Optional[float]:
-    """Extract a response/meeting rate from free-form text."""
-    pattern = re.compile(
-        rf"{prefix}[_\s-]*rate[^0-9]*(\d+(?:\.\d+)?)\s*(%)?",
-        flags=re.IGNORECASE,
-    )
-    match = pattern.search(text)
-    if match is None:
-        return None
-
-    raw_value = float(match.group(1))
-    has_percent_symbol = bool(match.group(2))
-    return _normalize_rate(raw_value, has_percent_symbol)
-
-
-def _extract_predicted_rates(build_result_text: str) -> Dict[str, Any]:
-    """Fallback when no outreach logs exist.
-
-    Returns zero-valued metrics with ``measurement_source='no_signal'``.
-    We intentionally do NOT parse agent text for predicted rates because
-    that would be self-referential: an agent's guess is not a measurement.
-    """
-    return {
-        "response_rate": 0.0,
-        "meeting_rate": 0.0,
-        "measurement_source": "no_signal",
-    }
-
-
 def _collect_measure_metrics(iteration: int, build_result_text: str) -> Dict[str, Any]:
-    """Collect MEASURE metrics from logged outreach, with deterministic fallback."""
+    """Collect MEASURE metrics from logged outreach records."""
     from src.crewai_agents.tools import get_database
 
     campaign_id = _campaign_id_for_iteration(iteration)
@@ -168,27 +122,15 @@ def _collect_measure_metrics(iteration: int, build_result_text: str) -> Dict[str
         1 for record in history if str(record.get("status", "")).lower() in meeting_statuses
     )
 
-    if total_sent > 0:
-        return {
-            "response_rate": responses / total_sent,
-            "meeting_rate": meetings / total_sent,
-            "total_sent": total_sent,
-            "responses": responses,
-            "meetings": meetings,
-            "campaign_id": campaign_id,
-            "measurement_source": "outreach_logs",
-        }
-
-    fallback = _extract_predicted_rates(build_result_text)
-    fallback.update(
-        {
-            "total_sent": 0,
-            "responses": 0,
-            "meetings": 0,
-            "campaign_id": campaign_id,
-        }
-    )
-    return fallback
+    return {
+        "response_rate": responses / total_sent if total_sent else 0.0,
+        "meeting_rate": meetings / total_sent if total_sent else 0.0,
+        "total_sent": total_sent,
+        "responses": responses,
+        "meetings": meetings,
+        "campaign_id": campaign_id,
+        "measurement_source": "outreach_logs" if total_sent else "no_signal",
+    }
 
 
 def create_build_phase_tasks(
@@ -220,7 +162,7 @@ def create_build_phase_tasks(
            - Current coverage percentage
            - Business impact
         4. For the highest priority gap:
-           - Use scraper_tool to collect startup data for that sector
+           - Use get_startups_tool to review startup data for that sector
            - Use data_validator_tool to ensure quality
         5. Report results with metrics (gap identified, data collected, quality score)
 
@@ -333,7 +275,7 @@ def create_learn_phase_task(coordinator, build_results: str, measure_results: st
 
 
 def _verbose_flag(verbose: int) -> bool:
-    """Convert legacy integer verbosity to CrewAI v1.9 boolean flag."""
+    """Convert integer verbosity to CrewAI v1.9 boolean flag."""
     return verbose > 0
 
 
@@ -388,7 +330,7 @@ def run_build_measure_learn_cycle(
     iterations: int = 3,
     verbose: int = 2,
 ) -> Dict[str, Any]:
-    """Run multiple Build-Measure-Learn iterations (legacy compatibility path).
+    """Run multiple Build-Measure-Learn iterations.
 
     Delegates to :class:`BuildMeasureLearnFlow` which provides typed state
     passing between phases, evaluation-gate routing, and learning feedback.
@@ -723,7 +665,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         *N* feed into iteration *N+1* via ``procedure_hints``.
 
         Returns:
-            Aggregated results dict compatible with the legacy interface.
+            Aggregated results dict matching the existing public interface.
         """
         for _ in range(self.state.max_iterations):
             self.kickoff()

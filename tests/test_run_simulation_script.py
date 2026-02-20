@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 import scripts.run_simulation as run_simulation
-from scripts.run_simulation import _percentage_change, _resolve_non_legacy_memory_dir
+from scripts.run_simulation import _percentage_change
 
 
 def test_percentage_change_with_zero_baseline():
@@ -16,46 +16,29 @@ def test_percentage_change_with_nonzero_baseline():
     assert _percentage_change(0.20, 0.30) == pytest.approx(50.0)
 
 
-def test_resolve_non_legacy_memory_dir_prefers_writable_dir(tmp_path):
-    preferred = tmp_path / "memory"
-    resolved = _resolve_non_legacy_memory_dir(str(preferred))
-    assert Path(resolved) == preferred.resolve()
+def test_init_memory_store_uses_configured_data_dir(monkeypatch, tmp_path):
+    calls = {}
 
+    class DummyUnifiedStore:
+        def __init__(self, data_dir: str):
+            calls["data_dir"] = data_dir
 
-def test_resolve_non_legacy_memory_dir_uses_runtime_fallback(monkeypatch, tmp_path):
-    preferred = tmp_path / "memory"
-    preferred_resolved = preferred.resolve()
-    fallback_resolved = (preferred_resolved.parent / f"{preferred_resolved.name}_runtime").resolve()
+    class DummySyncStore:
+        def __init__(self, store):
+            calls["store"] = store
 
-    def fake_is_writable_directory(path: Path) -> bool:
-        resolved = Path(path).resolve()
-        return resolved in {
-            fallback_resolved,
-            (fallback_resolved / "chroma").resolve(),
-        }
+    monkeypatch.setattr("src.utils.config.settings.memory_data_dir", str(tmp_path / "memory"))
 
-    monkeypatch.setattr(
-        run_simulation,
-        "_is_writable_directory",
-        fake_is_writable_directory,
-    )
+    import src.framework.storage.unified_store as unified_store_module
+    import src.framework.storage.sync_wrapper as sync_wrapper_module
+    import src.crewai_agents.tools as tools_module
 
-    resolved = _resolve_non_legacy_memory_dir(str(preferred))
-    assert Path(resolved) == fallback_resolved
+    monkeypatch.setattr(unified_store_module, "UnifiedStore", DummyUnifiedStore)
+    monkeypatch.setattr(sync_wrapper_module, "SyncUnifiedStore", DummySyncStore)
 
+    injected = {}
+    monkeypatch.setattr(tools_module, "set_memory_store", lambda store: injected.setdefault("store", store))
 
-def test_resolve_non_legacy_memory_dir_raises_when_all_candidates_unwritable(monkeypatch):
-    monkeypatch.setattr(
-        run_simulation,
-        "_is_writable_directory",
-        lambda _path: False,
-    )
-
-    with pytest.raises(RuntimeError, match="No writable non-legacy memory directory available"):
-        _resolve_non_legacy_memory_dir("data/memory")
-
-
-def test_init_memory_store_rejects_legacy_mode(monkeypatch):
-    monkeypatch.setattr(run_simulation.settings, "memory_use_legacy", True)
-    with pytest.raises(RuntimeError, match="Legacy memory mode is disabled"):
-        run_simulation._init_memory_store()
+    result = run_simulation._init_memory_store()
+    assert Path(calls["data_dir"]) == (tmp_path / "memory").resolve()
+    assert injected["store"] is result

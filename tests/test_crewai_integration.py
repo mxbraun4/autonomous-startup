@@ -20,7 +20,7 @@ def test_crewai_imports():
 def test_tools_creation():
     """Test that tools can be created."""
     from src.crewai_agents.tools import (
-        scraper_tool,
+        get_startups_tool,
         content_generator_tool,
         tool_builder_tool,
         data_validator_tool,
@@ -28,29 +28,26 @@ def test_tools_creation():
     )
 
     # CrewAI @tool decorator produces Tool objects with a .run() method
-    for t in [scraper_tool, content_generator_tool, tool_builder_tool,
+    for t in [get_startups_tool, content_generator_tool, tool_builder_tool,
               data_validator_tool, analytics_tool]:
         assert hasattr(t, "run"), f"{t} missing .run() method"
 
 
-def test_scraper_tool_execution():
-    """Test scraper tool can execute."""
+def test_get_startups_tool_execution():
+    """Test get_startups_tool can execute."""
     import json
-    from src.crewai_agents.tools import scraper_tool
+    from src.crewai_agents.tools import get_startups_tool
 
     # CrewAI tools are invoked via .run()
-    result_json = scraper_tool.run(sector="fintech", stage="seed")
+    result_json = get_startups_tool.run(sector="fintech", stage="seed")
 
-    # Parse result
     result = json.loads(result_json)
 
-    # Database may be empty on first run, so accept either status
-    assert result['status'] in ('success', 'empty')
-    if result['status'] == 'success':
-        assert result['sector'] == 'fintech'
-        assert result['stage'] == 'seed'
-        assert 'count' in result
-        assert 'startups' in result
+    assert result['status'] == 'success'
+    assert result['sector'] == 'fintech'
+    assert result['stage'] == 'seed'
+    assert 'count' in result
+    assert 'startups' in result
 
 
 def test_content_generator_tool():
