@@ -27,6 +27,9 @@ from src.crewai_agents.tools import (
     data_validator_tool,
     content_generator_tool,
     tool_builder_tool,
+    register_dynamic_tool,
+    list_dynamic_tools,
+    execute_dynamic_tool,
     analytics_tool,
     # Consensus memory tools
     share_insight,
@@ -35,6 +38,13 @@ from src.crewai_agents.tools import (
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _with_prompt_override(backstory: str, prompt_override: Optional[str]) -> str:
+    override = str(prompt_override or "").strip()
+    if not override:
+        return backstory
+    return f"{backstory}\n\nAutonomous prompt refinement:\n- {override}"
 
 
 def get_llm() -> LLM | DeterministicMockLLM:
@@ -63,7 +73,10 @@ def get_llm() -> LLM | DeterministicMockLLM:
     )
 
 
-def create_master_coordinator(llm: LLM = None) -> Agent:
+def create_master_coordinator(
+    llm: LLM = None,
+    prompt_override: Optional[str] = None,
+) -> Agent:
     """Create the Master Coordinator agent.
 
     This agent orchestrates the Build-Measure-Learn cycle and delegates
@@ -75,10 +88,8 @@ def create_master_coordinator(llm: LLM = None) -> Agent:
     Returns:
         Master Coordinator agent
     """
-    return Agent(
-        role='Strategic Coordinator',
-        goal='Execute Build-Measure-Learn cycles to continuously improve the startup-VC matching platform',
-        backstory='''You are an experienced startup ecosystem operator who has built and scaled
+    backstory = _with_prompt_override(
+        '''You are an experienced startup ecosystem operator who has built and scaled
         multiple platforms connecting startups with investors. You understand the importance of
         data quality, product innovation, and effective outreach. You coordinate specialized teams
         to execute on strategy, measure results, and adapt based on learnings.
@@ -89,6 +100,13 @@ def create_master_coordinator(llm: LLM = None) -> Agent:
         - Delegate to specialists (data, product, outreach) while maintaining strategic oversight
         - Synthesize results and extract learnings to improve next iteration
         ''',
+        prompt_override,
+    )
+
+    return Agent(
+        role='Strategic Coordinator',
+        goal='Execute Build-Measure-Learn cycles to continuously improve the startup-VC matching platform',
+        backstory=backstory,
         llm=llm or get_llm(),
         verbose=True,
         allow_delegation=True,
@@ -96,7 +114,10 @@ def create_master_coordinator(llm: LLM = None) -> Agent:
     )
 
 
-def create_data_strategist(llm: LLM = None) -> Agent:
+def create_data_strategist(
+    llm: LLM = None,
+    prompt_override: Optional[str] = None,
+) -> Agent:
     """Create the Data Strategy Expert agent.
 
     This agent identifies data gaps and coordinates data collection efforts.
@@ -107,10 +128,8 @@ def create_data_strategist(llm: LLM = None) -> Agent:
     Returns:
         Data Strategist agent
     """
-    return Agent(
-        role='Data Strategy Expert',
-        goal='Maintain comprehensive, high-quality startup and VC data with zero critical gaps',
-        backstory='''You are an expert in data quality, coverage analysis, and gap identification.
+    backstory = _with_prompt_override(
+        '''You are an expert in data quality, coverage analysis, and gap identification.
         You can quickly spot where data is missing or outdated by comparing current coverage
         against VC investment preferences and market trends.
 
@@ -128,6 +147,13 @@ def create_data_strategist(llm: LLM = None) -> Agent:
         3. Save found data to database
         4. Validate data quality
         ''',
+        prompt_override,
+    )
+
+    return Agent(
+        role='Data Strategy Expert',
+        goal='Maintain comprehensive, high-quality startup and VC data with zero critical gaps',
+        backstory=backstory,
         tools=[
             web_search_startups,
             web_search_vcs,
@@ -148,7 +174,10 @@ def create_data_strategist(llm: LLM = None) -> Agent:
     )
 
 
-def create_product_strategist(llm: LLM = None) -> Agent:
+def create_product_strategist(
+    llm: LLM = None,
+    prompt_override: Optional[str] = None,
+) -> Agent:
     """Create the Product Strategy Expert agent.
 
     This agent identifies platform needs and coordinates tool building.
@@ -159,10 +188,8 @@ def create_product_strategist(llm: LLM = None) -> Agent:
     Returns:
         Product Strategist agent
     """
-    return Agent(
-        role='Product Strategy Expert',
-        goal='Build tools and features that enhance platform capabilities and user experience',
-        backstory='''You are a product manager with a strong technical background. You identify
+    backstory = _with_prompt_override(
+        '''You are a product manager with a strong technical background. You identify
         user needs by analyzing interaction patterns, feedback, and workflow inefficiencies.
         You excel at translating needs into clear product specifications.
 
@@ -174,7 +201,21 @@ def create_product_strategist(llm: LLM = None) -> Agent:
 
         You use the tool_builder_tool to create specifications for new tools and features.
         ''',
-        tools=[tool_builder_tool, share_insight, get_team_insights],
+        prompt_override,
+    )
+
+    return Agent(
+        role='Product Strategy Expert',
+        goal='Build tools and features that enhance platform capabilities and user experience',
+        backstory=backstory,
+        tools=[
+            tool_builder_tool,
+            register_dynamic_tool,
+            list_dynamic_tools,
+            execute_dynamic_tool,
+            share_insight,
+            get_team_insights,
+        ],
         llm=llm or get_llm(),
         verbose=True,
         allow_delegation=True,
@@ -182,7 +223,10 @@ def create_product_strategist(llm: LLM = None) -> Agent:
     )
 
 
-def create_outreach_strategist(llm: LLM = None) -> Agent:
+def create_outreach_strategist(
+    llm: LLM = None,
+    prompt_override: Optional[str] = None,
+) -> Agent:
     """Create the Outreach Strategy Expert agent.
 
     This agent optimizes outreach campaigns and learns from results.
@@ -193,10 +237,8 @@ def create_outreach_strategist(llm: LLM = None) -> Agent:
     Returns:
         Outreach Strategist agent
     """
-    return Agent(
-        role='Outreach Strategy Expert',
-        goal='Achieve 35%+ response rate on startup outreach campaigns through personalization and learning',
-        backstory='''You are a growth expert specializing in B2B outreach and startup-investor
+    backstory = _with_prompt_override(
+        '''You are a growth expert specializing in B2B outreach and startup-investor
         matchmaking. You understand what makes outreach effective: personalization, timing,
         relevance, and clear value proposition.
 
@@ -211,6 +253,13 @@ def create_outreach_strategist(llm: LLM = None) -> Agent:
         use content_generator_tool to create personalized messages, and use analytics_tool
         to measure campaign performance.
         ''',
+        prompt_override,
+    )
+
+    return Agent(
+        role='Outreach Strategy Expert',
+        goal='Achieve 35%+ response rate on startup outreach campaigns through personalization and learning',
+        backstory=backstory,
         tools=[
             get_startups_tool,
             get_vcs_tool,
@@ -219,6 +268,8 @@ def create_outreach_strategist(llm: LLM = None) -> Agent:
             get_outreach_history,
             record_outreach_response,
             analytics_tool,
+            list_dynamic_tools,
+            execute_dynamic_tool,
             share_insight,
             get_team_insights,
         ],

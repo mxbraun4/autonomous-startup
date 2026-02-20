@@ -24,12 +24,23 @@ def test_tools_creation():
         content_generator_tool,
         tool_builder_tool,
         data_validator_tool,
-        analytics_tool
+        analytics_tool,
+        register_dynamic_tool,
+        list_dynamic_tools,
+        execute_dynamic_tool,
     )
 
     # CrewAI @tool decorator produces Tool objects with a .run() method
-    for t in [get_startups_tool, content_generator_tool, tool_builder_tool,
-              data_validator_tool, analytics_tool]:
+    for t in [
+        get_startups_tool,
+        content_generator_tool,
+        tool_builder_tool,
+        data_validator_tool,
+        analytics_tool,
+        register_dynamic_tool,
+        list_dynamic_tools,
+        execute_dynamic_tool,
+    ]:
         assert hasattr(t, "run"), f"{t} missing .run() method"
 
 

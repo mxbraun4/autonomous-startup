@@ -11,25 +11,14 @@ from pydantic import BaseModel, Field
 
 from src.crewai_agents.runtime_env import (
     configure_runtime_environment,
-    crewai_db_storage_path,
+    patch_crewai_storage_paths,
 )
 
 configure_runtime_environment()
 from crewai import Crew, Task, Process, LLM
 from crewai.flow.flow import Flow, start, listen, router
 
-# Patch DB storage path to project-local writable directory so that CrewAI's
-# internal kickoff_task_outputs.db doesn't land in a read-only system folder.
-def _patch_crewai_db_storage_path() -> None:
-    from pathlib import Path
-    from crewai.utilities import paths as crewai_paths
-
-    storage_path = crewai_db_storage_path()
-    Path(storage_path).mkdir(parents=True, exist_ok=True)
-
-    crewai_paths.db_storage_path = lambda: storage_path  # type: ignore[attr-defined]
-
-_patch_crewai_db_storage_path()
+patch_crewai_storage_paths()
 
 from src.crewai_agents.agents import (
     create_master_coordinator,
@@ -73,6 +62,7 @@ class MeasurementOutput(BaseModel):
     responses: int = 0
     meetings: int = 0
     campaign_id: str = ""
+    campaign_ids: List[str] = Field(default_factory=list)
     measurement_source: str = "no_signal"
     insights: List[str] = Field(default_factory=list)
 
@@ -96,14 +86,44 @@ def _campaign_id_for_iteration(iteration: int) -> str:
     return f"iteration_{iteration}"
 
 
-def _collect_measure_metrics(iteration: int, build_result_text: str) -> Dict[str, Any]:
+def _campaign_ids_for_iteration(
+    iteration: int,
+    shard_count: int = 1,
+) -> List[str]:
+    """Return deterministic campaign ids, sharded when multiple agents run outreach."""
+    shards = max(1, int(shard_count))
+    base = _campaign_id_for_iteration(iteration)
+    if shards == 1:
+        return [base]
+    return [f"{base}_shard_{index}" for index in range(1, shards + 1)]
+
+
+def _collect_measure_metrics(
+    iteration: int,
+    build_result_text: str,
+    campaign_ids: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """Collect MEASURE metrics from logged outreach records."""
+    del build_result_text
     from src.crewai_agents.tools import get_database
 
-    campaign_id = _campaign_id_for_iteration(iteration)
+    ids = [str(item).strip() for item in (campaign_ids or []) if str(item).strip()]
+    if not ids:
+        ids = [_campaign_id_for_iteration(iteration)]
+
     db = get_database()
 
-    history = db.get_outreach_history(campaign_id=campaign_id, limit=500)
+    history: List[Dict[str, Any]] = []
+    seen_rows: set[str] = set()
+    for campaign_id in ids:
+        rows = db.get_outreach_history(campaign_id=campaign_id, limit=500)
+        for row in rows:
+            row_key = str(row.get("id") or row.get("outreach_id") or row)
+            if row_key in seen_rows:
+                continue
+            seen_rows.add(row_key)
+            history.append(row)
+
     total_sent = len(history)
 
     responded_statuses = {
@@ -122,13 +142,15 @@ def _collect_measure_metrics(iteration: int, build_result_text: str) -> Dict[str
         1 for record in history if str(record.get("status", "")).lower() in meeting_statuses
     )
 
+    aggregate_campaign_id = ids[0] if len(ids) == 1 else "multi_campaign"
     return {
         "response_rate": responses / total_sent if total_sent else 0.0,
         "meeting_rate": meetings / total_sent if total_sent else 0.0,
         "total_sent": total_sent,
         "responses": responses,
         "meetings": meetings,
-        "campaign_id": campaign_id,
+        "campaign_id": aggregate_campaign_id,
+        "campaign_ids": ids,
         "measurement_source": "outreach_logs" if total_sent else "no_signal",
     }
 
@@ -136,8 +158,10 @@ def _collect_measure_metrics(iteration: int, build_result_text: str) -> Dict[str
 def create_build_phase_tasks(
     data_strategist,
     product_strategist,
-    outreach_strategist,
-    iteration: int = 1
+    outreach_strategist=None,
+    iteration: int = 1,
+    outreach_agents: Optional[List[Any]] = None,
+    campaign_ids: Optional[List[str]] = None,
 ) -> List[Task]:
     """Create tasks for the BUILD phase.
 
@@ -200,8 +224,29 @@ def create_build_phase_tasks(
         '''
     )
 
-    outreach_task = Task(
-        description=f'''[Iteration {iteration}] Create and execute outreach campaign.
+    outreach_pool = list(outreach_agents or [])
+    if not outreach_pool:
+        if outreach_strategist is None:
+            raise ValueError("outreach_strategist or outreach_agents is required")
+        outreach_pool = [outreach_strategist]
+
+    ids = list(campaign_ids or _campaign_ids_for_iteration(iteration, len(outreach_pool)))
+    if len(ids) < len(outreach_pool):
+        ids.extend(
+            _campaign_ids_for_iteration(iteration, len(outreach_pool))[len(ids):]
+        )
+    ids = ids[: len(outreach_pool)]
+
+    outreach_tasks: List[Task] = []
+    multi_agent = len(outreach_pool) > 1
+    for index, (agent, campaign_id) in enumerate(zip(outreach_pool, ids), start=1):
+        shard_note = (
+            f"\n7. You are outreach shard {index}/{len(outreach_pool)}."
+            if multi_agent
+            else ""
+        )
+        outreach_task = Task(
+            description=f'''[Iteration {iteration}] Create and execute outreach campaign.
 
         Steps:
         1. Review learnings from past campaigns (if any) - what worked, what didn't
@@ -210,9 +255,9 @@ def create_build_phase_tasks(
            - Research recent news/achievements
            - Identify 1-2 matching VCs
            - Use content_generator_tool to create personalized message
-        4. Use send_outreach_email for each message and set campaign_id to "{_campaign_id_for_iteration(iteration)}"
+        4. Use send_outreach_email for each message and set campaign_id to "{campaign_id}"
         5. If any responses are simulated/available, record them using record_outreach_response
-        6. Report on campaign readiness and personalization quality using get_outreach_history for that campaign_id
+        6. Report on campaign readiness and personalization quality using get_outreach_history for that campaign_id{shard_note}
 
         Best practices to apply:
         - Reference specific recent achievements
@@ -220,17 +265,18 @@ def create_build_phase_tasks(
         - Include clear, low-friction call-to-action
         - Mention specific VC matches
         ''',
-        agent=outreach_strategist,
-        expected_output='''Outreach campaign plan including:
+            agent=agent,
+            expected_output='''Outreach campaign plan including:
         - 5 personalized messages (startup name, message text, personalization score)
         - Matched VCs for each startup
         - Campaign quality metrics (avg personalization score, avg word count, outreach_logged_count)
         - Campaign ID used for tracking
         - Predicted response rate based on past learnings (if available)
         '''
-    )
+        )
+        outreach_tasks.append(outreach_task)
 
-    return [data_task, product_task, outreach_task]
+    return [data_task, product_task, *outreach_tasks]
 
 
 def create_learn_phase_task(coordinator, build_results: str, measure_results: str) -> Task:
@@ -362,6 +408,9 @@ class _FlowState(BaseModel):
     max_iterations: int = 3
     verbose: int = 2
     llm: Any = None
+    enable_dynamic_agent_factory: bool = True
+    max_agents_per_cycle: int = 6
+    spawn_outreach_threshold: int = 20
 
     # Per-iteration outputs
     build_result_text: str = ""
@@ -371,6 +420,7 @@ class _FlowState(BaseModel):
     build_failure_count: int = 0
     measure_output: Optional[MeasurementOutput] = None
     learn_output: Optional[LearnPhaseOutput] = None
+    active_campaign_ids: List[str] = Field(default_factory=list)
 
     # Gate recommendation from the EVALUATE phase
     gate_recommendation: str = "continue"  # continue / pause / rollback / stop
@@ -379,6 +429,8 @@ class _FlowState(BaseModel):
     iterations_results: List[Dict[str, Any]] = Field(default_factory=list)
     metrics_evolution: List[Dict[str, Any]] = Field(default_factory=list)
     learnings: List[str] = Field(default_factory=list)
+    prompt_overrides: Dict[str, str] = Field(default_factory=dict)
+    agent_spawn_events: List[Dict[str, Any]] = Field(default_factory=list)
 
     # Learning feedback: procedure hints injected into next BUILD
     procedure_hints: str = ""
@@ -394,11 +446,21 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
     feeding learnings from one iteration into the next.
     """
 
-    def __init__(self, max_iterations: int = 3, verbose: int = 2) -> None:
+    def __init__(
+        self,
+        max_iterations: int = 3,
+        verbose: int = 2,
+        enable_dynamic_agent_factory: bool = True,
+        max_agents_per_cycle: int = 6,
+        spawn_outreach_threshold: int = 20,
+    ) -> None:
         super().__init__(
             max_iterations=max_iterations,
             verbose=verbose,
             llm=get_llm(),
+            enable_dynamic_agent_factory=enable_dynamic_agent_factory,
+            max_agents_per_cycle=max_agents_per_cycle,
+            spawn_outreach_threshold=spawn_outreach_threshold,
         )
 
     # -- helpers ----------------------------------------------------------
@@ -423,6 +485,52 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         from src.framework.learning import PolicyUpdater
         return PolicyUpdater()
 
+    def _prompt_override(self, key: str) -> str:
+        overrides = dict(self.state.prompt_overrides or {})
+        return str(overrides.get(key, "")).strip()
+
+    def _spawn_outreach_agents(self, llm: Any) -> List[Any]:
+        prompt_override = self._prompt_override("outreach")
+        agents = [create_outreach_strategist(llm, prompt_override=prompt_override)]
+
+        if not bool(self.state.enable_dynamic_agent_factory):
+            return agents
+
+        previous_total_sent = 0
+        if self.state.measure_output is not None:
+            try:
+                previous_total_sent = int(self.state.measure_output.total_sent)
+            except (TypeError, ValueError):
+                previous_total_sent = 0
+
+        threshold = max(1, int(self.state.spawn_outreach_threshold))
+        additional_agents = 0
+        if previous_total_sent >= threshold:
+            additional_agents = min(2, previous_total_sent // threshold)
+
+        max_agents_total = max(3, int(self.state.max_agents_per_cycle))
+        max_outreach_agents = max(1, max_agents_total - 2)
+        target_outreach_agents = min(max_outreach_agents, 1 + additional_agents)
+
+        for clone_index in range(2, target_outreach_agents + 1):
+            clone = create_outreach_strategist(
+                llm,
+                prompt_override=prompt_override,
+            )
+            clone.role = f"Outreach Strategy Expert Clone {clone_index - 1}"
+            agents.append(clone)
+
+        if len(agents) > 1:
+            self.state.agent_spawn_events.append(
+                {
+                    "iteration": self.state.iteration,
+                    "trigger_total_sent": previous_total_sent,
+                    "spawned_agent_roles": [agent.role for agent in agents],
+                }
+            )
+
+        return agents
+
     # -- BUILD phase ------------------------------------------------------
 
     @start()
@@ -437,9 +545,19 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         logger.info(f"{'='*60}\n")
         logger.info("BUILD PHASE: Creating tasks...")
 
-        data_strategist = create_data_strategist(llm)
-        product_strategist = create_product_strategist(llm)
-        outreach_strategist = create_outreach_strategist(llm)
+        data_strategist = create_data_strategist(
+            llm,
+            prompt_override=self._prompt_override("data"),
+        )
+        product_strategist = create_product_strategist(
+            llm,
+            prompt_override=self._prompt_override("product"),
+        )
+        outreach_agents = self._spawn_outreach_agents(llm)
+        self.state.active_campaign_ids = _campaign_ids_for_iteration(
+            i,
+            len(outreach_agents),
+        )
 
         # Inject learning hints from previous iteration
         extra_context = ""
@@ -451,15 +569,17 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         build_tasks = create_build_phase_tasks(
             data_strategist,
             product_strategist,
-            outreach_strategist,
             iteration=i,
+            outreach_agents=outreach_agents,
+            campaign_ids=self.state.active_campaign_ids,
         )
 
         if extra_context:
-            build_tasks[-1].description += extra_context
+            for task in build_tasks:
+                task.description += extra_context
 
         build_crew = Crew(
-            agents=[data_strategist, product_strategist, outreach_strategist],
+            agents=[data_strategist, product_strategist, *outreach_agents],
             tasks=build_tasks,
             process=Process.sequential,
             verbose=_verbose_flag(self.state.verbose),
@@ -505,7 +625,9 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         logger.info("MEASURE PHASE: Collecting metrics from outreach artifacts...")
 
         raw = _collect_measure_metrics(
-            self.state.iteration, self.state.build_result_text,
+            self.state.iteration,
+            self.state.build_result_text,
+            campaign_ids=self.state.active_campaign_ids,
         )
 
         self.state.measure_output = MeasurementOutput(
@@ -515,6 +637,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             responses=raw.get("responses", 0),
             meetings=raw.get("meetings", 0),
             campaign_id=raw.get("campaign_id", ""),
+            campaign_ids=raw.get("campaign_ids", []),
             measurement_source=raw.get("measurement_source", "no_signal"),
         )
 
@@ -606,11 +729,22 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         m = self.state.measure_output
         measure_dict: Dict[str, Any] = m.model_dump() if m else {}
 
+        spawn_event = {}
+        if self.state.agent_spawn_events:
+            latest = self.state.agent_spawn_events[-1]
+            if int(latest.get("iteration", -1)) == int(self.state.iteration):
+                spawn_event = latest
+
         iteration_result = {
             "iteration": self.state.iteration,
             "build": self.state.build_result_text,
             "measure": measure_dict,
             "learn": self.state.learn_output.model_dump() if self.state.learn_output else {},
+            "autonomy": {
+                "campaign_ids": list(self.state.active_campaign_ids),
+                "prompt_overrides": dict(self.state.prompt_overrides),
+                "agent_spawn_event": spawn_event,
+            },
         }
 
         self.state.iterations_results.append(iteration_result)
@@ -635,6 +769,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 hints_parts.append(f"{team}: {rec}")
         self.state.procedure_hints = "\n".join(hints_parts) if hints_parts else ""
         self.state.learnings.extend(lo.insights)
+        self._update_prompt_overrides(lo)
 
         try:
             proc_updater = self._get_procedure_updater()
@@ -654,6 +789,46 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 logger.info("  ProcedureUpdater: saved cycle learnings")
         except Exception as exc:
             logger.warning(f"  ProcedureUpdater skipped: {exc}")
+
+    def _update_prompt_overrides(self, learn_output: LearnPhaseOutput) -> None:
+        """Refine role prompts from LEARN recommendations/failures."""
+
+        def _role_key(raw_text: str) -> str:
+            text = str(raw_text or "").lower()
+            if "outreach" in text or "campaign" in text:
+                return "outreach"
+            if "product" in text or "tool" in text:
+                return "product"
+            if "data" in text:
+                return "data"
+            if "coord" in text or "strategy" in text:
+                return "coordinator"
+            return ""
+
+        updated = dict(self.state.prompt_overrides or {})
+
+        for team, recommendation in (learn_output.recommendations or {}).items():
+            key = _role_key(team)
+            rec = str(recommendation or "").strip()
+            if not key or not rec:
+                continue
+            previous = str(updated.get(key, "")).strip()
+            updated[key] = rec if not previous else f"{previous} | {rec}"
+
+        if learn_output.failures:
+            for failure in learn_output.failures:
+                key = _role_key(failure)
+                if not key or key in updated:
+                    continue
+                updated[key] = f"Address failure signal: {failure}"
+
+        # Keep overrides bounded for deterministic prompt size.
+        for key, value in list(updated.items()):
+            text = str(value).strip()
+            if len(text) > 1200:
+                updated[key] = text[-1200:]
+
+        self.state.prompt_overrides = updated
 
     # -- Public entry point -----------------------------------------------
 
