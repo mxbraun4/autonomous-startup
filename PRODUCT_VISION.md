@@ -66,11 +66,13 @@ Initial tool ideas:
 - Framework-level guardrails for tool failover, loop detection, and bounded delegation
 - Deterministic mock-mode execution with local runtime storage for constrained environments
 - Customer simulation with data-derived match scoring and product-perception-driven interest drivers (`timing_score`, `personalization_score`), plus optional LLM quality evaluators for explanation/personalization
+- Startup/VC framework adapter measurement consumes deterministic customer simulation outputs during MEASURE
 
 ### Near-term MVP deliverables
 - Deterministic match scoring function with transparent scoring factors
 - Match recommendation API endpoint and basic operator dashboard
 - Outreach workflow with campaign tracking and feedback capture
+- Framework autonomy operations: trigger-based run scheduler, rollback self-heal, adaptive policy bounds, diagnostics auto-actions
 - Deterministic customer scenario matrix runner for Track D validation
 - Track D hypothesis evaluation harness with pass/warn/fail gates
 - Evaluation harness for precision/recall of match recommendations
@@ -80,6 +82,7 @@ Initial tool ideas:
 ### Current inspectability support
 - Local live run dashboard available via `python scripts/run.py --mode dashboard`
 - Dashboard surfaces run/cycle/task/tool/policy event streams from NDJSON observability logs
+- Long-lived autonomous scheduling available via `python scripts/run.py --mode scheduler` for unattended web-autonomy dispatch
 
 ## Success Metrics
 - North star: qualified intro conversion rate (match -> accepted intro)
@@ -98,3 +101,4 @@ Initial tool ideas:
 A high-quality matching layer reduces wasted outreach, improves fundraising efficiency, and creates compounding network effects as the system learns from every interaction.
 
 SEO content and utility tools expand discovery, attract high-intent users, and continuously feed the matching engine with qualified demand.
+

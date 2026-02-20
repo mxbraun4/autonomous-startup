@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+import json
+from hashlib import sha256
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from src.framework.adapters.base import BaseDomainAdapter
 from src.framework.contracts import EvaluationResult, TaskSpec
 from src.framework.learning.procedure_updater import ProcedureUpdateProposal
+from src.simulation.customer_environment import (
+    build_customer_environment_input,
+    run_customer_environment,
+)
+from src.simulation.customer_event_instrumentation import validate_product_events
 
 
 def _normalized_success(total: int, completed: int) -> float:
@@ -15,11 +23,68 @@ def _normalized_success(total: int, completed: int) -> float:
     return max(0.0, min(1.0, completed / total))
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    return result
+
+
+def _clamp01(value: Any) -> float:
+    return max(0.0, min(1.0, _safe_float(value, default=0.0)))
+
+
+def _stable_cycle_seed(base_seed: int, run_id: str, cycle_id: int) -> int:
+    raw = f"{int(base_seed)}|{run_id}|{int(cycle_id)}".encode("utf-8")
+    digest = sha256(raw).hexdigest()
+    return int(digest[:8], 16)
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(default)
+
+
 class StartupVCAdapter(BaseDomainAdapter):
     """Domain adapter for startup-to-VC matching and outreach."""
 
-    def __init__(self, max_targets_per_cycle: int = 5) -> None:
+    def __init__(
+        self,
+        max_targets_per_cycle: int = 5,
+        *,
+        use_customer_simulation: bool = True,
+        customer_seed_path: Optional[str] = None,
+        include_visitors: bool = False,
+        product_events_path: Optional[str] = None,
+        product_surface_only: bool = False,
+        simulation_seed: int = 42,
+        match_calibration_path: Optional[str] = None,
+        match_calibration_min_samples: int = 20,
+    ) -> None:
         self._max_targets_per_cycle = max(1, int(max_targets_per_cycle))
+        self._use_customer_simulation = bool(use_customer_simulation)
+        self._customer_seed_path = (
+            str(customer_seed_path).strip() if customer_seed_path else None
+        )
+        self._include_visitors = bool(include_visitors)
+        self._product_events_path = (
+            str(product_events_path).strip() if product_events_path else None
+        )
+        self._product_surface_only = bool(product_surface_only)
+        self._simulation_seed = int(simulation_seed)
+        self._match_calibration_path = (
+            str(match_calibration_path).strip()
+            if match_calibration_path
+            else None
+        )
+        self._match_calibration_min_samples = max(
+            1, int(match_calibration_min_samples)
+        )
+        self._product_events_loaded = False
+        self._cached_product_events: Optional[List[Dict[str, Any]]] = None
 
     def build_cycle_tasks(self, run_context: Any) -> List[TaskSpec]:
         cycle_id = int(getattr(run_context, "cycle_id", 0))
@@ -62,27 +127,115 @@ class StartupVCAdapter(BaseDomainAdapter):
         cycle_outputs: Any,
         run_context: Any,
     ) -> Dict[str, Any]:
+        base_metrics = self._extract_base_metrics(cycle_outputs, run_context)
+        if not self._use_customer_simulation:
+            return self._formula_simulation(base_metrics)
+
+        try:
+            environment_output = run_customer_environment(
+                build_customer_environment_input(
+                    run_id=f"{base_metrics['run_id']}_customer",
+                    iteration=max(1, base_metrics["cycle_id"]),
+                    seed=_stable_cycle_seed(
+                        self._simulation_seed,
+                        str(base_metrics["run_id"]),
+                        base_metrics["cycle_id"],
+                    ),
+                    params=self._customer_params(
+                        success_rate=base_metrics["success_rate"]
+                    ),
+                    seed_path=self._customer_seed_path,
+                    include_visitors=self._include_visitors,
+                    product_events=self._load_product_events(),
+                    product_surface_only=self._product_surface_only,
+                    match_calibration_path=self._match_calibration_path,
+                    match_calibration_min_samples=self._match_calibration_min_samples,
+                )
+            )
+
+            customer_metrics = dict(environment_output.get("metrics") or {})
+            diagnostics = dict(environment_output.get("diagnostics") or {})
+            validation_errors = diagnostics.get("input_validation_errors") or []
+            if not isinstance(validation_errors, list):
+                validation_errors = [str(validation_errors)]
+
+            mapped = self._map_customer_metrics(customer_metrics)
+            response_rate = mapped["response_rate"]
+            meeting_rate = min(response_rate, mapped["meeting_rate"])
+            procedure_score = max(
+                0.0,
+                min(
+                    1.0,
+                    (
+                        (0.35 * mapped["match_quality_score"])
+                        + (0.20 * mapped["explanation_coverage"])
+                        + (0.20 * mapped["outreach_personalization_score"])
+                        + (0.15 * response_rate)
+                        + (0.10 * meeting_rate)
+                    ),
+                ),
+            )
+
+            return {
+                **base_metrics,
+                "measurement_source": "customer_simulation",
+                "response_rate": response_rate,
+                "meeting_rate": meeting_rate,
+                "match_quality_score": mapped["match_quality_score"],
+                "explanation_coverage": mapped["explanation_coverage"],
+                "outreach_personalization_score": mapped[
+                    "outreach_personalization_score"
+                ],
+                "policy_violations": int(len(validation_errors)),
+                "loop_denials": 0,
+                "unhandled_exceptions": base_metrics["failed_count"],
+                "delegated_task_count": max(0, base_metrics["total_tasks"] - 3),
+                "determinism_variance": 0.0 if not validation_errors else 1.0,
+                "procedure_score": procedure_score,
+                "customer_metrics": customer_metrics,
+                "customer_diagnostics": {
+                    "dropoff_reasons": dict(diagnostics.get("dropoff_reasons") or {}),
+                    "input_validation_errors": [str(item) for item in validation_errors],
+                    "events_count": len(environment_output.get("events") or []),
+                },
+            }
+        except Exception as exc:
+            fallback = self._formula_simulation(base_metrics)
+            fallback["measurement_source"] = "customer_simulation_fallback_formula"
+            fallback["customer_simulation_error"] = str(exc)
+            return fallback
+
+    @staticmethod
+    def _extract_base_metrics(
+        cycle_outputs: Any,
+        run_context: Any,
+    ) -> Dict[str, Any]:
         total = int(getattr(cycle_outputs, "total_tasks", 0))
         completed = int(getattr(cycle_outputs, "completed_count", 0))
         failed = int(getattr(cycle_outputs, "failed_count", 0))
         skipped = int(getattr(cycle_outputs, "skipped_count", 0))
-
         success_rate = _normalized_success(total, completed)
-        response_rate = min(0.60, 0.12 + (0.30 * success_rate))
-        meeting_rate = min(response_rate, response_rate * 0.40)
-        match_quality_score = min(1.0, 0.45 + (0.50 * success_rate))
-        explanation_coverage = min(1.0, 0.40 + (0.55 * success_rate))
-        outreach_personalization_score = min(1.0, 0.50 + (0.45 * success_rate))
-
         return {
-            "run_id": getattr(run_context, "run_id", None),
+            "run_id": str(getattr(run_context, "run_id", "") or ""),
             "cycle_id": int(getattr(run_context, "cycle_id", 0)),
-            "measurement_source": "formula_simulation",
             "total_tasks": total,
             "completed_count": completed,
             "failed_count": failed,
             "skipped_count": skipped,
             "success_rate": success_rate,
+        }
+
+    @staticmethod
+    def _formula_simulation(base_metrics: Dict[str, Any]) -> Dict[str, Any]:
+        success_rate = _clamp01(base_metrics.get("success_rate", 0.0))
+        response_rate = min(0.60, 0.12 + (0.30 * success_rate))
+        meeting_rate = min(response_rate, response_rate * 0.40)
+        match_quality_score = min(1.0, 0.45 + (0.50 * success_rate))
+        explanation_coverage = min(1.0, 0.40 + (0.55 * success_rate))
+        outreach_personalization_score = min(1.0, 0.50 + (0.45 * success_rate))
+        return {
+            **base_metrics,
+            "measurement_source": "formula_simulation",
             "response_rate": response_rate,
             "meeting_rate": meeting_rate,
             "match_quality_score": match_quality_score,
@@ -90,10 +243,76 @@ class StartupVCAdapter(BaseDomainAdapter):
             "outreach_personalization_score": outreach_personalization_score,
             "policy_violations": 0,
             "loop_denials": 0,
-            "unhandled_exceptions": failed,
-            "delegated_task_count": max(0, total - 3),
+            "unhandled_exceptions": _safe_int(base_metrics.get("failed_count"), 0),
+            "delegated_task_count": max(0, _safe_int(base_metrics.get("total_tasks"), 0) - 3),
             "determinism_variance": 0.0,
             "procedure_score": match_quality_score,
+        }
+
+    def _customer_params(self, success_rate: float) -> Dict[str, Any]:
+        score = _clamp01(success_rate)
+        return {
+            "founder_base_interest": min(1.0, 0.12 + (0.20 * score)),
+            "vc_base_interest": min(1.0, 0.10 + (0.18 * score)),
+            "meeting_rate_from_mutual_interest": min(1.0, 0.25 + (0.30 * score)),
+            "derived_match_score_boost": min(1.0, 0.05 * score),
+            "derived_explanation_quality_boost": min(1.0, 0.05 * score),
+            "derived_personalization_score_boost": min(1.0, 0.05 * score),
+            "derived_timing_score_boost": min(1.0, 0.04 * score),
+        }
+
+    def _load_product_events(self) -> Optional[List[Dict[str, Any]]]:
+        if self._product_events_loaded:
+            return self._cached_product_events
+
+        self._product_events_loaded = True
+        self._cached_product_events = None
+        if not self._product_events_path:
+            return None
+
+        path = Path(self._product_events_path)
+        if not path.exists():
+            return None
+
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not isinstance(payload, list):
+            return None
+        if not all(isinstance(item, dict) for item in payload):
+            return None
+
+        events = [dict(item) for item in payload]
+        validation_errors = validate_product_events(events)
+        if validation_errors:
+            return None
+
+        self._cached_product_events = events
+        return self._cached_product_events
+
+    @staticmethod
+    def _map_customer_metrics(customer_metrics: Dict[str, Any]) -> Dict[str, float]:
+        founder_interested = _clamp01(customer_metrics.get("founder_interested_rate", 0.0))
+        vc_interested = _clamp01(customer_metrics.get("vc_interested_rate", 0.0))
+        response_rate = _clamp01((founder_interested + vc_interested) / 2.0)
+        mutual_interest_rate = _clamp01(customer_metrics.get("mutual_interest_rate", 0.0))
+        meeting_conversion_rate = _clamp01(
+            customer_metrics.get("meeting_conversion_rate", 0.0)
+        )
+        meeting_rate = _clamp01(mutual_interest_rate * meeting_conversion_rate)
+        return {
+            "response_rate": response_rate,
+            "meeting_rate": meeting_rate,
+            "match_quality_score": _clamp01(
+                customer_metrics.get("average_match_relevance", 0.0)
+            ),
+            "explanation_coverage": _clamp01(
+                customer_metrics.get("explanation_coverage", 0.0)
+            ),
+            "outreach_personalization_score": _clamp01(
+                customer_metrics.get("personalization_quality_score", 0.0)
+            ),
         }
 
     def compute_domain_metrics(self, simulation_outputs: Dict[str, Any]) -> Dict[str, Any]:
@@ -117,6 +336,45 @@ class StartupVCAdapter(BaseDomainAdapter):
                 simulation_outputs.get("determinism_variance", 0.0)
             ),
             "procedure_score": float(simulation_outputs.get("procedure_score", 0.0)),
+            "measurement_source": str(
+                simulation_outputs.get("measurement_source", "unknown")
+            ),
+            "founder_visit_to_signup": float(
+                simulation_outputs.get("customer_metrics", {}).get(
+                    "founder_visit_to_signup",
+                    0.0,
+                )
+            ),
+            "vc_visit_to_signup": float(
+                simulation_outputs.get("customer_metrics", {}).get(
+                    "vc_visit_to_signup",
+                    0.0,
+                )
+            ),
+            "founder_interested_rate": float(
+                simulation_outputs.get("customer_metrics", {}).get(
+                    "founder_interested_rate",
+                    0.0,
+                )
+            ),
+            "vc_interested_rate": float(
+                simulation_outputs.get("customer_metrics", {}).get(
+                    "vc_interested_rate",
+                    0.0,
+                )
+            ),
+            "mutual_interest_rate": float(
+                simulation_outputs.get("customer_metrics", {}).get(
+                    "mutual_interest_rate",
+                    0.0,
+                )
+            ),
+            "meeting_conversion_rate": float(
+                simulation_outputs.get("customer_metrics", {}).get(
+                    "meeting_conversion_rate",
+                    0.0,
+                )
+            ),
         }
 
     def suggest_procedure_updates(
@@ -191,5 +449,9 @@ class StartupVCAdapter(BaseDomainAdapter):
             "max_identical_tool_calls": 4,
             "tool_loop_window": 8,
             "tool_loop_max_repeats": 3,
+            "customer_simulation_enabled": self._use_customer_simulation,
+            "customer_include_visitors": self._include_visitors,
+            "customer_product_surface_only": self._product_surface_only,
+            "customer_match_calibration_min_samples": self._match_calibration_min_samples,
         }
 

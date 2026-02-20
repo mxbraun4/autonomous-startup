@@ -49,6 +49,7 @@ A coordinated agent system with memory can improve matching and outreach outcome
    - `python scripts/run_simulation.py --iterations 5 --verbose 0`
 3. Repeatability run (same config)
    - Run the same command 2-3 times and compare trends
+   - For unattended web-autonomy trials, use scheduler mode (`python scripts/run.py --mode scheduler --cron "*/30 * * * *"`)
 4. Capture outputs
    - Record metrics and qualitative agent outputs in the run log template below
    - Optional live observability UI during runs:
@@ -112,6 +113,7 @@ Goal: validate the growth model around the core matching product.
 
 ### Track D: Customer Behavior Simulation (Constrained Environment)
 Goal: validate customer-side dynamics without leaving the simulation environment.
+- Integration note: framework `StartupVCAdapter` now uses deterministic customer simulation outputs as domain measurement signals.
 
 - Variable: cohort mix, transition thresholds, behavior parameters, deterministic data-based match scoring boosts (`derived_match_score_boost`, `derived_explanation_quality_boost`), and optional labeled-outcome calibration input (`match_calibration_path`)
 - Deterministic scenario matrix:
@@ -156,10 +158,14 @@ Goal: validate fail-safe autonomous behavior under error and repetition patterns
   - loop-detection deny events
   - policy-denial rate
   - delegated child-task count vs configured caps
+  - rollback self-heal success rate (`run.self_heal_rollback` vs `run.self_heal_failed`)
+  - adaptive policy adjustment count (`policy.auto_adjusted`)
+  - diagnostics intervention count (`diagnostics.action_taken`)
 - Pass condition:
   - fallback succeeds for transient tool outages
   - loop patterns are blocked deterministically
   - delegated task counts stay within configured bounds
+  - rollback recommendations can self-heal and rerun boundedly
 
 ## Run Log Template
 Use this for each experiment run.

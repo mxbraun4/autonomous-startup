@@ -244,6 +244,7 @@ A top-of-funnel user arriving via article or tool pages.
 - Bounded state transitions (no unbounded loops)
 - Keep feature inputs limited to fields already produced by the system
 - Enforce runtime guardrails (tool-call loop detection, bounded delegation, policy-denied actions)
+- If autonomy self-heal/diagnostics policies are enabled, they may reduce cycle scope but must remain deterministic for fixed inputs and seed
 
 ## Customer State Machines
 
@@ -390,6 +391,7 @@ These are simulation defaults and should be tuned through experiments, not treat
 - Live run observability:
   - `scripts/live_dashboard.py`
   - `python scripts/run.py --mode dashboard --events-path data/memory/web_autonomy_events.ndjson`
+  - optional long-lived web run scheduling: `python scripts/run.py --mode scheduler`
 - Extend with:
   - `src/simulation/customer_agent.py` (new, optional next step)
   - `data/seed/customers.json` (new cohort definitions)
@@ -400,6 +402,8 @@ These are simulation defaults and should be tuned through experiments, not treat
   - `src/simulation/customer_scenario_matrix.py`
   - `data/seed/customers.json`
   - `src/simulation/scenarios.py` (legacy generic scenario helpers)
+- Framework integration:
+  - `src/framework/adapters/startup_vc.py` now consumes deterministic customer-environment outputs during MEASURE.
 - Experiment linkage:
   - Use `EXPERIMENT.md` Track D for customer simulation validation
 

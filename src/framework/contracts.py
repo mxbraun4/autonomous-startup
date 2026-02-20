@@ -158,6 +158,7 @@ class RunConfig(BaseMemoryEntity):
     domain_adapter: str = "default"
     autonomy_level: int = 0
     policies: Dict[str, Any] = Field(default_factory=dict)
+    schedules: List[Dict[str, Any]] = Field(default_factory=list)
     max_delegation_depth: int = 3
 
 

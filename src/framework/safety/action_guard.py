@@ -136,6 +136,30 @@ class ActionGuard:
         return self._kill_reason
 
     # ------------------------------------------------------------------
+    # Policy mutation passthroughs (autonomy controller integration)
+    # ------------------------------------------------------------------
+
+    def set_autonomy_level(self, level: int) -> None:
+        """Update underlying policy-engine autonomy level."""
+        self._policy.set_autonomy_level(int(level))
+
+    def add_to_denylist(self, tool_name: str) -> None:
+        """Deny a tool name via underlying policy engine."""
+        self._policy.add_to_denylist(tool_name)
+
+    def remove_from_denylist(self, tool_name: str) -> None:
+        """Remove a tool name from denylist."""
+        self._policy.remove_from_denylist(tool_name)
+
+    def add_to_allowlist(self, tool_name: str) -> None:
+        """Allow a tool name via underlying policy engine."""
+        self._policy.add_to_allowlist(tool_name)
+
+    def remove_from_allowlist(self, tool_name: str) -> None:
+        """Remove a tool name from allowlist."""
+        self._policy.remove_from_allowlist(tool_name)
+
+    # ------------------------------------------------------------------
     # Denial log
     # ------------------------------------------------------------------
 

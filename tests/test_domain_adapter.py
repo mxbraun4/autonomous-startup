@@ -66,6 +66,86 @@ def test_startup_vc_adapter_simulation_and_metrics():
     assert "procedure_score" in metrics
 
 
+def test_startup_vc_adapter_wires_customer_environment(monkeypatch):
+    captured = {"build_called": False, "run_called": False}
+
+    def fake_build_input(**kwargs):
+        captured["build_called"] = True
+        captured["build_kwargs"] = dict(kwargs)
+        return {"run_context": {"iteration": kwargs["iteration"]}}
+
+    def fake_run_customer_environment(environment_input):
+        captured["run_called"] = True
+        captured["environment_input"] = dict(environment_input)
+        return {
+            "metrics": {
+                "founder_interested_rate": 0.60,
+                "vc_interested_rate": 0.40,
+                "mutual_interest_rate": 0.50,
+                "meeting_conversion_rate": 0.50,
+                "average_match_relevance": 0.70,
+                "explanation_coverage": 0.80,
+                "personalization_quality_score": 0.90,
+            },
+            "events": [{"event_id": "evt_1"}],
+            "diagnostics": {"input_validation_errors": []},
+        }
+
+    monkeypatch.setattr(
+        "src.framework.adapters.startup_vc.build_customer_environment_input",
+        fake_build_input,
+    )
+    monkeypatch.setattr(
+        "src.framework.adapters.startup_vc.run_customer_environment",
+        fake_run_customer_environment,
+    )
+
+    adapter = StartupVCAdapter(use_customer_simulation=True)
+    run_context = SimpleNamespace(run_id="run_c", cycle_id=3)
+    cycle_outputs = SimpleNamespace(
+        total_tasks=3,
+        completed_count=2,
+        failed_count=1,
+        skipped_count=0,
+    )
+    simulation = adapter.simulate_environment(cycle_outputs, run_context)
+
+    assert captured["build_called"] is True
+    assert captured["run_called"] is True
+    assert simulation["measurement_source"] == "customer_simulation"
+    assert simulation["response_rate"] == 0.5
+    assert simulation["meeting_rate"] == 0.25
+    assert simulation["match_quality_score"] == 0.7
+    assert simulation["explanation_coverage"] == 0.8
+    assert simulation["outreach_personalization_score"] == 0.9
+    assert simulation["customer_diagnostics"]["events_count"] == 1
+    assert simulation["customer_metrics"]["mutual_interest_rate"] == 0.5
+
+
+def test_startup_vc_adapter_fallbacks_when_customer_environment_fails(monkeypatch):
+    def fake_run_customer_environment(_environment_input):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "src.framework.adapters.startup_vc.run_customer_environment",
+        fake_run_customer_environment,
+    )
+
+    adapter = StartupVCAdapter(use_customer_simulation=True)
+    run_context = SimpleNamespace(run_id="run_c", cycle_id=1)
+    cycle_outputs = SimpleNamespace(
+        total_tasks=3,
+        completed_count=2,
+        failed_count=1,
+        skipped_count=0,
+    )
+    simulation = adapter.simulate_environment(cycle_outputs, run_context)
+
+    assert simulation["measurement_source"] == "customer_simulation_fallback_formula"
+    assert "customer_simulation_error" in simulation
+    assert 0.0 <= simulation["response_rate"] <= 1.0
+
+
 def test_run_controller_uses_domain_adapter_when_task_builder_absent(tmp_path):
     run_config = RunConfig(
         run_id="run_adapter",
