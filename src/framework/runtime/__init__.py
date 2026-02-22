@@ -17,6 +17,10 @@ from src.framework.runtime.web_agents import (
     register_web_agents,
     register_web_capabilities,
 )
+from src.framework.runtime.startup_vc_agents import (
+    register_startup_vc_agents,
+    register_startup_vc_capabilities,
+)
 
 __all__ = [
     "AgentRuntime",
@@ -32,6 +36,8 @@ __all__ = [
     "make_web_explorer_agent",
     "make_web_improver_agent",
     "make_web_validator_agent",
+    "register_startup_vc_agents",
+    "register_startup_vc_capabilities",
     "register_web_agents",
     "register_web_capabilities",
     "resolve_edit_template",

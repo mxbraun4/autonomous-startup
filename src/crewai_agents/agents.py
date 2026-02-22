@@ -31,6 +31,7 @@ from src.crewai_agents.tools import (
     list_dynamic_tools,
     execute_dynamic_tool,
     analytics_tool,
+    run_quality_checks_tool,
     # Consensus memory tools
     share_insight,
     get_team_insights,
@@ -47,14 +48,72 @@ def _with_prompt_override(backstory: str, prompt_override: Optional[str]) -> str
     return f"{backstory}\n\nAutonomous prompt refinement:\n- {override}"
 
 
-def get_llm() -> LLM | DeterministicMockLLM:
-    """Get LLM instance based on configuration.
+def _normalize_role(role: Optional[str]) -> str:
+    text = str(role or "").strip().lower()
+    aliases = {
+        "strategic_coordinator": "coordinator",
+        "master_coordinator": "coordinator",
+        "product_strategist": "product",
+        "developer_agent": "developer",
+        "reviewer": "reviewer",
+        "qa": "reviewer",
+        "reviewer_agent": "reviewer",
+        "engineering": "developer",
+        "data": "developer",
+        "data_strategist": "developer",
+    }
+    return aliases.get(text, text)
 
-    Returns:
-        LLM instance (uses fake LLM in mock mode)
+
+def _openrouter_model_for_role(role: Optional[str]) -> str:
+    normalized = _normalize_role(role)
+    attr_map = {
+        "coordinator": "coordinator_model",
+        "product": "product_model",
+        "developer": "developer_model",
+        "reviewer": "reviewer_model",
+        "manager": "manager_model",
+    }
+
+    attrs = []
+    mapped = attr_map.get(normalized)
+    if mapped:
+        attrs.append(mapped)
+    if normalized == "manager":
+        attrs.append("coordinator_model")
+    attrs.append("openrouter_default_model")
+
+    for attr in attrs:
+        value = str(getattr(settings, attr, "") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _build_openrouter_llm(model: str) -> LLM:
+    return LLM(
+        model=model,
+        api_key=settings.openrouter_api_key,
+        base_url=settings.openrouter_base_url,
+    )
+
+
+def get_llm(role: Optional[str] = None) -> LLM | DeterministicMockLLM:
+    """Get an LLM instance based on configuration and optional role.
+
+    When ``OPENROUTER_API_KEY`` is configured (and ``MOCK_MODE=false``), role-
+    specific models are selected for coordinator/product/developer/reviewer/manager.
     """
     if settings.mock_mode:
         return DeterministicMockLLM()
+
+    if settings.openrouter_api_key:
+        model = _openrouter_model_for_role(role)
+        if not model:
+            raise RuntimeError(
+                "OPENROUTER_API_KEY is set but no OpenRouter model could be resolved"
+            )
+        return _build_openrouter_llm(model)
 
     if settings.anthropic_api_key:
         return LLM(
@@ -69,7 +128,7 @@ def get_llm() -> LLM | DeterministicMockLLM:
         )
 
     raise RuntimeError(
-        "No LLM configured: set MOCK_MODE=true or provide ANTHROPIC_API_KEY / OPENAI_API_KEY"
+        "No LLM configured: set MOCK_MODE=true or provide OPENROUTER_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY"
     )
 
 
@@ -107,7 +166,7 @@ def create_master_coordinator(
         role='Strategic Coordinator',
         goal='Execute Build-Measure-Learn cycles to continuously improve the startup-VC matching platform',
         backstory=backstory,
-        llm=llm or get_llm(),
+        llm=llm or get_llm("coordinator"),
         verbose=True,
         allow_delegation=True,
         memory=True
@@ -167,7 +226,60 @@ def create_data_strategist(
             share_insight,
             get_team_insights,
         ],
-        llm=llm or get_llm(),
+        llm=llm or get_llm("data"),
+        verbose=True,
+        allow_delegation=True,
+        memory=True
+    )
+
+
+def create_developer_agent(
+    llm: LLM = None,
+    prompt_override: Optional[str] = None,
+) -> Agent:
+    """Create the Developer Agent.
+
+    This agent implements and validates platform improvements based on product
+    feedback and shared team insights.
+
+    Args:
+        llm: LLM instance to use
+
+    Returns:
+        Developer agent
+    """
+    backstory = _with_prompt_override(
+        '''You are a pragmatic software engineer responsible for turning product ideas
+        into working platform capabilities. You focus on shipping small, testable
+        improvements that increase match quality, explainability, and operator efficiency.
+
+        Your approach:
+        - Review product feedback and acceptance criteria before building
+        - Use shared team insights to understand what changed and why
+        - Implement or refine tools/features incrementally
+        - Validate behavior and report tradeoffs, risks, and next steps
+
+        You collaborate tightly with the Product Strategy Expert. Product feedback is
+        shared through team insight tools, and you use that feedback to drive execution.
+        ''',
+        prompt_override,
+    )
+
+    return Agent(
+        role='Developer Agent',
+        goal='Implement and improve platform tools/features based on product feedback with reliable, testable iterations',
+        backstory=backstory,
+        tools=[
+            tool_builder_tool,
+            register_dynamic_tool,
+            list_dynamic_tools,
+            execute_dynamic_tool,
+            data_validator_tool,
+            analytics_tool,
+            share_insight,
+            get_team_insights,
+        ],
+        llm=llm or get_llm("developer"),
         verbose=True,
         allow_delegation=True,
         memory=True
@@ -216,9 +328,55 @@ def create_product_strategist(
             share_insight,
             get_team_insights,
         ],
-        llm=llm or get_llm(),
+        llm=llm or get_llm("product"),
         verbose=True,
         allow_delegation=True,
+        memory=True
+    )
+
+
+def create_reviewer_agent(
+    llm: LLM = None,
+    prompt_override: Optional[str] = None,
+) -> Agent:
+    """Create the Reviewer (QA) Agent.
+
+    This agent runs strict quality gates (syntax/tests) and blocks broken code
+    from reaching strategic review.
+
+    Args:
+        llm: LLM instance to use
+
+    Returns:
+        Reviewer QA agent
+    """
+    backstory = _with_prompt_override(
+        '''You are a strict software QA reviewer. Your responsibility is to catch
+        broken code before it reaches the Strategic Coordinator.
+
+        Your approach:
+        - Run deterministic quality checks (syntax and tests)
+        - Report exact failures and probable root causes
+        - Require fixes from the Developer Agent before sign-off
+        - Share QA status and blocking defects with the team
+
+        You focus on correctness and release readiness, not feature ideation.
+        ''',
+        prompt_override,
+    )
+
+    return Agent(
+        role='Reviewer (QA) Agent',
+        goal='Run syntax and test checks, catch defects early, and block broken code from reaching the coordinator',
+        backstory=backstory,
+        tools=[
+            run_quality_checks_tool,
+            share_insight,
+            get_team_insights,
+        ],
+        llm=llm or get_llm("reviewer"),
+        verbose=True,
+        allow_delegation=False,
         memory=True
     )
 
@@ -273,8 +431,9 @@ def create_outreach_strategist(
             share_insight,
             get_team_insights,
         ],
-        llm=llm or get_llm(),
+        llm=llm or get_llm("outreach"),
         verbose=True,
         allow_delegation=True,
         memory=True  # Critical: remembers past campaign results
     )
+

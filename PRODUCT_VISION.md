@@ -59,7 +59,7 @@ Initial tool ideas:
 
 ## MVP Scope (Current + Near-Term)
 ### Current prototype capabilities
-- Multi-agent orchestration for data, product, and outreach strategy
+- Multi-agent orchestration for strategic coordination, product strategy, developer execution, and QA review
 - SQLite-backed startup/VC/outreach records
 - Simulated Build-Measure-Learn iterations with measurable response/meeting metrics
 - Tooling for data collection, match-oriented outreach content, and analytics

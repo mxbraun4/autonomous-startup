@@ -53,9 +53,12 @@ cp .env.example .env
 
 2. (Optional) Add API keys to `.env`:
 ```bash
-ANTHROPIC_API_KEY=your_key_here
-OPENAI_API_KEY=your_key_here
 MOCK_MODE=true  # Set to false for real LLM calls
+OPENROUTER_API_KEY=your_key_here
+COORDINATOR_MODEL=openrouter/anthropic/claude-3.5-sonnet
+PRODUCT_MODEL=openrouter/google/gemini-2.0-flash-001
+DEVELOPER_MODEL=openrouter/openai/gpt-4o-mini
+REVIEWER_MODEL=openrouter/openai/gpt-4o-mini
 ```
 
 In `MOCK_MODE=true`, CrewAI runs with a deterministic local mock LLM and stores runtime DB files in:
@@ -161,16 +164,15 @@ The CrewAI simulation remains the default runnable path. Framework modules are a
 ```
 Strategic Coordinator (manager)
     |
-    |-> Data Strategy Expert
-    |       |-> get_startups_tool
-    |       |-> data_validator_tool
-    |
     |-> Product Strategy Expert
     |       |-> tool_builder_tool
     |
-    |-> Outreach Strategy Expert
-            |-> content_generator_tool
-            |-> analytics_tool
+    |-> Developer Agent
+    |       |-> register_dynamic_tool
+    |       |-> execute_dynamic_tool
+    |
+    |-> Reviewer (QA) Agent
+            |-> run_quality_checks_tool
 ```
 
 ### Memory Systems
@@ -287,8 +289,15 @@ Settings are managed via `.env` file and `src/utils/config.py`:
 
 ```python
 # API Keys
-ANTHROPIC_API_KEY=your_key
-OPENAI_API_KEY=your_key
+OPENROUTER_API_KEY=your_key
+ANTHROPIC_API_KEY=your_key  # optional fallback
+OPENAI_API_KEY=your_key     # optional fallback
+
+# Per-role models (OpenRouter via LiteLLM)
+COORDINATOR_MODEL=openrouter/anthropic/claude-3.5-sonnet
+PRODUCT_MODEL=openrouter/google/gemini-2.0-flash-001
+DEVELOPER_MODEL=openrouter/openai/gpt-4o-mini
+REVIEWER_MODEL=openrouter/openai/gpt-4o-mini
 
 # Mock Mode (true = no API calls, false = real LLM)
 MOCK_MODE=true
