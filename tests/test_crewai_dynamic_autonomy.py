@@ -58,42 +58,11 @@ def test_tool_builder_auto_registers_and_deploys_dynamic_tool(tmp_path, monkeypa
     assert execution["invocation_count"] == 1
 
 
-def test_create_build_phase_tasks_supports_outreach_shards():
-    _require_crewai()
-
-    from src.crewai_agents.agents import (
-        create_data_strategist,
-        create_outreach_strategist,
-        create_product_strategist,
-    )
-    from src.crewai_agents.crews import (
-        _campaign_ids_for_iteration,
-        create_build_phase_tasks,
-    )
-
-    data_agent = create_data_strategist()
-    product_agent = create_product_strategist()
-    outreach_agents = [create_outreach_strategist(), create_outreach_strategist()]
-    campaign_ids = _campaign_ids_for_iteration(iteration=3, shard_count=2)
-
-    tasks = create_build_phase_tasks(
-        data_agent,
-        product_agent,
-        iteration=3,
-        outreach_agents=outreach_agents,
-        campaign_ids=campaign_ids,
-    )
-
-    assert len(tasks) == 4
-    assert campaign_ids[0] in tasks[2].description
-    assert campaign_ids[1] in tasks[3].description
-
-
 def test_prompt_override_is_appended_to_agent_backstory():
     _require_crewai()
 
-    from src.crewai_agents.agents import create_outreach_strategist
+    from src.crewai_agents.agents import create_product_strategist
 
-    agent = create_outreach_strategist(prompt_override="Always include one concrete CTA.")
+    agent = create_product_strategist(prompt_override="Always include one concrete CTA.")
     assert "Always include one concrete CTA." in agent.backstory
 

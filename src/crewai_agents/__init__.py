@@ -30,7 +30,6 @@ from .agents import (
     create_reviewer_agent,
     create_data_strategist,
     create_product_strategist,
-    create_outreach_strategist,
 )
 from .crews import (
     create_autonomous_startup_crew,
@@ -67,7 +66,6 @@ __all__ = [
     'create_reviewer_agent',
     'create_data_strategist',
     'create_product_strategist',
-    'create_outreach_strategist',
     # Crews & Flows
     'create_autonomous_startup_crew',
     'run_build_measure_learn_cycle',

@@ -19,13 +19,8 @@ from src.crewai_agents.tools import (
     get_startups_tool,
     get_vcs_tool,
     get_database_stats,
-    # Outreach tools
-    send_outreach_email,
-    get_outreach_history,
-    record_outreach_response,
     # Analysis tools
     data_validator_tool,
-    content_generator_tool,
     tool_builder_tool,
     register_dynamic_tool,
     list_dynamic_tools,
@@ -378,62 +373,5 @@ def create_reviewer_agent(
         verbose=True,
         allow_delegation=False,
         memory=True
-    )
-
-
-def create_outreach_strategist(
-    llm: LLM = None,
-    prompt_override: Optional[str] = None,
-) -> Agent:
-    """Create the Outreach Strategy Expert agent.
-
-    This agent optimizes outreach campaigns and learns from results.
-
-    Args:
-        llm: LLM instance to use
-
-    Returns:
-        Outreach Strategist agent
-    """
-    backstory = _with_prompt_override(
-        '''You are a growth expert specializing in B2B outreach and startup-investor
-        matchmaking. You understand what makes outreach effective: personalization, timing,
-        relevance, and clear value proposition.
-
-        Your expertise:
-        - Accessing startup data from the database to find outreach targets
-        - Crafting highly personalized messages that reference specific achievements
-        - Timing campaigns for maximum engagement (Tuesday-Thursday mornings)
-        - Learning from past campaign results to optimize future outreach
-        - Understanding what VCs look for and how to position startups effectively
-
-        You retrieve startups from the database, analyze past campaigns to identify what worked,
-        use content_generator_tool to create personalized messages, and use analytics_tool
-        to measure campaign performance.
-        ''',
-        prompt_override,
-    )
-
-    return Agent(
-        role='Outreach Strategy Expert',
-        goal='Achieve 35%+ response rate on startup outreach campaigns through personalization and learning',
-        backstory=backstory,
-        tools=[
-            get_startups_tool,
-            get_vcs_tool,
-            content_generator_tool,
-            send_outreach_email,
-            get_outreach_history,
-            record_outreach_response,
-            analytics_tool,
-            list_dynamic_tools,
-            execute_dynamic_tool,
-            share_insight,
-            get_team_insights,
-        ],
-        llm=llm or get_llm("outreach"),
-        verbose=True,
-        allow_delegation=True,
-        memory=True  # Critical: remembers past campaign results
     )
 

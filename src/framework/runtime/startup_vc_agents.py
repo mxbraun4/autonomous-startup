@@ -24,7 +24,6 @@ patch_crewai_storage_paths()
 
 from src.crewai_agents.agents import (  # noqa: E402
     create_data_strategist,
-    create_outreach_strategist,
     create_product_strategist,
     get_llm,
 )
@@ -39,7 +38,6 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 ROLE_DATA_SPECIALIST = "data_specialist"
 ROLE_MATCHING_SPECIALIST = "matching_specialist"
-ROLE_OUTREACH_SPECIALIST = "outreach_specialist"
 
 # ---------------------------------------------------------------------------
 # Capability labels
@@ -48,8 +46,6 @@ CAP_DATA_COVERAGE_ANALYSIS = "data_coverage_analysis"
 CAP_DATABASE_WRITE = "database_write"
 CAP_MATCH_SCORING = "match_scoring"
 CAP_EXPLANATION_GENERATION = "explanation_generation"
-CAP_MESSAGE_PERSONALIZATION = "message_personalization"
-CAP_CAMPAIGN_TRACKING = "campaign_tracking"
 
 
 # ---------------------------------------------------------------------------
@@ -159,53 +155,6 @@ def make_matching_specialist_agent(
     return agent
 
 
-def make_outreach_specialist_agent(
-    runtime: Any,
-    *,
-    llm: Optional[LLM] = None,
-) -> Callable[..., Dict[str, Any]]:
-    """Return a framework-compatible callable that runs a CrewAI outreach crew."""
-
-    def agent(task_spec: Any, tools: Any, context: Any) -> Dict[str, Any]:
-        del tools, context
-        input_data = dict(getattr(task_spec, "input_data", {}) or {})
-        objective = getattr(task_spec, "objective", "") or "Draft personalized outreach messages"
-        constraints = dict(getattr(task_spec, "constraints", {}) or {})
-        message_count = constraints.get("message_count", 5)
-
-        crewai_agent = create_outreach_strategist(llm or get_llm("outreach"))
-        crewai_task = Task(
-            description=(
-                f"{objective}\n\n"
-                f"Message count target: {message_count}\n"
-                f"Additional input: {input_data}"
-            ),
-            agent=crewai_agent,
-            expected_output="Outreach campaign report with personalized messages, quality metrics, and tracking.",
-        )
-        crew = Crew(
-            agents=[crewai_agent],
-            tasks=[crewai_task],
-            process=Process.sequential,
-            verbose=False,
-            memory=False,
-        )
-        try:
-            result = crew.kickoff()
-            output_text = _crew_kickoff_result(result)
-        except Exception as exc:
-            logger.warning("outreach_specialist crew failed: %s", exc)
-            output_text = f"Outreach specialist crew error: {exc}"
-
-        return {
-            "output_text": output_text,
-            "tool_calls": [],
-            "tokens_used": 0,
-        }
-
-    return agent
-
-
 # ---------------------------------------------------------------------------
 # Registration helpers
 # ---------------------------------------------------------------------------
@@ -216,7 +165,7 @@ def _passthrough_callable(**kwargs: Any) -> Dict[str, Any]:
 
 
 def register_startup_vc_capabilities(registry: CapabilityRegistry) -> None:
-    """Register the 6 capability labels used by StartupVCAdapter tasks.
+    """Register the capability labels used by StartupVCAdapter tasks.
 
     These are passthrough entries: the real tool invocations happen inside
     the CrewAI agents that have their own tool sets.
@@ -226,8 +175,6 @@ def register_startup_vc_capabilities(registry: CapabilityRegistry) -> None:
         CAP_DATABASE_WRITE,
         CAP_MATCH_SCORING,
         CAP_EXPLANATION_GENERATION,
-        CAP_MESSAGE_PERSONALIZATION,
-        CAP_CAMPAIGN_TRACKING,
     ):
         registry.register(
             capability=cap_name,
@@ -243,7 +190,7 @@ def register_startup_vc_agents(
     *,
     llm: Optional[LLM] = None,
 ) -> None:
-    """Register the 3 startup-VC agents with the task router."""
+    """Register the startup-VC agents with the task router."""
 
     router.register_agent(
         agent_id=ROLE_DATA_SPECIALIST,
@@ -256,10 +203,4 @@ def register_startup_vc_agents(
         agent_role=ROLE_MATCHING_SPECIALIST,
         capabilities=[CAP_MATCH_SCORING, CAP_EXPLANATION_GENERATION],
         agent_instance=make_matching_specialist_agent(runtime, llm=llm),
-    )
-    router.register_agent(
-        agent_id=ROLE_OUTREACH_SPECIALIST,
-        agent_role=ROLE_OUTREACH_SPECIALIST,
-        capabilities=[CAP_MESSAGE_PERSONALIZATION, CAP_CAMPAIGN_TRACKING],
-        agent_instance=make_outreach_specialist_agent(runtime, llm=llm),
     )
