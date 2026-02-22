@@ -1,7 +1,11 @@
 """CrewAI Tools - Including web-enabled data collection tools."""
 import atexit
 import json
+import os
+import py_compile
 import re
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
@@ -195,6 +199,186 @@ def clear_dynamic_tool_registry() -> None:
     """Clear dynamic tool registry (used by tests)."""
     _dynamic_tool_specs.clear()
     _dynamic_tool_invocations.clear()
+
+
+def _iter_python_files(paths: List[str]) -> List[Path]:
+    files: List[Path] = []
+    seen: set[str] = set()
+    for raw in paths:
+        item = str(raw or "").strip()
+        if not item:
+            continue
+        path = Path(item)
+        candidates: List[Path]
+        if path.is_file():
+            candidates = [path] if path.suffix == ".py" else []
+        elif path.is_dir():
+            candidates = sorted(path.rglob("*.py"))
+        else:
+            continue
+
+        for candidate in candidates:
+            key = str(candidate.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            files.append(candidate)
+    return files
+
+
+def _run_python_syntax_checks(paths: List[str]) -> Dict[str, Any]:
+    files = _iter_python_files(paths)
+    failures: List[Dict[str, str]] = []
+    for file_path in files:
+        try:
+            py_compile.compile(str(file_path), doraise=True)
+        except py_compile.PyCompileError as exc:
+            failures.append(
+                {
+                    "file": str(file_path),
+                    "error": str(exc.msg or exc),
+                }
+            )
+        except Exception as exc:
+            failures.append(
+                {
+                    "file": str(file_path),
+                    "error": str(exc),
+                }
+            )
+
+    return {
+        "checked_file_count": len(files),
+        "syntax_ok": len(failures) == 0,
+        "syntax_error_count": len(failures),
+        "syntax_failures": failures,
+    }
+
+
+def _run_pytest_targets(
+    targets: List[str],
+    *,
+    timeout_seconds: int,
+) -> Dict[str, Any]:
+    if not targets:
+        return {
+            "pytest_status": "no_targets",
+            "pytest_exit_code": None,
+            "pytest_target_count": 0,
+            "pytest_targets": [],
+        }
+
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        # Avoid recursive pytest execution when the QA tool is invoked from pytest.
+        return {
+            "pytest_status": "skipped_nested_pytest",
+            "pytest_exit_code": None,
+            "pytest_target_count": len(targets),
+            "pytest_targets": targets,
+        }
+
+    cmd = [sys.executable, "-m", "pytest", *targets, "-q"]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=max(1, int(timeout_seconds)),
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "pytest_status": "timeout",
+            "pytest_exit_code": None,
+            "pytest_target_count": len(targets),
+            "pytest_targets": targets,
+            "pytest_stdout_tail": (exc.stdout or "")[-1200:],
+            "pytest_stderr_tail": (exc.stderr or "")[-1200:],
+        }
+    except Exception as exc:
+        return {
+            "pytest_status": "error",
+            "pytest_exit_code": None,
+            "pytest_target_count": len(targets),
+            "pytest_targets": targets,
+            "pytest_error": str(exc),
+        }
+
+    return {
+        "pytest_status": "passed" if proc.returncode == 0 else "failed",
+        "pytest_exit_code": proc.returncode,
+        "pytest_target_count": len(targets),
+        "pytest_targets": targets,
+        "pytest_stdout_tail": (proc.stdout or "")[-1200:],
+        "pytest_stderr_tail": (proc.stderr or "")[-1200:],
+    }
+
+
+@tool("Run Quality Checks")
+def run_quality_checks_tool(
+    paths_csv: str = "src,scripts",
+    pytest_targets_csv: str = "tests/test_crewai_integration.py",
+    run_pytest: bool = True,
+    timeout_seconds: int = 120,
+) -> str:
+    """Run deterministic QA checks for code quality gates.
+
+    Performs Python syntax compilation checks on the selected paths and runs
+    pytest on the selected targets (unless nested pytest execution is detected).
+
+    Returns:
+        JSON summary with pass/fail status and actionable failure details
+    """
+    paths = [p.strip() for p in str(paths_csv or "").split(",") if p.strip()]
+    pytest_targets = [p.strip() for p in str(pytest_targets_csv or "").split(",") if p.strip()]
+
+    logger.info(
+        "QA tool: syntax paths=%s pytest_targets=%s run_pytest=%s",
+        paths,
+        pytest_targets,
+        run_pytest,
+    )
+
+    syntax = _run_python_syntax_checks(paths)
+
+    if bool(run_pytest):
+        pytest_result = _run_pytest_targets(
+            pytest_targets,
+            timeout_seconds=int(timeout_seconds),
+        )
+    else:
+        pytest_result = {
+            "pytest_status": "disabled",
+            "pytest_exit_code": None,
+            "pytest_target_count": len(pytest_targets),
+            "pytest_targets": pytest_targets,
+        }
+
+    pytest_status = str(pytest_result.get("pytest_status", "disabled"))
+    pytest_ok = pytest_status in {
+        "passed",
+        "disabled",
+        "no_targets",
+        "skipped_nested_pytest",
+    }
+    qa_gate_passed = bool(syntax.get("syntax_ok")) and pytest_ok
+
+    failed_checks: List[str] = []
+    if not bool(syntax.get("syntax_ok")):
+        failed_checks.append("syntax")
+    if not pytest_ok:
+        failed_checks.append("pytest")
+
+    result = {
+        "status": "passed" if qa_gate_passed else "failed",
+        "qa_gate_passed": qa_gate_passed,
+        "failed_checks": failed_checks,
+        "paths": paths,
+        "run_pytest": bool(run_pytest),
+        "syntax": syntax,
+        "pytest": pytest_result,
+    }
+    return json.dumps(result, indent=2, ensure_ascii=True)
 
 
 # =============================================================================

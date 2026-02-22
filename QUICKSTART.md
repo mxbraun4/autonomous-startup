@@ -177,8 +177,11 @@ Edit `.env`:
 ```bash
 # Use real LLM calls instead of mock
 MOCK_MODE=false
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
+OPENROUTER_API_KEY=sk-or-v1-...
+COORDINATOR_MODEL=openrouter/anthropic/claude-3.5-sonnet
+PRODUCT_MODEL=openrouter/google/gemini-2.0-flash-001
+DEVELOPER_MODEL=openrouter/openai/gpt-4o-mini
+REVIEWER_MODEL=openrouter/openai/gpt-4o-mini
 
 # Adjust logging
 LOG_LEVEL=DEBUG

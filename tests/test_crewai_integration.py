@@ -25,6 +25,7 @@ def test_tools_creation():
         tool_builder_tool,
         data_validator_tool,
         analytics_tool,
+        run_quality_checks_tool,
         register_dynamic_tool,
         list_dynamic_tools,
         execute_dynamic_tool,
@@ -37,6 +38,7 @@ def test_tools_creation():
         tool_builder_tool,
         data_validator_tool,
         analytics_tool,
+        run_quality_checks_tool,
         register_dynamic_tool,
         list_dynamic_tools,
         execute_dynamic_tool,
@@ -81,30 +83,51 @@ def test_content_generator_tool():
     assert result['personalization_score'] > 0
 
 
+def test_run_quality_checks_tool_syntax_only():
+    """Test QA tool contract in syntax-only mode."""
+    import json
+    from src.crewai_agents.tools import run_quality_checks_tool
+
+    result_json = run_quality_checks_tool.run(
+        paths_csv="src/crewai_agents",
+        pytest_targets_csv="",
+        run_pytest=False,
+        timeout_seconds=30,
+    )
+    result = json.loads(result_json)
+
+    assert "status" in result
+    assert "qa_gate_passed" in result
+    assert "syntax" in result
+    assert "pytest" in result
+    assert result["pytest"]["pytest_status"] == "disabled"
+
+
 def test_agents_creation():
     """Test that agents can be created."""
     from src.crewai_agents.agents import (
         create_master_coordinator,
-        create_data_strategist,
+        create_developer_agent,
+        create_reviewer_agent,
         create_product_strategist,
-        create_outreach_strategist
     )
 
     # Create agents
     coordinator = create_master_coordinator()
-    data_agent = create_data_strategist()
+    developer_agent = create_developer_agent()
+    reviewer_agent = create_reviewer_agent()
     product_agent = create_product_strategist()
-    outreach_agent = create_outreach_strategist()
 
     # Verify agents have required properties
     assert coordinator.role == 'Strategic Coordinator'
-    assert data_agent.role == 'Data Strategy Expert'
+    assert developer_agent.role == 'Developer Agent'
+    assert reviewer_agent.role == 'Reviewer (QA) Agent'
     assert product_agent.role == 'Product Strategy Expert'
-    assert outreach_agent.role == 'Outreach Strategy Expert'
 
     # Verify agents have tools
-    assert len(data_agent.tools) > 0
-    assert len(outreach_agent.tools) > 0
+    assert len(developer_agent.tools) > 0
+    assert len(reviewer_agent.tools) > 0
+    assert len(product_agent.tools) > 0
 
 
 def test_crew_creation():
@@ -128,7 +151,12 @@ def test_single_iteration():
     from src.crewai_agents.crews import run_build_measure_learn_cycle
     from src.utils.config import settings
 
-    if settings.mock_mode and not settings.openai_api_key and not settings.anthropic_api_key:
+    if (
+        settings.mock_mode
+        and not settings.openrouter_api_key
+        and not settings.openai_api_key
+        and not settings.anthropic_api_key
+    ):
         pytest.skip("No LLM API key configured; skipping live iteration test")
 
     # Run just 1 iteration with minimal verbosity

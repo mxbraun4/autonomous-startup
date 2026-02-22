@@ -18,9 +18,9 @@ print("Test 1: Importing modules...")
 try:
     from src.crewai_agents import (
         create_master_coordinator,
-        create_data_strategist,
+        create_developer_agent,
+        create_reviewer_agent,
         create_product_strategist,
-        create_outreach_strategist
     )
     print("  [OK] All agent creation functions imported")
 except Exception as e:
@@ -44,14 +44,14 @@ except Exception as e:
 print("\nTest 3: Creating agents...")
 try:
     coordinator = create_master_coordinator()
-    data_agent = create_data_strategist()
+    developer_agent = create_developer_agent()
+    reviewer_agent = create_reviewer_agent()
     product_agent = create_product_strategist()
-    outreach_agent = create_outreach_strategist()
 
     print(f"  [OK] Created {coordinator.role}")
-    print(f"  [OK] Created {data_agent.role}")
+    print(f"  [OK] Created {developer_agent.role}")
+    print(f"  [OK] Created {reviewer_agent.role}")
     print(f"  [OK] Created {product_agent.role}")
-    print(f"  [OK] Created {outreach_agent.role}")
 except Exception as e:
     print(f"  [FAIL] Agent creation error: {e}")
     import traceback
@@ -61,8 +61,9 @@ except Exception as e:
 # Test 4: Verify agent properties
 print("\nTest 4: Verifying agent properties...")
 assert coordinator.allow_delegation == True, "Coordinator should allow delegation"
-assert len(data_agent.tools) > 0, "Data agent should have tools"
-assert len(outreach_agent.tools) > 0, "Outreach agent should have tools"
+assert len(developer_agent.tools) > 0, "Developer agent should have tools"
+assert len(reviewer_agent.tools) > 0, "Reviewer agent should have tools"
+assert len(product_agent.tools) > 0, "Product agent should have tools"
 # Memory is configured but not directly accessible as attribute in CrewAI
 print("  [OK] All agent properties correct")
 

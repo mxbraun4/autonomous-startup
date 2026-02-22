@@ -7,10 +7,18 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     # LLM API Keys
+    openrouter_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
 
     # LLM model identifiers (litellm format)
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_default_model: str = "openrouter/openai/gpt-4o-mini"
+    coordinator_model: Optional[str] = None
+    product_model: Optional[str] = None
+    developer_model: Optional[str] = None
+    reviewer_model: Optional[str] = None
+    manager_model: Optional[str] = None
     anthropic_model: str = "anthropic/claude-sonnet-4-20250514"
     openai_model: str = "gpt-4o-mini"
 

@@ -16,6 +16,7 @@ from .tools import (
     # Analysis
     data_validator_tool,
     analytics_tool,
+    run_quality_checks_tool,
     register_dynamic_tool,
     list_dynamic_tools,
     execute_dynamic_tool,
@@ -25,6 +26,8 @@ from .tools import (
 )
 from .agents import (
     create_master_coordinator,
+    create_developer_agent,
+    create_reviewer_agent,
     create_data_strategist,
     create_product_strategist,
     create_outreach_strategist,
@@ -52,6 +55,7 @@ __all__ = [
     'content_generator_tool',
     'data_validator_tool',
     'analytics_tool',
+    'run_quality_checks_tool',
     'register_dynamic_tool',
     'list_dynamic_tools',
     'execute_dynamic_tool',
@@ -59,6 +63,8 @@ __all__ = [
     'get_team_insights',
     # Agents
     'create_master_coordinator',
+    'create_developer_agent',
+    'create_reviewer_agent',
     'create_data_strategist',
     'create_product_strategist',
     'create_outreach_strategist',
