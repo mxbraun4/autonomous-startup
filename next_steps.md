@@ -8,20 +8,19 @@ Design principle: **zero human intervention**. The system must schedule itself, 
 
 ## Autonomy Gap Assessment (Current State)
 
-Before listing next steps, here is what the code review found. The framework is ~20% autonomous today.
-
 | Capability | Status | What's missing |
 |---|---|---|
 | Learning auto-apply | **Working** | Procedures and policies update without approval |
 | Gate-driven stop/pause | **Working** | Loop terminates when gates fail |
-| Gate-driven rollback | **Working** | `RunController` self-heal wired: rollback to last checkpoint, re-run failed cycle, escalate to stop after `max_self_heal_attempts` |
-| Policy auto-escalation | **Working** | `AdaptivePolicyController` auto-created by `RunController`; adjusts autonomy level and step budgets per gate results |
+| Gate-driven rollback | **Working** | `RunController` self-heal: rollback to checkpoint, re-run, escalate after `max_self_heal_attempts` |
+| Policy auto-escalation | **Working** | `AdaptivePolicyController` adjusts autonomy level and step budgets per gate results |
+| Product building | **Working** | Website builder agent writes HTML/CSS/JS to `workspace/`, HTTP checks validate each cycle, scores feed customer sim |
 | Self-scheduling | **Not built** | Runs only start when a human calls `run.py` |
-| Self-diagnosis | **Working** | `DiagnosticsAgent` auto-created by `RunController`; scans event windows for tool denials, policy violations, gate drops |
-| Auto-budgeting | **Partial** | `BudgetManager.is_critical()` exists but is never called pre-cycle; budgets are tracked but not auto-adjusted |
-| Dynamic tool creation | **Working** | Product-generated tool specs now auto-register as runtime dynamic tools |
+| Self-diagnosis | **Working** | `DiagnosticsAgent` scans event windows for tool denials, policy violations, gate drops |
+| Auto-budgeting | **Partial** | `BudgetManager.is_critical()` exists but is never called pre-cycle; budgets tracked but not auto-adjusted |
+| Dynamic tool creation | **Working** | Product-generated tool specs auto-register as runtime dynamic tools |
 | Agent spawn / self-modify | **Working** | Build phase can spawn outreach clones and applies learned prompt refinements |
-| Self-deployment | **Partial** | Dynamic tools auto-deploy to local artifacts; full production code rollout pipeline still pending |
+| Self-deployment | **Partial** | Dynamic tools auto-deploy to local artifacts; full production rollout pipeline pending |
 
 Everything below is ordered to close these gaps, starting from infrastructure foundations and working up to full closed-loop autonomy.
 
