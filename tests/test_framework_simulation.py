@@ -91,7 +91,7 @@ class TestControllerFactory:
         agent_ids = {a.agent_id for a in agents}
         assert "data_specialist" in agent_ids
         assert "matching_specialist" in agent_ids
-        # website_builder may or may not be present depending on workspace_enabled
+        # coordinator, product_strategist, workspace_developer may or may not be present depending on workspace_enabled
 
     def test_six_capabilities_registered(self):
         args = _default_args()

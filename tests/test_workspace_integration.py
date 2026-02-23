@@ -79,10 +79,10 @@ def _create_workspace(base: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-class TestAdapterWithWorkspaceCreatesBuilderTask:
-    """When workspace_root is set, the first task should be website_builder."""
+class TestAdapterWithWorkspaceCreatesCoordinatorTask:
+    """When workspace_root is set, the adapter should emit a single coordinator task."""
 
-    def test_adapter_with_workspace_creates_builder_task(self, tmp_path: Path) -> None:
+    def test_adapter_with_workspace_creates_coordinator_task(self, tmp_path: Path) -> None:
         ws = _create_workspace(tmp_path)
         adapter = StartupVCAdapter(
             workspace_root=str(ws),
@@ -92,25 +92,58 @@ class TestAdapterWithWorkspaceCreatesBuilderTask:
 
         tasks = adapter.build_cycle_tasks(ctx)
 
-        assert len(tasks) >= 1, "Expected at least one task"
+        assert len(tasks) == 1, "Expected exactly one coordinator task"
         first = tasks[0]
-        assert first.agent_role == "website_builder"
+        assert first.agent_role == "coordinator"
+        assert "coordinator" in first.task_id
         assert first.priority == 0
 
 
-class TestAdapterWithoutWorkspaceNoBuilderTask:
-    """Without workspace_root no website_builder task should appear."""
+class TestAdapterWithoutWorkspaceNoCoordinatorTask:
+    """Without workspace_root no coordinator task should appear."""
 
-    def test_adapter_without_workspace_no_builder_task(self) -> None:
+    def test_adapter_without_workspace_no_coordinator_task(self) -> None:
         adapter = StartupVCAdapter(use_customer_simulation=False)
         ctx = _FakeContext()
 
         tasks = adapter.build_cycle_tasks(ctx)
 
         roles = [t.agent_role for t in tasks]
-        assert "website_builder" not in roles, (
-            "website_builder task must not appear when workspace_root is None"
+        assert "coordinator" not in roles, (
+            "coordinator task must not appear when workspace_root is None"
         )
+        assert "data_specialist" in roles
+        assert "matching_specialist" in roles
+
+
+class TestCoordinatorReceivesFeedbackInInputData:
+    """Coordinator input_data should contain HTTP checks and customer metrics."""
+
+    def test_coordinator_receives_http_checks_and_customer_metrics(self, tmp_path: Path) -> None:
+        ws = _create_workspace(tmp_path)
+        adapter = StartupVCAdapter(
+            workspace_root=str(ws),
+            use_customer_simulation=False,
+        )
+        # Inject previous results to simulate a second cycle
+        adapter._http_check_results = {
+            "http_landing_score": 0.8,
+            "http_signup_score": 0.6,
+            "http_navigation_score": 0.7,
+        }
+        adapter._previous_simulation_results = {
+            "customer_metrics": {"founder_interested_rate": 0.3},
+            "success_rate": 1.0,
+        }
+        ctx = _FakeContext(run_id="run_fb", cycle_id=2)
+
+        tasks = adapter.build_cycle_tasks(ctx)
+        first = tasks[0]
+
+        assert "previous_http_checks" in first.input_data
+        assert first.input_data["previous_http_checks"]["http_landing_score"] == 0.8
+        assert "customer_metrics" in first.input_data
+        assert first.input_data["customer_metrics"]["founder_interested_rate"] == 0.3
 
 
 class TestHTTPChecksMergeIntoSimulation:

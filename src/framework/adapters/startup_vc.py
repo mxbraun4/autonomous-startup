@@ -99,6 +99,7 @@ class StartupVCAdapter(BaseDomainAdapter):
         self._workspace_server: Any = None
         self._workspace_versioning: Any = None
         self._http_check_results: Optional[Dict[str, Any]] = None
+        self._previous_simulation_results: Optional[Dict[str, Any]] = None
 
         if self._workspace_root:
             from src.workspace.server import WorkspaceServer
@@ -116,46 +117,58 @@ class StartupVCAdapter(BaseDomainAdapter):
         tasks: List[TaskSpec] = []
 
         if self._workspace_root:
-            # Website builder runs first (priority 0)
-            input_data: Dict[str, Any] = {}
+            # Coordinator-driven flow: emit ONE coordinator task.
+            # The coordinator analyses feedback and delegates to whichever
+            # agents it decides are needed via delegated_tasks.
+            input_data: Dict[str, Any] = {"cycle_id": cycle_id}
             if self._http_check_results:
                 input_data["previous_http_checks"] = self._http_check_results
+            if self._previous_simulation_results:
+                customer_metrics = self._previous_simulation_results.get("customer_metrics")
+                if customer_metrics:
+                    input_data["customer_metrics"] = customer_metrics
+                input_data["previous_results"] = {
+                    k: v
+                    for k, v in self._previous_simulation_results.items()
+                    if k not in ("customer_metrics", "customer_diagnostics")
+                }
             tasks.append(
                 TaskSpec(
                     run_id=run_id,
                     cycle_id=cycle_id,
-                    task_id=f"startup_vc_website_builder_cycle_{cycle_id}",
-                    objective="Improve the marketplace website based on customer simulation feedback and HTTP check results",
-                    agent_role="website_builder",
-                    required_capabilities=["workspace_read", "workspace_write", "workspace_list"],
+                    task_id=f"startup_vc_coordinator_cycle_{cycle_id}",
+                    objective="Analyze feedback, formulate vision, delegate to agents",
+                    agent_role="coordinator",
+                    required_capabilities=["coordination"],
                     constraints={},
                     priority=0,
                     input_data=input_data,
                 ),
             )
-
-        tasks.extend([
-            TaskSpec(
-                run_id=run_id,
-                cycle_id=cycle_id,
-                task_id=f"startup_vc_data_cycle_{cycle_id}",
-                objective="Identify startup/VC data coverage gaps and refresh top gaps",
-                agent_role="data_specialist",
-                required_capabilities=["data_coverage_analysis", "database_write"],
-                constraints={"max_targets": self._max_targets_per_cycle},
-                priority=1,
-            ),
-            TaskSpec(
-                run_id=run_id,
-                cycle_id=cycle_id,
-                task_id=f"startup_vc_matching_cycle_{cycle_id}",
-                objective="Generate explainable startup-to-VC match shortlist",
-                agent_role="matching_specialist",
-                required_capabilities=["match_scoring", "explanation_generation"],
-                constraints={"shortlist_size": self._max_targets_per_cycle},
-                priority=2,
-            ),
-        ])
+        else:
+            # Non-workspace flow: emit the 2 hardcoded specialist tasks.
+            tasks.extend([
+                TaskSpec(
+                    run_id=run_id,
+                    cycle_id=cycle_id,
+                    task_id=f"startup_vc_data_cycle_{cycle_id}",
+                    objective="Identify startup/VC data coverage gaps and refresh top gaps",
+                    agent_role="data_specialist",
+                    required_capabilities=["data_coverage_analysis", "database_write"],
+                    constraints={"max_targets": self._max_targets_per_cycle},
+                    priority=1,
+                ),
+                TaskSpec(
+                    run_id=run_id,
+                    cycle_id=cycle_id,
+                    task_id=f"startup_vc_matching_cycle_{cycle_id}",
+                    objective="Generate explainable startup-to-VC match shortlist",
+                    agent_role="matching_specialist",
+                    required_capabilities=["match_scoring", "explanation_generation"],
+                    constraints={"shortlist_size": self._max_targets_per_cycle},
+                    priority=2,
+                ),
+            ])
         return tasks
 
     def simulate_environment(
@@ -179,7 +192,9 @@ class StartupVCAdapter(BaseDomainAdapter):
                 self._http_check_results = None
 
         if not self._use_customer_simulation:
-            return self._formula_simulation(base_metrics)
+            result = self._formula_simulation(base_metrics)
+            self._previous_simulation_results = result
+            return result
 
         try:
             environment_output = run_customer_environment(
@@ -226,7 +241,7 @@ class StartupVCAdapter(BaseDomainAdapter):
                 ),
             )
 
-            return {
+            result = {
                 **base_metrics,
                 "measurement_source": "customer_simulation",
                 "response_rate": response_rate,
@@ -249,10 +264,13 @@ class StartupVCAdapter(BaseDomainAdapter):
                     "events_count": len(environment_output.get("events") or []),
                 },
             }
+            self._previous_simulation_results = result
+            return result
         except Exception as exc:
             fallback = self._formula_simulation(base_metrics)
             fallback["measurement_source"] = "customer_simulation_fallback_formula"
             fallback["customer_simulation_error"] = str(exc)
+            self._previous_simulation_results = fallback
             return fallback
 
     @staticmethod
