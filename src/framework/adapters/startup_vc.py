@@ -15,6 +15,9 @@ from src.simulation.customer_environment import (
     run_customer_environment,
 )
 from src.simulation.customer_event_instrumentation import validate_product_events
+from src.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 def _normalized_success(total: int, completed: int) -> float:
@@ -63,6 +66,8 @@ class StartupVCAdapter(BaseDomainAdapter):
         simulation_seed: int = 42,
         match_calibration_path: Optional[str] = None,
         match_calibration_min_samples: int = 20,
+        workspace_root: Optional[str] = None,
+        workspace_server_port: int = 0,
     ) -> None:
         self._max_targets_per_cycle = max(1, int(max_targets_per_cycle))
         self._use_customer_simulation = bool(use_customer_simulation)
@@ -86,10 +91,50 @@ class StartupVCAdapter(BaseDomainAdapter):
         self._product_events_loaded = False
         self._cached_product_events: Optional[List[Dict[str, Any]]] = None
 
+        # Workspace mode
+        self._workspace_root: Optional[str] = (
+            str(workspace_root).strip() if workspace_root else None
+        )
+        self._workspace_server_port = int(workspace_server_port)
+        self._workspace_server: Any = None
+        self._workspace_versioning: Any = None
+        self._http_check_results: Optional[Dict[str, Any]] = None
+
+        if self._workspace_root:
+            from src.workspace.server import WorkspaceServer
+            from src.workspace.versioning import WorkspaceVersioning
+
+            self._workspace_server = WorkspaceServer(
+                self._workspace_root,
+                port=self._workspace_server_port,
+            )
+            self._workspace_versioning = WorkspaceVersioning(self._workspace_root)
+
     def build_cycle_tasks(self, run_context: Any) -> List[TaskSpec]:
         cycle_id = int(getattr(run_context, "cycle_id", 0))
         run_id = getattr(run_context, "run_id", None)
-        return [
+        tasks: List[TaskSpec] = []
+
+        if self._workspace_root:
+            # Website builder runs first (priority 0)
+            input_data: Dict[str, Any] = {}
+            if self._http_check_results:
+                input_data["previous_http_checks"] = self._http_check_results
+            tasks.append(
+                TaskSpec(
+                    run_id=run_id,
+                    cycle_id=cycle_id,
+                    task_id=f"startup_vc_website_builder_cycle_{cycle_id}",
+                    objective="Improve the marketplace website based on customer simulation feedback and HTTP check results",
+                    agent_role="website_builder",
+                    required_capabilities=["workspace_read", "workspace_write", "workspace_list"],
+                    constraints={},
+                    priority=0,
+                    input_data=input_data,
+                ),
+            )
+
+        tasks.extend([
             TaskSpec(
                 run_id=run_id,
                 cycle_id=cycle_id,
@@ -110,17 +155,8 @@ class StartupVCAdapter(BaseDomainAdapter):
                 constraints={"shortlist_size": self._max_targets_per_cycle},
                 priority=2,
             ),
-            TaskSpec(
-                run_id=run_id,
-                cycle_id=cycle_id,
-                task_id=f"startup_vc_outreach_cycle_{cycle_id}",
-                objective="Draft and prepare personalized outreach messages for top matches",
-                agent_role="outreach_specialist",
-                required_capabilities=["message_personalization", "campaign_tracking"],
-                constraints={"message_count": self._max_targets_per_cycle},
-                priority=3,
-            ),
-        ]
+        ])
+        return tasks
 
     def simulate_environment(
         self,
@@ -128,6 +164,20 @@ class StartupVCAdapter(BaseDomainAdapter):
         run_context: Any,
     ) -> Dict[str, Any]:
         base_metrics = self._extract_base_metrics(cycle_outputs, run_context)
+
+        # Run HTTP checks if workspace is active
+        if self._workspace_root and self._workspace_server is not None:
+            try:
+                base_url = self._workspace_server.start()  # idempotent
+                from src.simulation.http_checks import WorkspaceHTTPChecker
+
+                checker = WorkspaceHTTPChecker(base_url)
+                self._http_check_results = checker.run_all_checks()
+                base_metrics["http_checks"] = self._http_check_results
+            except Exception as exc:
+                logger.warning("Workspace HTTP checks failed: %s", exc)
+                self._http_check_results = None
+
         if not self._use_customer_simulation:
             return self._formula_simulation(base_metrics)
 
@@ -251,7 +301,7 @@ class StartupVCAdapter(BaseDomainAdapter):
 
     def _customer_params(self, success_rate: float) -> Dict[str, Any]:
         score = _clamp01(success_rate)
-        return {
+        params = {
             "founder_base_interest": min(1.0, 0.12 + (0.20 * score)),
             "vc_base_interest": min(1.0, 0.10 + (0.18 * score)),
             "meeting_rate_from_mutual_interest": min(1.0, 0.25 + (0.30 * score)),
@@ -260,6 +310,33 @@ class StartupVCAdapter(BaseDomainAdapter):
             "derived_personalization_score_boost": min(1.0, 0.05 * score),
             "derived_timing_score_boost": min(1.0, 0.04 * score),
         }
+        # Boost customer params based on HTTP check results
+        if self._http_check_results:
+            signup_score = _safe_float(
+                self._http_check_results.get("http_signup_score", 0.0)
+            )
+            nav_score = _safe_float(
+                self._http_check_results.get("http_navigation_score", 0.0)
+            )
+            landing_score = _safe_float(
+                self._http_check_results.get("http_landing_score", 0.0)
+            )
+            # CTA clarity boost from signup form quality
+            params["derived_personalization_score_boost"] = min(
+                1.0,
+                params["derived_personalization_score_boost"] + signup_score * 0.15,
+            )
+            # Reduce signup friction from good navigation
+            params["founder_base_interest"] = min(
+                1.0,
+                params["founder_base_interest"] + nav_score * 0.10,
+            )
+            # Trust boost from working landing page
+            params["vc_base_interest"] = min(
+                1.0,
+                params["vc_base_interest"] + landing_score * 0.10,
+            )
+        return params
 
     def _load_product_events(self) -> Optional[List[Dict[str, Any]]]:
         if self._product_events_loaded:
@@ -439,6 +516,24 @@ class StartupVCAdapter(BaseDomainAdapter):
             )
 
         return updates
+
+    def snapshot_workspace(self, cycle_id: int) -> Optional[Dict[str, Any]]:
+        """Take a versioned snapshot of the workspace at the start of a cycle."""
+        if self._workspace_versioning is None:
+            return None
+        try:
+            return self._workspace_versioning.snapshot(cycle_id)
+        except Exception as exc:
+            logger.warning("Workspace snapshot failed for cycle %s: %s", cycle_id, exc)
+            return None
+
+    def stop_workspace_server(self) -> None:
+        """Stop the workspace HTTP server."""
+        if self._workspace_server is not None:
+            try:
+                self._workspace_server.stop()
+            except Exception as exc:
+                logger.warning("Workspace server stop failed: %s", exc)
 
     def get_domain_policies(self) -> Dict[str, Any]:
         return {

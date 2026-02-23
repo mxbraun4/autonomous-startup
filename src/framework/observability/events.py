@@ -24,6 +24,9 @@ EVENT_TYPES_REQUIRED = {
     "policy_violation",
     "checkpoint_saved",
     "checkpoint_restored",
+    "policy_patch_applied",
+    "procedure_updated",
+    "agent_reasoning",
 }
 
 

@@ -40,12 +40,11 @@ def test_startup_vc_adapter_builds_cycle_tasks():
     run_context = SimpleNamespace(run_id="run_a", cycle_id=2)
     tasks = adapter.build_cycle_tasks(run_context)
 
-    assert len(tasks) == 3
+    assert len(tasks) == 2
     assert all(task.run_id == "run_a" for task in tasks)
     assert all(task.cycle_id == 2 for task in tasks)
     assert tasks[0].constraints["max_targets"] == 4
     assert tasks[1].constraints["shortlist_size"] == 4
-    assert tasks[2].constraints["message_count"] == 4
 
 
 def test_startup_vc_adapter_simulation_and_metrics():

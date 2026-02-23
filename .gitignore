@@ -44,6 +44,9 @@ data/memory/
 data/crewai_local/
 data/crewai_storage/
 
+# Workspace versioned snapshots
+workspace/.versions/
+
 # Logs
 *.log
 logs/

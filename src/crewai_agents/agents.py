@@ -61,6 +61,7 @@ def _normalize_role(role: Optional[str]) -> str:
         "engineering": "developer",
         "data": "developer",
         "data_strategist": "developer",
+        "outreach": "coordinator",
     }
     return aliases.get(text, text)
 
@@ -72,15 +73,12 @@ def _openrouter_model_for_role(role: Optional[str]) -> str:
         "product": "product_model",
         "developer": "developer_model",
         "reviewer": "reviewer_model",
-        "manager": "manager_model",
     }
 
     attrs = []
     mapped = attr_map.get(normalized)
     if mapped:
         attrs.append(mapped)
-    if normalized == "manager":
-        attrs.append("coordinator_model")
     attrs.append("openrouter_default_model")
 
     for attr in attrs:
@@ -102,7 +100,7 @@ def get_llm(role: Optional[str] = None) -> LLM | DeterministicMockLLM:
     """Get an LLM instance based on configuration and optional role.
 
     When ``OPENROUTER_API_KEY`` is configured (and ``MOCK_MODE=false``), role-
-    specific models are selected for coordinator/product/developer/reviewer/manager.
+    specific models are selected for coordinator/product/developer/reviewer.
     """
     if settings.mock_mode:
         return DeterministicMockLLM()
@@ -283,6 +281,64 @@ def create_developer_agent(
         verbose=True,
         allow_delegation=True,
         memory=True
+    )
+
+
+def create_website_builder(
+    llm: LLM = None,
+    prompt_override: Optional[str] = None,
+) -> Agent:
+    """Create the Website Builder agent.
+
+    This agent iterates on the marketplace website based on customer
+    simulation feedback and HTTP check results.
+
+    Args:
+        llm: LLM instance to use
+
+    Returns:
+        Website Builder agent
+    """
+    from src.workspace.file_tools import (
+        read_workspace_file,
+        write_workspace_file,
+        list_workspace_files,
+    )
+
+    backstory = _with_prompt_override(
+        '''You are a skilled front-end developer building a startup-VC marketplace
+        website. You iterate on HTML, CSS, and JavaScript files to improve the site
+        based on customer simulation feedback and HTTP check results.
+
+        Your approach:
+        - List workspace files to understand current site structure
+        - Read existing files to understand what needs improvement
+        - Analyse previous feedback (HTTP check scores, customer signals)
+        - Write improved files that address the feedback
+        - Focus on CTA clarity, signup flow, navigation, and trust signals
+
+        You have access to workspace file tools that let you read, write, and list
+        files in the workspace directory. Always check the current state before making
+        changes.
+        ''',
+        prompt_override,
+    )
+
+    return Agent(
+        role='Website Builder',
+        goal='Improve the marketplace website based on customer simulation feedback to increase signups and engagement',
+        backstory=backstory,
+        tools=[
+            read_workspace_file,
+            write_workspace_file,
+            list_workspace_files,
+            share_insight,
+            get_team_insights,
+        ],
+        llm=llm or get_llm("developer"),
+        verbose=True,
+        allow_delegation=False,
+        memory=True,
     )
 
 

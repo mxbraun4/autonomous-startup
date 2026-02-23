@@ -378,13 +378,11 @@ def create_autonomous_startup_crew(
         developer_llm = get_llm("developer")
         reviewer_llm = get_llm("reviewer")
         product_llm = get_llm("product")
-        manager_llm = get_llm("manager")
     else:
         coordinator_llm = llm
         developer_llm = llm
         reviewer_llm = llm
         product_llm = llm
-        manager_llm = llm
 
     coordinator = create_master_coordinator(coordinator_llm)
     developer_agent = create_developer_agent(developer_llm)
@@ -406,7 +404,7 @@ def create_autonomous_startup_crew(
         agents=[coordinator, product_strategist, developer_agent, reviewer_agent],
         tasks=tasks,
         process=Process.hierarchical,
-        manager_llm=manager_llm,
+        manager_llm=coordinator_llm,
         verbose=_verbose_flag(verbose),
         memory=False,
         cache=True,

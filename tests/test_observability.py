@@ -70,6 +70,18 @@ def test_event_logger_emits_and_derives_required_classes(tmp_path):
         {"run_id": "run_obs", "cycle_id": 1, "termination_action": "continue"},
     )
     logger.emit("run_end", {"run_id": "run_obs"})
+    logger.emit(
+        "policy_patch_applied",
+        {"run_id": "run_obs", "cycle_id": 1, "version_before": 1, "version_after": 2, "patches": []},
+    )
+    logger.emit(
+        "procedure_updated",
+        {"run_id": "run_obs", "cycle_id": 1, "task_type": "test", "version": 1},
+    )
+    logger.emit(
+        "agent_reasoning",
+        {"run_id": "run_obs", "cycle_id": 1, "task_id": "t1", "agent_id": "a1", "reasoning": "because"},
+    )
 
     events = logger.get_events(run_id="run_obs")
     event_types = {event.event_type for event in events}

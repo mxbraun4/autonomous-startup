@@ -1,6 +1,6 @@
 # Next Steps: Full Autonomy Roadmap
 
-Last updated: 2026-02-20
+Last updated: 2026-02-23
 
 Design principle: **zero human intervention**. The system must schedule itself, heal itself, scale itself, and improve itself. Every item in this document removes a dependency on a human operator.
 
@@ -14,11 +14,11 @@ Before listing next steps, here is what the code review found. The framework is 
 |---|---|---|
 | Learning auto-apply | **Working** | Procedures and policies update without approval |
 | Gate-driven stop/pause | **Working** | Loop terminates when gates fail |
-| Gate-driven rollback | **Partial** | Gate recommends rollback but nothing executes it |
-| Policy auto-escalation | **Not built** | Policy engine is static; no logic raises or tightens limits based on performance |
+| Gate-driven rollback | **Working** | `RunController` self-heal wired: rollback to last checkpoint, re-run failed cycle, escalate to stop after `max_self_heal_attempts` |
+| Policy auto-escalation | **Working** | `AdaptivePolicyController` auto-created by `RunController`; adjusts autonomy level and step budgets per gate results |
 | Self-scheduling | **Not built** | Runs only start when a human calls `run.py` |
-| Self-diagnosis | **Not built** | Events are logged but nothing reads them to act |
-| Auto-budgeting | **Not built** | `BudgetManager.is_critical()` exists but is never called; budgets are fixed |
+| Self-diagnosis | **Working** | `DiagnosticsAgent` auto-created by `RunController`; scans event windows for tool denials, policy violations, gate drops |
+| Auto-budgeting | **Partial** | `BudgetManager.is_critical()` exists but is never called pre-cycle; budgets are tracked but not auto-adjusted |
 | Dynamic tool creation | **Working** | Product-generated tool specs now auto-register as runtime dynamic tools |
 | Agent spawn / self-modify | **Working** | Build phase can spawn outreach clones and applies learned prompt refinements |
 | Self-deployment | **Partial** | Dynamic tools auto-deploy to local artifacts; full production code rollout pipeline still pending |
@@ -415,9 +415,11 @@ The acquisition engine should publish without human editing.
 |------|----------|-----------|
 | 2026-02-20 | Full autonomy, no human-in-the-loop | System must schedule, heal, scale, and improve itself |
 | 2026-02-20 | Learning update mode: auto-apply | Already implemented; confirmed as desired behavior |
+| 2026-02-23 | Framework + CrewAI integration complete | `scripts/run.py --mode framework` wires StartupVCAdapter + CrewAI agents through RunController, evaluation gates, checkpointing, adaptive policy, diagnostics |
+| 2026-02-23 | Tool-call bridging: monkey-patch `_run` | CrewAI tool invocations routed through `runtime.execute_tool_call()` via `_bridge_crewai_tools()` shim in `startup_vc_agents.py` |
+| 2026-02-23 | Domain policy hook for startup-VC | `build_startup_vc_domain_policy_hook()` gates outreach sends and web searches per cycle |
+| 2026-02-23 | Gate-driven rollback: implemented | `RunController` self-heal with `max_self_heal_attempts=2` (default), rollback to checkpoint, re-run |
 | _pending_ | Default autonomy level for real-LLM runs | Needed before Run Scheduler goes live |
 | _pending_ | Hard budget limits (tokens, cost ceiling) | Needed before Run Scheduler goes live |
-| _pending_ | Gate failure: auto-rollback (not just stop) | Needed for Self-Healing Loop (4.2) |
 | _pending_ | Run artifact retention window | Needed for Autonomous Compliance (7.5) |
-| _pending_ | Max self-heal attempts per run | Bounds recovery loops in 4.2 |
 | _pending_ | Policy adjustment bounds (floor/ceiling) | Bounds for Adaptive Policy Controller (4.3) |

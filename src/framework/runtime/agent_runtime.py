@@ -172,6 +172,20 @@ class AgentRuntime:
             # 7. Emit event
             self._emit("task_completed", task_result)
 
+            # 7b. Emit agent reasoning if present
+            reasoning = output.get("reasoning", "")
+            if reasoning:
+                self._emit(
+                    "agent_reasoning",
+                    {
+                        "run_id": self._context.run_context.run_id if self._context else None,
+                        "cycle_id": self._context.run_context.cycle_id if self._context else None,
+                        "task_id": task_spec.task_id,
+                        "agent_id": decision.agent_id,
+                        "reasoning": reasoning,
+                    },
+                )
+
             return task_result
 
         except BudgetExhaustedError as exc:

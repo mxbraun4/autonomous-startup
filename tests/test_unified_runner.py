@@ -31,6 +31,12 @@ def test_build_command_for_scheduler_mode():
     assert Path(command[1]).name == "run_scheduler.py"
 
 
+def test_build_command_for_framework_mode():
+    command = build_command("framework", ["--iterations", "3"])
+    assert command[-2:] == ["--iterations", "3"]
+    assert Path(command[1]).name == "run_framework_simulation.py"
+
+
 def test_build_command_rejects_unknown_mode():
     with pytest.raises(ValueError, match="Unsupported mode"):
         build_command("unknown", [])
