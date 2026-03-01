@@ -132,7 +132,7 @@ class Procedure(BaseMemoryEntity):
 class ConsensusEntry(BaseMemoryEntity):
     """A shared-knowledge entry agreed upon by agents."""
 
-    key: str  # namespaced, e.g. "strategy.outreach.best_time"
+    key: str  # namespaced, e.g. "strategy.target_sector"
     value: Any = None
     entry_type: EntryType = EntryType.FACT
     confidence: float = 1.0

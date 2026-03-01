@@ -904,7 +904,7 @@ def share_insight(key: str, value: str, evidence: str = "") -> str:
     can access them in future iterations.
 
     Args:
-        key: A namespaced key (e.g., "outreach.best_subject_line", "data.top_gap_sector")
+        key: A namespaced key (e.g., "product.top_feature_gap", "data.top_gap_sector")
         value: The insight or fact to share
         evidence: Supporting evidence or reasoning
 
@@ -967,7 +967,7 @@ def make_share_insight(role: str):
         can access them in future iterations.
 
         Args:
-            key: A namespaced key (e.g., "outreach.best_subject_line", "data.top_gap_sector")
+            key: A namespaced key (e.g., "product.top_feature_gap", "data.top_gap_sector")
             value: The insight or fact to share
             evidence: Supporting evidence or reasoning
 
@@ -987,7 +987,7 @@ def get_team_insights(topic: str = "") -> str:
     iterations or other agents. Provide a topic prefix to filter results.
 
     Args:
-        topic: Key prefix to filter (e.g., "outreach", "data"). Empty for all.
+        topic: Key prefix to filter (e.g., "product", "data"). Empty for all.
 
     Returns:
         JSON with matching insights
