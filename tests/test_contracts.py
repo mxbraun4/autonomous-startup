@@ -115,13 +115,13 @@ class TestProcedure:
 class TestConsensusEntry:
     def test_creation(self):
         entry = ConsensusEntry(
-            key="strategy.outreach.best_time",
-            value="Tuesday 9am",
+            key="strategy.target_sector",
+            value="fintech",
             entry_type=EntryType.STRATEGY,
             confidence=0.85,
-            source_agent_id="outreach_expert",
+            source_agent_id="coordinator",
         )
-        assert entry.key == "strategy.outreach.best_time"
+        assert entry.key == "strategy.target_sector"
         assert entry.consensus_status == ConsensusStatus.APPROVED
 
     def test_proposed_status(self):
