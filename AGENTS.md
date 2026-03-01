@@ -1,4 +1,4 @@
-﻿# Agent Guide
+# Agent Guide
 
 ## Mission
 Build and maintain a CrewAI-based autonomous startup simulation for a startup-VC matching platform.
@@ -11,11 +11,10 @@ The system must:
 - include constrained customer simulation for pre-production validation
 
 ## Source of Truth Docs
+- `README.md`: setup and operational commands
 - `PRODUCT_VISION.md`: product direction, value proposition, acquisition layer
-- `EXPERIMENT.md`: hypotheses, tracks, success criteria, decision gates
 - `CUSTOMER_SIMULATION.md`: constrained customer model, state machines, parameters
-- `plan.md`: implementation roadmap, milestones, and execution order
-- `README.md` and `QUICKSTART.md`: setup and operational commands
+- `next_steps.md`: current priorities and open work items
 
 ## Workstream Priorities
 1. Matching quality and explainability
@@ -36,8 +35,10 @@ The system must:
   - `python scripts/seed_memory.py`
 - Quick integration check:
   - `python scripts/test_crewai_quick.py`
-- Run simulation:
+- Run simulation (CrewAI mode):
   - `python scripts/run.py --mode crewai --iterations 3 --verbose 2`
+- Run simulation (framework + workspace mode):
+  - `python scripts/run_framework_simulation.py --iterations 3`
 - Run tests:
   - `pytest tests/ -v`
 - Targeted integration test:
@@ -53,8 +54,15 @@ The system must:
 - `src/data/database.py`: SQLite persistence for startups, VCs, and outreach
 - `src/memory/`: semantic/episodic/procedural memory components
 - `src/simulation/`: simulated startup and VC behavior, predefined scenarios
+- `src/simulation/http_checks.py`: HTTP validation checks
+- `src/workspace/file_tools.py`: sandboxed file tools for workspace
+- `src/workspace/server.py`: workspace HTTP server
+- `src/workspace/versioning.py`: workspace snapshots
+- `src/framework/adapters/startup_vc.py`: domain adapter with workspace mode
+- `src/framework/runtime/startup_vc_agents.py`: CrewAI-backed agent wrappers
 - `src/utils/config.py`: environment-backed settings and file paths
 - `scripts/`: entrypoints for seeding, simulation runs, and quick validation
+- `scripts/run_framework_simulation.py`: framework + workspace simulation runner
 
 ## Change Rules
 - Keep tool contracts stable:
@@ -62,7 +70,6 @@ The system must:
   - Return JSON-serializable string responses from tools
 - Keep orchestration contract stable:
   - `run_build_measure_learn_cycle()` must return keys `iterations` and `metrics_evolution`
-- Align implementation work to one or more experiment tracks in `EXPERIMENT.md` (A-D)
 - Preserve constrained customer simulation assumptions from `CUSTOMER_SIMULATION.md`:
   - no external network dependency for customer behavior decisions
   - deterministic/reproducible behavior for fixed inputs
@@ -70,6 +77,8 @@ The system must:
 - Route new configuration through `src/utils/config.py` instead of hardcoding
 - Use `StartupDatabase` for DB interactions; avoid ad hoc SQL outside `src/data/database.py`
 - If adding a new tool, wire it through the correct agent in `src/crewai_agents/agents.py`
+- When adding workspace file tools, wire them through `src/workspace/file_tools.py`
+- When modifying workspace pages, ensure HTTP checks still pass
 - Keep scripts runnable from repo root and avoid breaking current CLI flags
 - For acquisition features, maintain funnel continuity:
   - `Article -> Tool -> Signup -> Match -> Outreach`
@@ -88,7 +97,6 @@ The system must:
   - `pytest tests/test_crewai_integration.py -v`
 - For end-to-end behavior changes, run one simulation iteration and confirm output completes:
   - `python scripts/run.py --mode crewai --iterations 1 --verbose 1`
-- For experiment-sensitive changes, verify outputs map to `EXPERIMENT.md` success criteria and note which track(s) were affected
 - For customer simulation changes, verify reproducibility with fixed parameters/seed and report conversion deltas
 
 ## Safety
@@ -98,10 +106,8 @@ The system must:
 - Avoid introducing live-network dependencies for constrained simulation paths
 
 ## Docs Sync
-If you change commands, flags, architecture, product assumptions, or experiment logic, update:
+If you change commands, flags, architecture, or product assumptions, update:
 - `README.md`
-- `QUICKSTART.md`
 - `PRODUCT_VISION.md`
-- `EXPERIMENT.md`
 - `CUSTOMER_SIMULATION.md`
-- `plan.md`
+- `next_steps.md`

@@ -1,297 +1,125 @@
 # Autonomous Startup Multi-Agent System
 
-A production-ready hierarchical multi-agent system built with **CrewAI** that autonomously executes the Build-Measure-Learn cycle for a startup-VC matching platform.
+A multi-agent system built with **CrewAI** that autonomously runs Build-Measure-Learn cycles for a startup-VC marketplace. Agents build a real website, validate it via HTTP, and iterate based on customer simulation feedback.
 
-## Overview
-
-This system demonstrates:
-- **Hierarchical multi-agent coordination** (Manager -> Specialists -> Tools)
-- **Build-Measure-Learn cycle** execution with learning
-- **Memory systems** for context and learning
-- **Simulated ecosystem** with startup and VC agents
-- **Autonomous improvement** across iterations
-- **Framework guardrails** for tool failover, loop detection, and bounded delegation
-- **Framework autonomy controls** for scheduler triggers, rollback self-heal, adaptive policy tuning, and diagnostics actions
-- **Dynamic tool lifecycle** where product-generated specs auto-register and auto-deploy as local runtime artifacts
-- **Adaptive outreach staffing + prompt refinement** driven by prior-cycle outcomes
-- **Deterministic mock-mode execution** with local-only runtime storage
-
-## CrewAI Benefits
-
-- Production-ready framework
-- Built-in memory and delegation
-- Rich tool ecosystem
-- Better maintainability
+- Hierarchical multi-agent coordination
+- Product-building workspace (agents write HTML/CSS/JS, HTTP validation loop)
+- Customer simulation with deterministic match scoring
+- Framework guardrails (failover, loop detection, bounded delegation)
+- Adaptive autonomy (self-heal, policy tuning, diagnostics)
+- Dynamic tool lifecycle and prompt refinement
+- Deterministic mock-mode execution
 
 ## Quick Start
 
-### Prerequisites
-
-- Python 3.11 or higher
-- pip or Poetry for package management
-
-### Installation
-
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd autonomous-startup
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Or using Poetry
-poetry install
-```
-
-### Setup
-
-1. Create `.env` file:
-```bash
 cp .env.example .env
-```
-
-2. (Optional) Add API keys to `.env`:
-```bash
-MOCK_MODE=true  # Set to false for real LLM calls
-OPENROUTER_API_KEY=your_key_here
-COORDINATOR_MODEL=openrouter/anthropic/claude-3.5-sonnet
-PRODUCT_MODEL=openrouter/google/gemini-2.0-flash-001
-DEVELOPER_MODEL=openrouter/openai/gpt-4o-mini
-REVIEWER_MODEL=openrouter/openai/gpt-4o-mini
-```
-
-In `MOCK_MODE=true`, CrewAI runs with a deterministic local mock LLM and stores runtime DB files in:
-- `data/crewai_local/`
-- `data/crewai_storage/`
-
-3. Seed memory systems:
-```bash
 python scripts/seed_memory.py
+python scripts/run.py
 ```
 
-### Run Simulation
+Set `MOCK_MODE=true` in `.env` to run without API keys -- fully deterministic and fast.
+
+## Run Modes
 
 ```bash
-# Unified runner (default mode: crewai)
+# Default CrewAI simulation
 python scripts/run.py
-
-# Explicit CrewAI mode
-python scripts/run.py --mode crewai
 
 # Custom iterations with verbosity
 python scripts/run.py --mode crewai --iterations 5 --verbose 2
 
+# Framework + workspace mode
+python scripts/run_framework_simulation.py --iterations 3
+
+# Framework mode without workspace
+python scripts/run_framework_simulation.py --no-workspace
+
 # Web-autonomy mode
 python scripts/run.py --mode web --iterations 3 --target-url http://localhost:3000
 
-# Scheduler mode (long-lived trigger loop for web autonomy)
-python scripts/run.py --mode scheduler --cron "*/30 * * * *" --interval-seconds 60
+# Scheduler mode (long-lived trigger loop)
+python scripts/run.py --mode scheduler --cron "*/30 * * * *"
 
-# Scheduler mode from JSON schedule config file
-python scripts/run.py --mode scheduler --schedules-file data/seed/scheduler_schedules.json
-
-# Live dashboard mode (tail NDJSON events in real time)
+# Live dashboard (tail NDJSON events in real time)
 python scripts/run.py --mode dashboard --events-path data/memory/web_autonomy_events.ndjson
 
-# List available safe edit templates
-python scripts/run.py --mode web --list-edit-templates
-
-# Run web autonomy with a bounded edit template
-python scripts/run.py --mode web --edit-template readme_run_command_note --edit-replace "# Unified runner (default mode: crewai and web)"
-
-# Use project-specific template catalog (JSON)
-python scripts/run.py --mode web --list-edit-templates --edit-template-file data/seed/web_edit_templates.json
-
-# Web autonomy with self-heal/adaptive/diagnostics controls
-python scripts/run.py --mode web --max-self-heal-attempts 2 --auto-resume-on-pause --pause-cooldown-seconds 15 --adaptive-policy-reliability-streak 3 --diagnostics-window-size 100
-
-# Quick integration test
-python scripts/test_crewai_quick.py
-
-# Deterministic customer simulation scenario matrix (Track D)
+# Customer simulation
 python scripts/run_customer_simulation.py
 
-# Optional: include visitor cohort/acquisition signals
-python scripts/run_customer_simulation.py --include-visitors
+# Evaluate hypotheses
+python scripts/evaluate_customer_simulation.py \
+  --summary-path data/memory/customer_matrix_summary.json --allow-warn
 
-# Optional: enrich selected interaction feedback with LLM (transitions stay deterministic)
-python scripts/run_customer_simulation.py --use-llm-feedback --llm-feedback-steps matched_to_interested
-
-# Optional: score explanation quality with LLM (falls back to deterministic in mock mode)
-python scripts/run_customer_simulation.py --use-llm-explanation-quality --llm-explanation-model claude-3-haiku-20240307 --llm-explanation-temperature 0.0
-
-# Optional: score personalization quality with LLM (falls back to deterministic in mock mode)
-python scripts/run_customer_simulation.py --use-llm-personalization-score --llm-personalization-model claude-3-haiku-20240307 --llm-personalization-temperature 0.0
-
-# Optional: calibrate match-score component weights from labeled outcome data
-python scripts/run_customer_simulation.py --match-calibration-path data/seed/match_outcomes_sample.json --match-calibration-min-samples 4
-
-# Optional: apply deterministic signup-signal instrumentation from product events
-python scripts/run_customer_simulation.py --product-events-path data/seed/product_events.json
-
-# Optional: emit product-facing output only (observable behavior + failure feedback)
-python scripts/run_customer_simulation.py --product-surface-only
-
-# Evaluate Track D hypotheses against scenario summary
-python scripts/evaluate_customer_simulation.py --summary-path data/memory/customer_matrix_summary.json --allow-warn
+# Tests
+pytest tests/ -v
 ```
 
-`--edit-template-file` defaults to `data/seed/web_edit_templates.json`.
-
 ## Architecture
-
-### Documentation Map
-
-Use this order to avoid duplication:
-
-1. `README.md` - overview and navigation
-2. `QUICKSTART.md` - operational commands
-3. `plan.md` - architecture and roadmap source of truth
-4. `PRODUCT_VISION.md` and `EXPERIMENT.md` - product and experiment source docs
-5. `CUSTOMER_SIMULATION.md` - constrained simulation assumptions
-
-### Current Execution Paths
-
-- **CrewAI simulation path (active):** `src/crewai_agents/` + scripts in `scripts/`
-- **Framework kernel path (implemented modules):** `src/framework/` runtime, orchestration, safety, storage
-- **Startup/VC framework measurement path (integrated):** `StartupVCAdapter` now uses deterministic `customer_environment` outputs (with formula fallback) for cycle metrics
-
-The CrewAI simulation remains the default runnable path. Framework modules are available and tested, and are being progressively integrated.
 
 ### Agent Hierarchy
 
 ```
 Strategic Coordinator (manager)
-    |
     |-> Product Strategy Expert
-    |       |-> tool_builder_tool
-    |
     |-> Developer Agent
-    |       |-> register_dynamic_tool
-    |       |-> execute_dynamic_tool
-    |
     |-> Reviewer (QA) Agent
-            |-> run_quality_checks_tool
+    |-> Website Builder (workspace mode)
 ```
 
-### Memory Systems
+### Execution Paths
 
-1. **Semantic Memory** - In-memory vector store for knowledge retrieval
-   - Stores: Startup data, VC profiles, market knowledge
-   - Search: Cosine similarity on embeddings
+- **CrewAI simulation:** `src/crewai_agents/` + `scripts/run.py`
+- **Framework simulation:** `src/framework/` + `scripts/run_framework_simulation.py`
+- Both paths share the same agent definitions and customer simulation.
 
-2. **Episodic Memory** - SQLite database for experiences
-   - Stores: Agent actions, outcomes, success/failure
-   - Enables: Learning from past experiences
+### Workspace Build Loop
 
-3. **Procedural Memory** - JSON files for workflows
-   - Stores: Successful workflows and best practices
-   - Enables: Reuse of proven strategies
+Agents write to `workspace/` (HTML, CSS, JS files). Each cycle:
 
-### Simulated External Actors
-
-- **Startup Agents**: Respond to outreach based on personalization and VC match quality
-- **VC Agents**: Evaluate startups based on sector, stage, and geography alignment
-
-### Framework Runtime Guardrails
-
-- **Capability failover with cooldowns**: tool calls can fall back to lower-priority tools when primary tools fail
-- **Tool-call loop detection**: repeated identical tool signatures are denied by policy/runtime safeguards
-- **Bounded delegation**: orchestration enforces delegation depth and child-task limits
-- **Deterministic scheduling/retries**: seeded tie-breaks and transient-only retry policies
-- **Rollback self-heal**: gate-recommended rollback can revert policy/procedure updates and rerun from checkpoint
-- **Adaptive policy control**: per-cycle reliability/safety/efficiency/learning outcomes can tighten or widen limits
-- **Diagnostics actions**: event-window pattern detection can disable unstable tools, tighten policy, and request strategy shifts
-- **Autonomous scheduler**: cron/data/metric/event triggers can dispatch `RunController.run()` or `resume()` under a global lock
+1. `WorkspaceServer` serves files on localhost.
+2. `WorkspaceHTTPChecker` validates pages, forms, and navigation.
+3. HTTP scores feed back into customer simulation parameters.
+4. Versioning snapshots are stored at `workspace/.versions/cycle_N/`.
 
 ## Project Structure
 
 ```
 autonomous-startup/
-|-- src/
-|   |-- crewai_agents/    # CrewAI implementation
-|   |   |-- tools.py      # @tool decorated functions
-|   |   |-- agents.py     # Agent definitions
-|   |   |-- crews.py      # Crew orchestration
-|   |   |-- mock_llm.py   # Deterministic local mock LLM
-|   |   |-- runtime_env.py # Runtime path/telemetry bootstrap
-|   |   |-- __init__.py
-|   |-- framework/        # Layered framework kernel (runtime/orchestration/safety/storage)
-|   |   |-- runtime/
-|   |   |-- orchestration/
-|   |   |-- safety/
-|   |   |-- storage/
-|   |-- memory/           # Memory systems
-|   |   |-- semantic.py
-|   |   |-- episodic.py
-|   |   |-- procedural.py
-|   |-- simulation/       # Simulated agents
-|   |   |-- startup_agent.py
-|   |   |-- vc_agent.py
-|   |   |-- scenarios.py
-|   |   |-- customer_environment.py
-|   |   |-- customer_scenario_matrix.py
-|   |   |-- customer_hypotheses.py
-|   |-- llm/              # LLM client
-|   |   |-- client.py
-|   |   |-- prompts.py
-|   |-- utils/            # Utilities
-|       |-- config.py
-|       |-- logging.py
-|-- data/
-|   |-- seed/             # Seed data
-|   |   |-- startups.json
-|   |   |-- vcs.json
-|   |   |-- knowledge.json
-|   |-- crewai_local/     # CrewAI appdata redirection (runtime generated)
-|   |-- crewai_storage/   # CrewAI task output DBs (runtime generated)
-|   |   |-- customers.json
-|   |   |-- customer_hypotheses.json
-|   |-- memory/           # Runtime data
-|       |-- episodic.db
-|       |-- workflows.json
-|-- scripts/
-|   |-- _bootstrap.py     # Shared script bootstrap helpers
-|   |-- seed_memory.py    # Initialize memories
-|   |-- run.py            # Unified runner (crewai/web/dashboard)
-|   |-- run_simulation.py # CrewAI compatibility runner
-|   |-- run_web_autonomy.py # Localhost web autonomy
-|   |-- live_dashboard.py # Live observability UI
-|   |-- test_crewai_quick.py # Quick test
-|   |-- run_customer_simulation.py # Deterministic customer scenario runner
-|   |-- evaluate_customer_simulation.py # Track D hypothesis evaluator
-|-- tests/
-    |-- test_crewai_integration.py
-```
-
-## Testing
-
-Run tests:
-
-```bash
-# Run all tests
-pytest tests/ -v
-
-# Run CrewAI integration tests
-pytest tests/test_crewai_integration.py -v
-
-# Run framework runtime/orchestration/safety tests
-pytest tests/test_agent_runtime.py tests/test_orchestration/test_orchestration.py tests/test_safety/ -v
-
-# Run with coverage
-pytest tests/ --cov=src --cov-report=html
+├── src/
+│   ├── crewai_agents/     # Agent definitions, tools, crews
+│   ├── framework/         # Runtime, orchestration, safety, storage, eval, learning
+│   │   ├── adapters/      # Domain adapters (startup_vc, web_product)
+│   │   ├── autonomy/      # Run controller, loop, checkpointing, scheduler
+│   │   ├── eval/          # Evaluator, scorecard, gates
+│   │   ├── learning/      # Procedure/policy updaters
+│   │   ├── observability/ # Events, timeline, replay
+│   │   ├── orchestration/ # Executor, task graph, delegation
+│   │   ├── runtime/       # Agent runtime, capability registry, task router
+│   │   ├── safety/        # Policy engine, budget manager, action guard
+│   │   └── storage/       # Unified store, episodic/semantic/procedural backends
+│   ├── simulation/        # Customer simulation, HTTP checks
+│   ├── workspace/         # File tools, HTTP server, versioning
+│   ├── data/              # Database layer
+│   ├── memory/            # Legacy memory components
+│   ├── llm/               # LLM client
+│   └── utils/             # Config, logging
+├── workspace/             # Agent-built marketplace website
+├── scripts/               # Entrypoints (run.py, seed, dashboard, etc.)
+├── tests/                 # 176+ tests
+└── data/seed/             # Seed data (customers, hypotheses, templates)
 ```
 
 ## Configuration
 
-Settings are managed via `.env` file and `src/utils/config.py`:
+Settings are managed via `.env` and `src/utils/config.py`:
 
-```python
+```bash
 # API Keys
 OPENROUTER_API_KEY=your_key
-ANTHROPIC_API_KEY=your_key  # optional fallback
-OPENAI_API_KEY=your_key     # optional fallback
+ANTHROPIC_API_KEY=your_key     # optional fallback
+OPENAI_API_KEY=your_key        # optional fallback
 
 # Per-role models (OpenRouter via LiteLLM)
 COORDINATOR_MODEL=openrouter/anthropic/claude-3.5-sonnet
@@ -299,7 +127,7 @@ PRODUCT_MODEL=openrouter/google/gemini-2.0-flash-001
 DEVELOPER_MODEL=openrouter/openai/gpt-4o-mini
 REVIEWER_MODEL=openrouter/openai/gpt-4o-mini
 
-# Mock Mode (true = no API calls, false = real LLM)
+# Mock Mode
 MOCK_MODE=true
 
 # Logging
@@ -307,117 +135,50 @@ LOG_LEVEL=INFO
 
 # Paths (auto-configured, override if needed)
 MEMORY_DATA_DIR=data/memory
-MEMORY_EMBEDDING_MODEL=default
-MEMORY_WM_DECAY_RATE=0.95
-MEMORY_WM_DEFAULT_MAX_TOKENS=4000
 GENERATED_TOOLS_DIR=data/generated_tools
 GENERATED_TOOLS_RETENTION_DAYS=30
 CREWAI_LOCAL_APPDATA_DIR=data/crewai_local
 CREWAI_DB_STORAGE_DIR=data/crewai_storage
-CREWAI_STORAGE_NAMESPACE=autonomous-startup
 ```
 
-Generated tool specs produced by `tool_builder_tool` are persisted under `data/generated_tools/`.
+Framework runtime policies (`RunConfig.policies`) control guardrail behavior:
+`tool_loop_window`, `max_children_per_parent`, `max_self_heal_attempts`,
+`adaptive_policy_enabled`, `diagnostics_enabled`, `exploratory_task_limit`, etc.
 
-If preferred CrewAI paths are not writable, runtime falls back automatically to:
-- `data/crewai_local_runtime/`
-- `data/crewai_storage_runtime/`
+## Documentation
 
-Framework runtime and orchestration controls are configured through `RunConfig.policies` (not environment variables), including:
-- `tool_loop_window`
-- `tool_loop_max_repeats`
-- `max_children_per_parent`
-- `max_total_delegated_tasks`
-- `dedupe_delegated_objectives`
-- `loop_window_size`
-- `max_identical_tool_calls`
-- `auto_resume_on_pause`
-- `pause_cooldown_seconds`
-- `max_self_heal_attempts`
-- `enable_rollback_self_heal`
-- `policy_adjustment_bounds`
-- `adaptive_policy_enabled`
-- `diagnostics_enabled`
-- `diagnostics_window_size`
-- `exploratory_task_limit`
+| File | Purpose |
+|------|---------|
+| `README.md` | This file |
+| `AGENTS.md` | Developer/agent guide with change rules |
+| `PRODUCT_VISION.md` | Product direction and acquisition strategy |
+| `CUSTOMER_SIMULATION.md` | Customer simulation spec (state machines, transition logic) |
+| `next_steps.md` | Full autonomy roadmap |
 
-## Runtime Expectations
+## Testing
 
-Mock-mode runs are deterministic and primarily used to validate orchestration, guardrails, and end-to-end flow completion.
-Treat response/meeting metrics as run outputs to inspect, not fixed targets.
-
-## Next Steps (Production)
-
-To evolve this prototype into production:
-
-### Data Layer
-- [ ] Replace SQLite with PostgreSQL
-- [ ] Replace in-memory vectors with Qdrant/Pinecone
-- [ ] Add real data scrapers (Crunchbase API, etc.)
-
-### Infrastructure
-- [ ] Add Temporal.io for durable workflows
-- [ ] Implement proper caching (Redis)
-- [ ] Add message queue (RabbitMQ/Kafka)
-
-### API & UI
-- [ ] Build FastAPI backend
-- [x] Create local live dashboard (`scripts/live_dashboard.py`)
-- [ ] Add authentication
-
-### Deployment
-- [ ] Dockerize services
-- [ ] Kubernetes deployment
-- [ ] CI/CD pipeline
-- [ ] Monitoring and observability
-
-### Advanced Features
-- [ ] Real tool building and execution
-- [ ] Multi-provider LLM fallback
-- [ ] Advanced VC matching algorithms
-- [ ] Email integration for outreach
-
-## Architecture Decisions
-
-| Component | Prototype | Production |
-|-----------|-----------|------------|
-| Vector DB | In-memory dict | Qdrant/Pinecone |
-| Structured DB | SQLite | PostgreSQL |
-| Cache/Queue | Python dict | Redis |
-| LLM | Mock + Haiku | Multi-provider |
-| Orchestration | CrewAI | CrewAI + Temporal.io |
-| Deployment | Local | Kubernetes |
+```bash
+pytest tests/ -v
+pytest tests/ --cov=src --cov-report=html
+```
 
 ## Troubleshooting
 
-### Seed data not loading
+**Seed data not loading**
 ```bash
-# Ensure you're in project root
 python scripts/seed_memory.py
 ```
 
-### Import errors
+**Import errors**
 ```bash
-# Check Python path
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 ```
 
-### Tests failing
+**Tests failing**
 ```bash
-# Install test dependencies
 pip install pytest pytest-cov
 ```
 
 ## License
 
-MIT License - See LICENSE file for details
-
-## Acknowledgments
-
-- Built using CrewAI for agent orchestration
-- Claude (Anthropic) and GPT (OpenAI) for LLM capabilities
-- Inspired by Build-Measure-Learn methodology
-
----
-
-**Note**: This is a simulation-based prototype designed to demonstrate multi-agent coordination patterns. It uses mock data and simulated behaviors. For production use, replace simulated components with real implementations.
+MIT License -- see LICENSE file for details.

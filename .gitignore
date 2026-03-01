@@ -43,6 +43,16 @@ data/memory/workflows.json
 data/memory/
 data/crewai_local/
 data/crewai_storage/
+data/crewai_local_runtime/
+data/crewai_storage_runtime/
+data/memory_runtime/
+data/memory_runtime_tmp/
+data/generated_tools/
+data/collected/
+nul
+
+# Workspace versioned snapshots
+workspace/.versions/
 
 # Logs
 *.log

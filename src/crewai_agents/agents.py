@@ -30,6 +30,8 @@ from src.crewai_agents.tools import (
     # Consensus memory tools
     share_insight,
     get_team_insights,
+    # Role-aware share_insight factory
+    make_share_insight,
 )
 from src.utils.logging import get_logger
 
@@ -67,15 +69,12 @@ def _openrouter_model_for_role(role: Optional[str]) -> str:
         "product": "product_model",
         "developer": "developer_model",
         "reviewer": "reviewer_model",
-        "manager": "manager_model",
     }
 
     attrs = []
     mapped = attr_map.get(normalized)
     if mapped:
         attrs.append(mapped)
-    if normalized == "manager":
-        attrs.append("coordinator_model")
     attrs.append("openrouter_default_model")
 
     for attr in attrs:
@@ -97,7 +96,7 @@ def get_llm(role: Optional[str] = None) -> LLM | DeterministicMockLLM:
     """Get an LLM instance based on configuration and optional role.
 
     When ``OPENROUTER_API_KEY`` is configured (and ``MOCK_MODE=false``), role-
-    specific models are selected for coordinator/product/developer/reviewer/manager.
+    specific models are selected for coordinator/product/developer/reviewer.
     """
     if settings.mock_mode:
         return DeterministicMockLLM()
@@ -130,6 +129,7 @@ def get_llm(role: Optional[str] = None) -> LLM | DeterministicMockLLM:
 def create_master_coordinator(
     llm: LLM = None,
     prompt_override: Optional[str] = None,
+    extra_tools: Optional[list] = None,
 ) -> Agent:
     """Create the Master Coordinator agent.
 
@@ -138,10 +138,18 @@ def create_master_coordinator(
 
     Args:
         llm: LLM instance to use
+        extra_tools: Additional tools to attach (e.g. workspace read/list tools)
 
     Returns:
         Master Coordinator agent
     """
+    workspace_note = ""
+    if extra_tools:
+        workspace_note = (
+            "\n\n        You also have workspace file tools that let you read and list "
+            "files in a product workspace directory. Use these to inspect the current "
+            "state of the website before deciding what to delegate."
+        )
     backstory = _with_prompt_override(
         '''You are an experienced startup ecosystem operator who has built and scaled
         multiple platforms connecting startups with investors. You understand the importance of
@@ -153,15 +161,21 @@ def create_master_coordinator(
         - Decompose high-level goals into specific objectives for each team
         - Delegate to specialists (data, product, outreach) while maintaining strategic oversight
         - Synthesize results and extract learnings to improve next iteration
-        ''',
+        '''
+        + workspace_note,
         prompt_override,
     )
+
+    tools = [make_share_insight("coordinator"), get_team_insights]
+    if extra_tools:
+        tools.extend(extra_tools)
 
     return Agent(
         role='Strategic Coordinator',
         goal='Execute Build-Measure-Learn cycles to continuously improve the startup-VC matching platform',
         backstory=backstory,
         llm=llm or get_llm("coordinator"),
+        tools=tools,
         verbose=True,
         allow_delegation=True,
         memory=True
@@ -218,7 +232,7 @@ def create_data_strategist(
             get_vcs_tool,
             get_database_stats,
             data_validator_tool,
-            share_insight,
+            make_share_insight("data_strategist"),
             get_team_insights,
         ],
         llm=llm or get_llm("data"),
@@ -231,6 +245,7 @@ def create_data_strategist(
 def create_developer_agent(
     llm: LLM = None,
     prompt_override: Optional[str] = None,
+    extra_tools: Optional[list] = None,
 ) -> Agent:
     """Create the Developer Agent.
 
@@ -239,10 +254,18 @@ def create_developer_agent(
 
     Args:
         llm: LLM instance to use
+        extra_tools: Additional tools to attach (e.g. workspace file tools)
 
     Returns:
         Developer agent
     """
+    workspace_note = ""
+    if extra_tools:
+        workspace_note = (
+            "\n\n        You also have workspace file tools that let you read, write, and "
+            "list files in a product workspace directory. Use these to build and "
+            "improve HTML/CSS/JS files based on customer feedback and HTTP check results."
+        )
     backstory = _with_prompt_override(
         '''You are a pragmatic software engineer responsible for turning product ideas
         into working platform capabilities. You focus on shipping small, testable
@@ -256,24 +279,29 @@ def create_developer_agent(
 
         You collaborate tightly with the Product Strategy Expert. Product feedback is
         shared through team insight tools, and you use that feedback to drive execution.
-        ''',
+        '''
+        + workspace_note,
         prompt_override,
     )
+
+    tools = [
+        tool_builder_tool,
+        register_dynamic_tool,
+        list_dynamic_tools,
+        execute_dynamic_tool,
+        data_validator_tool,
+        analytics_tool,
+        make_share_insight("developer"),
+        get_team_insights,
+    ]
+    if extra_tools:
+        tools.extend(extra_tools)
 
     return Agent(
         role='Developer Agent',
         goal='Implement and improve platform tools/features based on product feedback with reliable, testable iterations',
         backstory=backstory,
-        tools=[
-            tool_builder_tool,
-            register_dynamic_tool,
-            list_dynamic_tools,
-            execute_dynamic_tool,
-            data_validator_tool,
-            analytics_tool,
-            share_insight,
-            get_team_insights,
-        ],
+        tools=tools,
         llm=llm or get_llm("developer"),
         verbose=True,
         allow_delegation=True,
@@ -284,6 +312,7 @@ def create_developer_agent(
 def create_product_strategist(
     llm: LLM = None,
     prompt_override: Optional[str] = None,
+    extra_tools: Optional[list] = None,
 ) -> Agent:
     """Create the Product Strategy Expert agent.
 
@@ -291,10 +320,18 @@ def create_product_strategist(
 
     Args:
         llm: LLM instance to use
+        extra_tools: Additional tools to attach (e.g. workspace read/list tools)
 
     Returns:
         Product Strategist agent
     """
+    workspace_note = ""
+    if extra_tools:
+        workspace_note = (
+            "\n\n        You also have workspace file tools that let you read and list "
+            "files in a product workspace directory. Use these to inspect the current "
+            "site and produce improvement requirements."
+        )
     backstory = _with_prompt_override(
         '''You are a product manager with a strong technical background. You identify
         user needs by analyzing interaction patterns, feedback, and workflow inefficiencies.
@@ -307,22 +344,27 @@ def create_product_strategist(
         - Ensure new tools integrate smoothly with existing platform
 
         You use the tool_builder_tool to create specifications for new tools and features.
-        ''',
+        '''
+        + workspace_note,
         prompt_override,
     )
+
+    tools = [
+        tool_builder_tool,
+        register_dynamic_tool,
+        list_dynamic_tools,
+        execute_dynamic_tool,
+        make_share_insight("product_strategist"),
+        get_team_insights,
+    ]
+    if extra_tools:
+        tools.extend(extra_tools)
 
     return Agent(
         role='Product Strategy Expert',
         goal='Build tools and features that enhance platform capabilities and user experience',
         backstory=backstory,
-        tools=[
-            tool_builder_tool,
-            register_dynamic_tool,
-            list_dynamic_tools,
-            execute_dynamic_tool,
-            share_insight,
-            get_team_insights,
-        ],
+        tools=tools,
         llm=llm or get_llm("product"),
         verbose=True,
         allow_delegation=True,
@@ -333,6 +375,7 @@ def create_product_strategist(
 def create_reviewer_agent(
     llm: LLM = None,
     prompt_override: Optional[str] = None,
+    extra_tools: Optional[list] = None,
 ) -> Agent:
     """Create the Reviewer (QA) Agent.
 
@@ -341,10 +384,18 @@ def create_reviewer_agent(
 
     Args:
         llm: LLM instance to use
+        extra_tools: Additional tools to attach (e.g. workspace read/list tools)
 
     Returns:
         Reviewer QA agent
     """
+    workspace_note = ""
+    if extra_tools:
+        workspace_note = (
+            "\n\n        You also have workspace file tools that let you read and list "
+            "files in a product workspace directory. Use these to inspect website "
+            "files and verify correctness, structure, and quality."
+        )
     backstory = _with_prompt_override(
         '''You are a strict software QA reviewer. Your responsibility is to catch
         broken code before it reaches the Strategic Coordinator.
@@ -356,19 +407,24 @@ def create_reviewer_agent(
         - Share QA status and blocking defects with the team
 
         You focus on correctness and release readiness, not feature ideation.
-        ''',
+        '''
+        + workspace_note,
         prompt_override,
     )
+
+    tools = [
+        run_quality_checks_tool,
+        make_share_insight("reviewer"),
+        get_team_insights,
+    ]
+    if extra_tools:
+        tools.extend(extra_tools)
 
     return Agent(
         role='Reviewer (QA) Agent',
         goal='Run syntax and test checks, catch defects early, and block broken code from reaching the coordinator',
         backstory=backstory,
-        tools=[
-            run_quality_checks_tool,
-            share_insight,
-            get_team_insights,
-        ],
+        tools=tools,
         llm=llm or get_llm("reviewer"),
         verbose=True,
         allow_delegation=False,

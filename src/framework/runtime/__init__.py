@@ -20,6 +20,7 @@ from src.framework.runtime.web_agents import (
 from src.framework.runtime.startup_vc_agents import (
     register_startup_vc_agents,
     register_startup_vc_capabilities,
+    register_workspace_capabilities,
 )
 
 __all__ = [
@@ -39,6 +40,7 @@ __all__ = [
     "register_startup_vc_agents",
     "register_startup_vc_capabilities",
     "register_web_agents",
+    "register_workspace_capabilities",
     "register_web_capabilities",
     "resolve_edit_template",
 ]

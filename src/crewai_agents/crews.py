@@ -46,11 +46,6 @@ class BuildPhaseOutput(BaseModel):
     data_quality_score: float = 0.0
     product_feature_name: str = ""
     product_impact_summary: str = ""
-    outreach_messages_sent: int = 0
-    campaign_id: str = ""
-    personalization_score: float = 0.0
-    predicted_response_rate: float = 0.0
-    predicted_meeting_rate: float = 0.0
     summary: str = ""
 
 
@@ -62,8 +57,6 @@ class MeasurementOutput(BaseModel):
     total_sent: int = 0
     responses: int = 0
     meetings: int = 0
-    campaign_id: str = ""
-    campaign_ids: List[str] = Field(default_factory=list)
     measurement_source: str = "no_signal"
     insights: List[str] = Field(default_factory=list)
 
@@ -90,57 +83,20 @@ def _campaign_id_for_iteration(iteration: int) -> str:
 def _collect_measure_metrics(
     iteration: int,
     build_result_text: str,
-    campaign_ids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Collect MEASURE metrics from logged outreach records."""
+    """Collect MEASURE metrics for this iteration.
+
+    Outreach has been removed; return a no-signal baseline.  The evaluator
+    already handles this gracefully.
+    """
     del build_result_text
-    from src.crewai_agents.tools import get_database
-
-    ids = [str(item).strip() for item in (campaign_ids or []) if str(item).strip()]
-    if not ids:
-        ids = [_campaign_id_for_iteration(iteration)]
-
-    db = get_database()
-
-    history: List[Dict[str, Any]] = []
-    seen_rows: set[str] = set()
-    for campaign_id in ids:
-        rows = db.get_outreach_history(campaign_id=campaign_id, limit=500)
-        for row in rows:
-            row_key = str(row.get("id") or row.get("outreach_id") or row)
-            if row_key in seen_rows:
-                continue
-            seen_rows.add(row_key)
-            history.append(row)
-
-    total_sent = len(history)
-
-    responded_statuses = {
-        "responded",
-        "interested",
-        "meeting",
-        "meeting_scheduled",
-        "meeting_booked",
-    }
-    meeting_statuses = {"meeting", "meeting_scheduled", "meeting_booked"}
-
-    responses = sum(
-        1 for record in history if str(record.get("status", "")).lower() in responded_statuses
-    )
-    meetings = sum(
-        1 for record in history if str(record.get("status", "")).lower() in meeting_statuses
-    )
-
-    aggregate_campaign_id = ids[0] if len(ids) == 1 else "multi_campaign"
     return {
-        "response_rate": responses / total_sent if total_sent else 0.0,
-        "meeting_rate": meetings / total_sent if total_sent else 0.0,
-        "total_sent": total_sent,
-        "responses": responses,
-        "meetings": meetings,
-        "campaign_id": aggregate_campaign_id,
-        "campaign_ids": ids,
-        "measurement_source": "outreach_logs" if total_sent else "no_signal",
+        "response_rate": 0.0,
+        "meeting_rate": 0.0,
+        "total_sent": 0,
+        "responses": 0,
+        "meetings": 0,
+        "measurement_source": "no_signal",
     }
 
 
@@ -153,7 +109,7 @@ def create_build_phase_tasks(
     """Create tasks for the BUILD phase.
 
     Args:
-        developer_agent: Developer/implementation agent (legacy callers may pass data agent)
+        developer_agent: Developer/implementation agent
         product_strategist: Product strategy agent
         iteration: Current iteration number
         reviewer_agent: Optional QA reviewer agent
@@ -201,6 +157,7 @@ def create_build_phase_tasks(
         operator workflow speed, or system reliability.
         ''',
         agent=developer_agent,
+        context=[product_task],
         expected_output='''Developer implementation report including:
         - Capability/tool changed (name and purpose)
         - What was implemented or refined this iteration
@@ -224,6 +181,7 @@ def create_build_phase_tasks(
         You are the quality gate. Do not approve broken code.
         ''',
             agent=reviewer_agent,
+            context=[developer_task],
             expected_output='''QA review report including:
         - QA gate status (PASS/FAIL)
         - Syntax check results summary
@@ -233,6 +191,10 @@ def create_build_phase_tasks(
         '''
         )
 
+    tasks = [product_task, developer_task]
+    if reviewer_task is not None:
+        tasks.append(reviewer_task)
+    return tasks
     base_tasks = [product_task, developer_task]
     if reviewer_task is not None:
         base_tasks.append(reviewer_task)
@@ -306,13 +268,11 @@ def create_autonomous_startup_crew(
         developer_llm = get_llm("developer")
         reviewer_llm = get_llm("reviewer")
         product_llm = get_llm("product")
-        manager_llm = get_llm("manager")
     else:
         coordinator_llm = llm
         developer_llm = llm
         reviewer_llm = llm
         product_llm = llm
-        manager_llm = llm
 
     coordinator = create_master_coordinator(coordinator_llm)
     developer_agent = create_developer_agent(developer_llm)
@@ -334,7 +294,7 @@ def create_autonomous_startup_crew(
         agents=[coordinator, product_strategist, developer_agent, reviewer_agent],
         tasks=tasks,
         process=Process.hierarchical,
-        manager_llm=manager_llm,
+        manager_llm=coordinator_llm,
         verbose=_verbose_flag(verbose),
         memory=False,
         cache=True,
@@ -381,6 +341,8 @@ class _FlowState(BaseModel):
     max_iterations: int = 3
     verbose: int = 2
     llm: Any = None
+    enable_dynamic_agent_factory: bool = True
+    max_agents_per_cycle: int = 6
 
     # Per-iteration outputs
     build_result_text: str = ""
@@ -392,8 +354,6 @@ class _FlowState(BaseModel):
     qa_result: Dict[str, Any] = Field(default_factory=dict)
     measure_output: Optional[MeasurementOutput] = None
     learn_output: Optional[LearnPhaseOutput] = None
-    active_campaign_ids: List[str] = Field(default_factory=list)
-
     # Gate recommendation from the EVALUATE phase
     gate_recommendation: str = "continue"  # continue / pause / rollback / stop
 
@@ -421,11 +381,15 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         self,
         max_iterations: int = 3,
         verbose: int = 2,
+        enable_dynamic_agent_factory: bool = True,
+        max_agents_per_cycle: int = 6,
     ) -> None:
         super().__init__(
             max_iterations=max_iterations,
             verbose=verbose,
             llm=None,
+            enable_dynamic_agent_factory=enable_dynamic_agent_factory,
+            max_agents_per_cycle=max_agents_per_cycle,
         )
 
     # -- helpers ----------------------------------------------------------
@@ -516,14 +480,35 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             product_llm,
             prompt_override=self._prompt_override("product"),
         )
-        self.state.active_campaign_ids = []
-
         # Inject learning hints from previous iteration
         extra_context = ""
         if self.state.procedure_hints:
             extra_context = (
                 f"\n\n[Previous iteration learnings]\n{self.state.procedure_hints}\n"
             )
+
+        # Inject consensus memory (team knowledge board) into every task
+        try:
+            from src.crewai_agents.tools import get_memory_store
+            _cons_store = get_memory_store()
+            if _cons_store is not None:
+                _cons_entries = _cons_store.cons_list()
+                # Cap to most recent 20 entries to prevent prompt bloat
+                _cons_entries = _cons_entries[-20:] if len(_cons_entries) > 20 else _cons_entries
+                if _cons_entries:
+                    board_lines = []
+                    for _ce in _cons_entries:
+                        val = str(_ce.value or "")
+                        if len(val) > 200:
+                            val = val[:200] + "..."
+                        board_lines.append(f"- [{_ce.source_agent_id}] {_ce.key}: {val}")
+                    extra_context += (
+                        "\n\n[Team Knowledge Board]\n"
+                        + "\n".join(board_lines)
+                        + "\n"
+                    )
+        except Exception as _cons_exc:
+            logger.debug(f"Consensus injection skipped: {_cons_exc}")
 
         build_tasks = create_build_phase_tasks(
             developer_agent,
@@ -603,6 +588,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             3. State whether this iteration can proceed to coordinator review
             ''',
                 agent=reviewer_agent,
+                context=[fix_task],
                 expected_output='''QA recheck result with PASS/FAIL and blocking defects if any.'''
             )
 
@@ -655,7 +641,6 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         raw = _collect_measure_metrics(
             self.state.iteration,
             self.state.build_result_text,
-            campaign_ids=self.state.active_campaign_ids,
         )
 
         self.state.measure_output = MeasurementOutput(
@@ -664,8 +649,6 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             total_sent=raw.get("total_sent", 0),
             responses=raw.get("responses", 0),
             meetings=raw.get("meetings", 0),
-            campaign_id=raw.get("campaign_id", ""),
-            campaign_ids=raw.get("campaign_ids", []),
             measurement_source=raw.get("measurement_source", "no_signal"),
         )
 
@@ -807,7 +790,6 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 "qa_result": dict(self.state.qa_result or {}),
             },
             "autonomy": {
-                "campaign_ids": list(self.state.active_campaign_ids),
                 "prompt_overrides": dict(self.state.prompt_overrides),
             },
         }
@@ -835,6 +817,31 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         self.state.procedure_hints = "\n".join(hints_parts) if hints_parts else ""
         self.state.learnings.extend(lo.insights)
         self._update_prompt_overrides(lo)
+
+        # Write insights and recommendations to consensus memory so the
+        # team knowledge board grows across iterations.
+        try:
+            from src.crewai_agents.tools import get_memory_store
+            from src.framework.contracts import ConsensusEntry
+
+            _learn_store = get_memory_store()
+            if _learn_store is not None:
+                iteration = self.state.iteration
+                for idx, insight in enumerate(lo.insights):
+                    _learn_store.cons_set(ConsensusEntry(
+                        key=f"learn.insight.iter{iteration}.{idx}",
+                        value=str(insight)[:500],
+                        source_agent_id="coordinator",
+                    ))
+                for team, rec in (lo.recommendations or {}).items():
+                    _learn_store.cons_set(ConsensusEntry(
+                        key=f"learn.recommendation.{team}",
+                        value=str(rec)[:500],
+                        source_agent_id="coordinator",
+                    ))
+                logger.info("  Consensus memory: wrote learn-phase insights")
+        except Exception as _cons_learn_exc:
+            logger.warning(f"  Consensus memory write skipped: {_cons_learn_exc}")
 
         try:
             proc_updater = self._get_procedure_updater()

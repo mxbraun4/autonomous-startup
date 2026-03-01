@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 import time
 from pathlib import Path
-from typing import Tuple
+from typing import Any, Tuple
 
 if __package__:
     from ._bootstrap import add_repo_root_to_path, configure_stdio_utf8
@@ -34,8 +34,9 @@ from src.framework.runtime import (
     TaskRouter,
     register_startup_vc_agents,
     register_startup_vc_capabilities,
+    register_workspace_capabilities,
 )
-from src.framework.safety import create_action_guard
+from src.framework.safety import build_startup_vc_domain_policy_hook, create_action_guard
 from src.utils.config import settings
 from src.utils.logging import get_logger, setup_logging
 
@@ -94,7 +95,7 @@ def _init_memory_store():
         "UnifiedStore initialised and injected into tools (data_dir=%s)",
         selected_dir,
     )
-    return sync_store
+    return sync_store, selected_dir
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +127,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--product-surface-only", action="store_true", default=False)
     parser.add_argument("--match-calibration-path", default=None)
     parser.add_argument("--match-calibration-min-samples", type=int, default=20)
+    parser.add_argument("--workspace-root", default="workspace")
+    parser.add_argument("--no-workspace", dest="workspace_enabled", action="store_false", default=True)
     parser.add_argument("--log-level", default="INFO")
     return parser
 
@@ -140,9 +143,20 @@ def _parse_args() -> argparse.Namespace:
 
 def create_startup_vc_run_controller(
     args: argparse.Namespace,
+    store: Any = None,
 ) -> Tuple[RunController, EventLogger, str]:
     """Create a fully wired startup-VC run controller."""
     run_id = args.run_id or f"startup_vc_{int(time.time())}"
+
+    workspace_enabled = getattr(args, "workspace_enabled", True)
+    workspace_root = getattr(args, "workspace_root", "workspace") if workspace_enabled else None
+
+    # Configure workspace file tools root before agent registration
+    if workspace_root:
+        ws_path = Path(workspace_root).resolve()
+        ws_path.mkdir(parents=True, exist_ok=True)
+        from src.workspace.file_tools import configure_workspace_root
+        configure_workspace_root(str(ws_path))
 
     adapter = StartupVCAdapter(
         max_targets_per_cycle=args.max_targets_per_cycle,
@@ -154,6 +168,7 @@ def create_startup_vc_run_controller(
         simulation_seed=args.seed,
         match_calibration_path=args.match_calibration_path,
         match_calibration_min_samples=args.match_calibration_min_samples,
+        workspace_root=workspace_root,
     )
     domain_policies = adapter.get_domain_policies()
 
@@ -169,18 +184,23 @@ def create_startup_vc_run_controller(
     )
 
     event_logger = EventLogger(persist_path=args.events_path)
-    context = ExecutionContext(run_config=run_config, store=None)
+    context = ExecutionContext(run_config=run_config, store=store)
 
     registry = CapabilityRegistry()
     register_startup_vc_capabilities(registry)
+    if workspace_root:
+        register_workspace_capabilities(registry)
 
     router = TaskRouter(registry)
-    action_guard = create_action_guard(run_config, context)
+    domain_policy_hook = build_startup_vc_domain_policy_hook(run_config.policies)
+    action_guard = create_action_guard(
+        run_config, context, domain_policy_hook=domain_policy_hook
+    )
 
     runtime = AgentRuntime(
         registry=registry,
         router=router,
-        store=None,
+        store=store,
         context=context,
         policy_engine=action_guard,
         event_emitter=event_logger,
@@ -188,7 +208,9 @@ def create_startup_vc_run_controller(
 
     # Allow per-role LLM selection (e.g., OpenRouter model routing) inside
     # the registered CrewAI agent wrappers.
-    register_startup_vc_agents(router, runtime, llm=None)
+    register_startup_vc_agents(
+        router, runtime, llm=None, enable_workspace=bool(workspace_root),
+    )
 
     executor = Executor(runtime=runtime, context=context, event_emitter=event_logger)
     controller = RunController(
@@ -196,7 +218,7 @@ def create_startup_vc_run_controller(
         executor=executor,
         domain_adapter=adapter,
         evaluator=Evaluator(event_emitter=event_logger),
-        store=None,
+        store=store,
         checkpoint_dir=args.checkpoint_dir,
         event_emitter=event_logger,
         context=context,
@@ -218,13 +240,16 @@ def main() -> None:
     print(f"  Iterations: {args.iterations}")
     print(f"  Autonomy level: {args.autonomy_level}")
     print(f"  Customer simulation: {args.use_customer_simulation}")
+    print(f"  Workspace: {args.workspace_root if args.workspace_enabled else 'disabled'}")
     print(f"  Mock mode: {settings.mock_mode}")
     print("=" * 60 + "\n")
 
-    _init_memory_store()
+    sync_store, memory_dir = _init_memory_store()
 
     try:
-        controller, event_logger, run_id = create_startup_vc_run_controller(args)
+        controller, event_logger, run_id = create_startup_vc_run_controller(
+            args, store=sync_store
+        )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
@@ -245,6 +270,7 @@ def main() -> None:
     print(f"Final reason: {result.final_reason}")
     print(f"Last checkpoint: {result.last_checkpoint_path}")
     print(f"Total events: {timeline.total_events}")
+    print(f"Memory store: {memory_dir}")
     print("Event counts:")
     for event_type, count in sorted(timeline.event_counts.items()):
         print(f"  - {event_type}: {count}")

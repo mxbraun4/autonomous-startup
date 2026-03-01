@@ -393,6 +393,17 @@ class AutonomyLoop:
                     patches=patches,
                     source_evidence={"evaluation_result_id": evaluation.entity_id},
                 )
+                self._emit(
+                    "policy_patch_applied",
+                    {
+                        "run_id": self._run_id,
+                        "cycle_id": metrics.cycle_id,
+                        "version_before": result.policy_version_before,
+                        "version_after": version.version,
+                        "patches": [p.model_dump(mode="json") for p in patches],
+                        "source_evidence": {"evaluation_result_id": evaluation.entity_id},
+                    },
+                )
                 self._context.run_config.policies = dict(version.policies)
                 result.policy_version_after = version.version
 
@@ -405,6 +416,20 @@ class AutonomyLoop:
                 procedure = self._procedure_updater.apply_update(proposal)
                 task_type = str(getattr(procedure, "task_type", "") or "")
                 current_version = int(getattr(procedure, "current_version", 1))
+                self._emit(
+                    "procedure_updated",
+                    {
+                        "run_id": self._run_id,
+                        "cycle_id": metrics.cycle_id,
+                        "task_type": task_type,
+                        "version": current_version,
+                        "workflow": getattr(proposal, "workflow", None),
+                        "score": getattr(proposal, "score", None),
+                        "provenance": getattr(proposal, "provenance", None),
+                        "created_by": getattr(proposal, "created_by", None),
+                        "source_evidence": getattr(proposal, "source_evidence", None),
+                    },
+                )
                 if task_type:
                     result.applied_procedure_versions[task_type] = max(1, current_version - 1)
 
