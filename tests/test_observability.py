@@ -82,6 +82,14 @@ def test_event_logger_emits_and_derives_required_classes(tmp_path):
         "agent_reasoning",
         {"run_id": "run_obs", "cycle_id": 1, "task_id": "t1", "agent_id": "a1", "reasoning": "because"},
     )
+    logger.emit(
+        "llm_call",
+        {"run_id": "run_obs", "cycle_id": 1, "agent": "developer", "model": "mock", "message_summary": "hi", "response_summary": "ok", "duration_ms": 1.0},
+    )
+    logger.emit(
+        "agent_exchange",
+        {"run_id": "run_obs", "cycle_id": 1, "exchange_type": "share_insight", "from_agent": "developer", "key": "test.key", "value_summary": "test value"},
+    )
 
     events = logger.get_events(run_id="run_obs")
     event_types = {event.event_type for event in events}

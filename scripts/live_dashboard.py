@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import mimetypes
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -16,7 +17,7 @@ if __package__:
 else:
     from _bootstrap import add_repo_root_to_path
 
-add_repo_root_to_path(__file__)
+REPO_ROOT = add_repo_root_to_path(__file__)
 
 from src.framework.observability.dashboard import build_snapshot_from_ndjson
 
@@ -26,31 +27,29 @@ HTML_TEMPLATE = """<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Autonomy Live Dashboard</title>
+  <title>Startup-VC Platform — Build Dashboard</title>
   <style>
     :root {
-      --ink: #0f2431;
-      --ink-soft: #446071;
-      --surface: rgba(255, 255, 255, 0.84);
-      --surface-strong: rgba(255, 255, 255, 0.94);
-      --line: #c9dbe3;
-      --accent: #00897b;
-      --accent-2: #f57c00;
-      --danger: #c62828;
-      --ok: #2e7d32;
-      --warn: #ed6c02;
-      --radius: 16px;
-      --shadow: 0 18px 48px rgba(0, 0, 0, 0.10);
+      --ink: #1a1a1a;
+      --ink-soft: #6b7280;
+      --surface: #ffffff;
+      --surface-strong: #ffffff;
+      --bg: #f7f7f8;
+      --line: #e5e5e5;
+      --accent: #0088FE;
+      --accent-light: #e8f4ff;
+      --danger: #dc2626;
+      --ok: #16a34a;
+      --warn: #d97706;
+      --radius: 12px;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       color: var(--ink);
-      font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
-      background:
-        radial-gradient(circle at 14% 18%, #d7f2ec 0%, transparent 32%),
-        radial-gradient(circle at 82% 16%, #ffe5d2 0%, transparent 28%),
-        linear-gradient(145deg, #ecf3f8 0%, #eef6ee 100%);
+      font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
       min-height: 100vh;
     }
     .frame {
@@ -60,15 +59,16 @@ HTML_TEMPLATE = """<!doctype html>
       gap: 12px;
     }
     .hero {
-      background: linear-gradient(120deg, rgba(0, 137, 123, 0.17), rgba(245, 124, 0, 0.18));
+      background: var(--surface);
       border: 1px solid var(--line);
       border-radius: var(--radius);
-      padding: 16px;
+      padding: 16px 20px;
       box-shadow: var(--shadow);
       animation: rise 480ms ease-out both;
     }
-    .hero h1 { margin: 0; font-size: clamp(20px, 2.7vw, 32px); letter-spacing: 0.02em; }
-    .hero p { margin: 7px 0 0; color: var(--ink-soft); font-size: 13px; }
+    .hero h1 { margin: 0; font-size: clamp(20px, 2.7vw, 28px); font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
+    .hero h1 span { color: var(--ink); }
+    .hero p { margin: 6px 0 0; color: var(--ink-soft); font-size: 13px; }
     .controls {
       display: grid;
       grid-template-columns: 1.5fr auto auto auto;
@@ -80,21 +80,28 @@ HTML_TEMPLATE = """<!doctype html>
       box-shadow: var(--shadow);
       animation: rise 580ms ease-out both;
     }
-    .controls label { display: block; font-size: 11px; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 4px; }
+    .controls label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-soft); margin-bottom: 4px; }
     select, button, input[type="number"] {
       width: 100%;
-      padding: 9px 11px;
+      padding: 8px 10px;
       border: 1px solid var(--line);
-      border-radius: 10px;
-      background: var(--surface-strong);
+      border-radius: 8px;
+      background: var(--surface);
       color: var(--ink);
-      font-weight: 600;
+      font-size: 13px;
+      font-weight: 500;
+      transition: border-color 150ms;
     }
+    select:focus, input[type="number"]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-light); }
     button {
       cursor: pointer;
-      background: linear-gradient(145deg, #f8fffe, #fff4ea);
-      border-color: #b7ced9;
+      background: var(--accent);
+      color: #ffffff;
+      border-color: var(--accent);
+      font-weight: 600;
+      transition: opacity 150ms;
     }
+    button:hover { opacity: 0.85; }
     .auto-wrap {
       display: flex;
       align-items: center;
@@ -103,35 +110,35 @@ HTML_TEMPLATE = """<!doctype html>
     }
     .cards {
       display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 10px;
     }
     .card {
       background: var(--surface);
       border: 1px solid var(--line);
       border-radius: var(--radius);
-      padding: 12px;
+      padding: 14px 16px;
       box-shadow: var(--shadow);
       animation: rise 520ms ease-out both;
     }
     .card:nth-child(2) { animation-delay: 60ms; }
     .card:nth-child(3) { animation-delay: 120ms; }
     .card:nth-child(4) { animation-delay: 180ms; }
-    .card:nth-child(5) { animation-delay: 240ms; }
-    .card:nth-child(6) { animation-delay: 300ms; }
     .label {
       font-size: 11px;
       text-transform: uppercase;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.06em;
       color: var(--ink-soft);
-      margin-bottom: 5px;
+      margin-bottom: 6px;
+      font-weight: 500;
     }
     .value {
-      font-size: clamp(19px, 2.4vw, 29px);
+      font-size: clamp(19px, 2.4vw, 28px);
       font-weight: 700;
-      line-height: 1.05;
+      line-height: 1.1;
+      color: var(--ink);
     }
-    .meta { font-size: 12px; color: var(--ink-soft); margin-top: 5px; }
+    .meta { font-size: 12px; color: var(--ink-soft); margin-top: 6px; }
     .grid {
       display: grid;
       grid-template-columns: 1.2fr 0.8fr;
@@ -147,78 +154,125 @@ HTML_TEMPLATE = """<!doctype html>
     }
     .panel h2 {
       margin: 0;
-      padding: 10px 12px;
-      font-size: 14px;
-      letter-spacing: 0.03em;
+      padding: 10px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
       text-transform: uppercase;
       color: var(--ink-soft);
       border-bottom: 1px solid var(--line);
-      background: rgba(255, 255, 255, 0.58);
+      background: #fafafa;
     }
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 12px;
+      font-size: 13px;
     }
-    th, td {
+    th {
       text-align: left;
-      border-bottom: 1px solid #ddeaf0;
-      padding: 8px 10px;
+      border-bottom: 1px solid var(--line);
+      padding: 8px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--ink-soft);
+      background: #fafafa;
+    }
+    td {
+      text-align: left;
+      border-bottom: 1px solid #f0f0f0;
+      padding: 8px 12px;
       vertical-align: top;
       word-break: break-word;
+      color: var(--ink);
     }
     tbody tr {
       animation: rowIn 220ms ease-out both;
+      transition: background 120ms;
     }
-    .chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 7px;
-      padding: 10px;
-    }
-    .chip {
-      border: 1px solid #bad4de;
-      border-radius: 999px;
-      padding: 5px 9px;
-      font-size: 12px;
-      background: rgba(255, 255, 255, 0.75);
-      white-space: nowrap;
-    }
+    tbody tr:hover { background: #f9fafb; }
     .status {
       display: inline-block;
       border-radius: 999px;
-      padding: 4px 9px;
+      padding: 3px 9px;
       font-size: 11px;
-      font-weight: 700;
+      font-weight: 600;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.03em;
     }
-    .status.running { color: #155a58; background: #d4f3ef; }
-    .status.completed { color: #1f6f33; background: #dbf2df; }
-    .status.stopped { color: #7a1f1f; background: #f8dbdb; }
-    .status.paused { color: #8f5600; background: #ffe8c5; }
-    .status.warn { color: #8f5600; background: #ffe8c5; }
-    .status.fail { color: #7a1f1f; background: #f8dbdb; }
-    .status.pass { color: #1f6f33; background: #dbf2df; }
+    .status.running { color: #0369a1; background: var(--accent-light); }
+    .status.completed { color: #15803d; background: #f0fdf4; }
+    .status.stopped { color: #b91c1c; background: #fef2f2; }
+    .status.paused { color: #b45309; background: #fffbeb; }
+    .status.warn { color: #b45309; background: #fffbeb; }
+    .status.fail { color: #b91c1c; background: #fef2f2; }
+    .status.pass { color: #15803d; background: #f0fdf4; }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 10px 14px;
+    }
+    .chip {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 500;
+      background: #fafafa;
+      color: var(--ink);
+      white-space: nowrap;
+    }
+    .expandable {
+      cursor: pointer;
+      position: relative;
+    }
+    .expandable::after {
+      content: " [+]";
+      color: var(--accent);
+      font-size: 10px;
+      font-weight: 600;
+    }
+    .expandable.expanded::after {
+      content: " [-]";
+    }
+    .expandable .full-text {
+      display: none;
+      margin-top: 6px;
+      padding: 8px 10px;
+      background: #f7f7f8;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .expandable.expanded .full-text {
+      display: block;
+    }
     .error {
       margin: 0;
-      padding: 8px 10px;
-      color: #8e2d2d;
+      padding: 8px 12px;
+      color: #b91c1c;
       font-size: 12px;
-      border-top: 1px solid #efc5c5;
-      background: #ffecec;
+      border-top: 1px solid #fecaca;
+      background: #fef2f2;
       display: none;
     }
     @keyframes rise {
-      from { transform: translateY(6px); opacity: 0; }
+      from { transform: translateY(4px); opacity: 0; }
       to { transform: translateY(0); opacity: 1; }
     }
     @keyframes rowIn {
-      from { opacity: 0; transform: translateX(4px); }
+      from { opacity: 0; transform: translateX(3px); }
       to { opacity: 1; transform: translateX(0); }
     }
     @media (max-width: 1080px) {
-      .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 720px) {
@@ -231,7 +285,7 @@ HTML_TEMPLATE = """<!doctype html>
 <body>
   <main class="frame">
     <section class="hero">
-      <h1>Autonomy Run Live Dashboard</h1>
+      <h1>Startup-VC Platform <span>— Build Dashboard</span></h1>
       <p id="heroMeta">Waiting for events...</p>
     </section>
 
@@ -258,116 +312,133 @@ HTML_TEMPLATE = """<!doctype html>
 
     <section class="cards">
       <article class="card">
-        <div class="label">Run Status</div>
+        <div class="label">Status</div>
         <div class="value" id="statusValue">-</div>
-        <div class="meta" id="runIdMeta">run: -</div>
+        <div class="meta" id="statusMeta">&nbsp;</div>
       </article>
       <article class="card">
-        <div class="label">Events</div>
-        <div class="value" id="eventsValue">0</div>
-        <div class="meta" id="eventsMeta">source: 0</div>
+        <div class="label">Iteration</div>
+        <div class="value" id="iterationValue">0</div>
+        <div class="meta" id="iterationMeta">&nbsp;</div>
       </article>
       <article class="card">
-        <div class="label">Cycles</div>
-        <div class="value" id="cyclesValue">0</div>
-        <div class="meta" id="cycleMeta">tasked: 0</div>
+        <div class="label">Build Progress</div>
+        <div class="value" id="progressValue">0/0</div>
+        <div class="meta" id="progressMeta">&nbsp;</div>
       </article>
       <article class="card">
-        <div class="label">Tasks</div>
-        <div class="value" id="tasksValue">0/0</div>
-        <div class="meta" id="tasksMeta">failed: 0 in-progress: 0</div>
+        <div class="label">QA Gate</div>
+        <div class="value" id="qaValue">-</div>
+        <div class="meta" id="qaMeta">&nbsp;</div>
       </article>
-      <article class="card">
-        <div class="label">Tools</div>
-        <div class="value" id="toolsValue">0</div>
-        <div class="meta" id="toolsMeta">denied: 0 errors: 0</div>
-      </article>
-      <article class="card">
-        <div class="label">Evaluation</div>
-        <div class="value" id="evalValue">-</div>
-        <div class="meta" id="evalMeta">action: -</div>
-      </article>
+    </section>
+
+    <section class="panel" id="previewSection" style="display: none;">
+      <h2>
+        Website Preview
+        <span style="float: right; font-size: 12px; font-weight: 400; text-transform: none;">
+          <button id="previewRefreshBtn" type="button"
+            style="padding: 3px 10px; font-size: 11px; border-radius: 6px; cursor: pointer; border: 1px solid var(--line); background: #fafafa; color: var(--ink); font-weight: 500;">
+            Reload
+          </button>
+          <a id="previewOpenLink" href="#" target="_blank"
+            style="margin-left: 8px; color: var(--accent); text-decoration: none; font-weight: 500;">
+            Open in new tab &#8599;
+          </a>
+        </span>
+      </h2>
+      <div style="position: relative; width: 100%; height: 520px; background: #f0f4f7;">
+        <iframe id="previewFrame"
+          style="width: 100%; height: 100%; border: none;"
+          sandbox="allow-scripts allow-same-origin allow-forms"
+          loading="lazy"></iframe>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Shared Knowledge</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Iter</th>
+            <th>Agent</th>
+            <th>Action</th>
+            <th>Topic</th>
+            <th>Insight</th>
+          </tr>
+        </thead>
+        <tbody id="sharedKnowledgeBody"></tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>Agent Reasoning</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Iter</th>
+            <th>Agent</th>
+            <th>Model</th>
+            <th>Input</th>
+            <th>Output</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody id="agentReasoningBody"></tbody>
+      </table>
     </section>
 
     <section class="grid">
       <section class="panel">
-        <h2>Cycle Outcomes</h2>
+        <h2>Iteration History</h2>
         <table>
           <thead>
             <tr>
-              <th>Cycle</th>
-              <th>Total</th>
-              <th>Done</th>
+              <th>Iteration</th>
+              <th>Tasks</th>
+              <th>Completed</th>
               <th>Failed</th>
-              <th>Eval</th>
-              <th>Action</th>
-              <th>Reason</th>
-            </tr>
-          </thead>
-          <tbody id="cyclesBody"></tbody>
-        </table>
-      </section>
-      <section class="panel">
-        <h2>Gate Decisions</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Gate</th>
-              <th>Status</th>
+              <th>QA</th>
               <th>Action</th>
             </tr>
           </thead>
-          <tbody id="gatesBody"></tbody>
-        </table>
-      </section>
-    </section>
-
-    <section class="grid">
-      <section class="panel">
-        <h2>Active Tasks</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Task ID</th>
-              <th>Cycle</th>
-              <th>Role</th>
-              <th>Objective</th>
-            </tr>
-          </thead>
-          <tbody id="activeTasksBody"></tbody>
+          <tbody id="iterationHistoryBody"></tbody>
         </table>
       </section>
       <section class="panel">
-        <h2>Event Mix</h2>
-        <div id="eventChips" class="chips"></div>
-        <h2 style="border-top: 1px solid var(--line);">Top Tools</h2>
+        <h2>Current Activity</h2>
         <table>
           <thead>
             <tr>
-              <th>Tool</th>
-              <th>Calls</th>
+              <th>Iter</th>
+              <th>Agent</th>
+              <th>Working on</th>
             </tr>
           </thead>
-          <tbody id="toolsBody"></tbody>
+          <tbody id="currentActivityBody"></tbody>
         </table>
       </section>
     </section>
 
     <section class="panel">
-      <h2>Recent Events</h2>
+      <h2>Event Log</h2>
       <table>
         <thead>
           <tr>
-            <th>Seq</th>
             <th>Time (UTC)</th>
             <th>Type</th>
-            <th>Cycle</th>
+            <th>Iter</th>
             <th>Summary</th>
           </tr>
         </thead>
-        <tbody id="recentBody"></tbody>
+        <tbody id="eventLogBody"></tbody>
       </table>
       <p id="errorBox" class="error"></p>
+    </section>
+
+    <section class="panel">
+      <h2>Event Breakdown</h2>
+      <div id="eventChips" class="chips"></div>
     </section>
   </main>
 
@@ -395,7 +466,7 @@ HTML_TEMPLATE = """<!doctype html>
       return `<span class="status ${normalized}">${normalized}</span>`;
     }
 
-    function renderRows(bodyId, rows, columns, emptyText) {
+    function renderRows(bodyId, rows, columns, emptyText, expandableMap) {
       const body = document.getElementById(bodyId);
       if (!body) return;
       body.innerHTML = "";
@@ -413,11 +484,26 @@ HTML_TEMPLATE = """<!doctype html>
         tr.style.animationDelay = `${Math.min(idx, 10) * 35}ms`;
         columns.forEach((col) => {
           const td = document.createElement("td");
-          td.textContent = fmt(row[col]);
+          const fullKey = expandableMap && expandableMap[col];
+          const fullText = fullKey ? fmt(row[fullKey]) : null;
+          const summary = fmt(row[col]);
+          if (fullText && fullText.length > summary.length) {
+            td.className = "expandable";
+            td.innerHTML = `<span class="summary-text">${escapeHtml(summary)}</span><div class="full-text">${escapeHtml(fullText)}</div>`;
+            td.addEventListener("click", () => td.classList.toggle("expanded"));
+          } else {
+            td.textContent = summary;
+          }
           tr.appendChild(td);
         });
         body.appendChild(tr);
       });
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
     }
 
     function renderChips(id, items) {
@@ -469,39 +555,71 @@ HTML_TEMPLATE = """<!doctype html>
 
       const run = snapshot.run || {};
       const tasks = snapshot.tasks || {};
-      const tools = snapshot.tools || {};
+      const statusText = (run.status || "running").toLowerCase();
 
+      // Status card
       const statusNode = document.getElementById("statusValue");
       statusNode.innerHTML = toStatusBadge(run.status || "running");
+      const runId = snapshot.selected_run_id || "";
+      const statusLabel = statusText === "completed" ? "done" : "running";
+      setText("statusMeta", runId ? `${statusLabel} · ${runId}` : statusLabel);
 
-      setText("runIdMeta", `run: ${snapshot.selected_run_id || "<none>"}`);
-      setText("eventsValue", snapshot.run_event_count || 0);
-      setText("eventsMeta", `source: ${snapshot.source_event_count || 0}`);
-      setText("cyclesValue", snapshot.cycle_count || 0);
-      setText("cycleMeta", `policy violations: ${snapshot.policy_violations || 0}`);
-      setText("tasksValue", `${tasks.completed || 0}/${tasks.started || 0}`);
-      setText(
-        "tasksMeta",
-        `failed: ${tasks.failed || 0} in-progress: ${tasks.in_progress || 0}`
-      );
-      setText("toolsValue", tools.called || 0);
-      setText("toolsMeta", `denied: ${tools.denied || 0} errors: ${tools.errors || 0}`);
+      // Iteration card
+      const iterCount = snapshot.cycle_count || 0;
+      setText("iterationValue", iterCount);
+      const llmCount = snapshot.event_counts?.llm_call || 0;
+      setText("iterationMeta", `${tasks.started || 0} tasks · ${llmCount} LLM calls`);
 
+      // Build Progress card
+      setText("progressValue", `${tasks.completed || 0}/${tasks.started || 0}`);
+      setText("progressMeta", `failed: ${tasks.failed || 0}  in-progress: ${tasks.in_progress || 0}`);
+
+      // QA Gate card
       const evalStatus = run.evaluation_status || snapshot.latest_gate?.overall_status || "-";
-      const evalNode = document.getElementById("evalValue");
-      evalNode.innerHTML = toStatusBadge(evalStatus);
-      setText(
-        "evalMeta",
-        `action: ${run.evaluation_action || snapshot.latest_gate?.recommended_action || "-"}`
-      );
+      const qaNode = document.getElementById("qaValue");
+      qaNode.innerHTML = toStatusBadge(evalStatus);
+      setText("qaMeta", run.evaluation_action || snapshot.latest_gate?.recommended_action || "-");
 
-      setText(
-        "heroMeta",
-        `${snapshot.events_path || ""} | generated: ${snapshot.generated_at_utc || "-"}`
-      );
+      // Hero subtitle — iteration count and status
+      setText("heroMeta", `Iteration ${iterCount} — ${statusText}`);
 
+      // Shared Knowledge (was Agent Exchanges)
       renderRows(
-        "cyclesBody",
+        "sharedKnowledgeBody",
+        (snapshot.agent_exchanges || []).map((item) => ({
+          cycle_id: item.cycle_id ?? "-",
+          from_agent: item.from_agent || "-",
+          exchange_type: item.exchange_type || "-",
+          key: item.key || "-",
+          value_summary: item.value_summary || "-",
+          value_full: item.value_full || item.value_summary || "-",
+        })),
+        ["cycle_id", "from_agent", "exchange_type", "key", "value_summary"],
+        "No shared knowledge yet",
+        {"value_summary": "value_full"}
+      );
+
+      // Agent Reasoning (was LLM Calls)
+      renderRows(
+        "agentReasoningBody",
+        (snapshot.llm_calls || []).map((item) => ({
+          cycle_id: item.cycle_id ?? "-",
+          agent: item.agent || "-",
+          model: item.model || "-",
+          message_summary: item.message_summary || "-",
+          message_full: item.message_full || item.message_summary || "-",
+          response_summary: item.response_summary || "-",
+          response_full: item.response_full || item.response_summary || "-",
+          duration_ms: item.duration_ms != null ? item.duration_ms + " ms" : "-",
+        })),
+        ["cycle_id", "agent", "model", "message_summary", "response_summary", "duration_ms"],
+        "No agent reasoning yet",
+        {"message_summary": "message_full", "response_summary": "response_full"}
+      );
+
+      // Iteration History (was Cycle Outcomes)
+      renderRows(
+        "iterationHistoryBody",
         (snapshot.cycles || []).map((item) => ({
           cycle_id: item.cycle_id,
           total_tasks: item.total_tasks ?? item.tasks_started ?? "-",
@@ -509,66 +627,37 @@ HTML_TEMPLATE = """<!doctype html>
           failed_count: item.failed_count ?? item.tasks_failed ?? 0,
           evaluation_status: item.evaluation_status || "-",
           termination_action: item.termination_action || "-",
-          termination_reason: item.termination_reason || "-",
         })),
-        [
-          "cycle_id",
-          "total_tasks",
-          "completed_count",
-          "failed_count",
-          "evaluation_status",
-          "termination_action",
-          "termination_reason",
-        ],
-        "No cycles yet"
+        ["cycle_id", "total_tasks", "completed_count", "failed_count", "evaluation_status", "termination_action"],
+        "No iterations yet"
       );
 
+      // Current Activity (was Active Tasks)
       renderRows(
-        "gatesBody",
-        (snapshot.latest_gate?.gates || []).map((gate) => ({
-          gate_name: gate.gate_name || "-",
-          gate_status: gate.gate_status || "-",
-          recommended_action: gate.recommended_action || "-",
-        })),
-        ["gate_name", "gate_status", "recommended_action"],
-        "No gate decisions yet"
-      );
-
-      renderRows(
-        "activeTasksBody",
+        "currentActivityBody",
         (snapshot.active_tasks || []).map((task) => ({
-          task_id: task.task_id || "-",
           cycle_id: task.cycle_id ?? "-",
           agent_role: task.agent_role || "-",
           objective: task.objective || "-",
         })),
-        ["task_id", "cycle_id", "agent_role", "objective"],
+        ["cycle_id", "agent_role", "objective"],
         "No active tasks"
       );
 
+      // Event Log (was Recent Events)
       renderRows(
-        "toolsBody",
-        (tools.top_called || []).map((tool) => ({
-          tool_name: tool.tool_name || "-",
-          count: tool.count || 0,
-        })),
-        ["tool_name", "count"],
-        "No tool calls"
-      );
-
-      renderRows(
-        "recentBody",
+        "eventLogBody",
         (snapshot.recent_events || []).map((event) => ({
-          sequence: event.sequence ?? "-",
           timestamp_utc: event.timestamp_utc || "-",
           event_type: event.event_type || "-",
           cycle_id: event.cycle_id ?? "-",
           summary: event.summary || "",
         })),
-        ["sequence", "timestamp_utc", "event_type", "cycle_id", "summary"],
+        ["timestamp_utc", "event_type", "cycle_id", "summary"],
         "No events yet"
       );
 
+      // Event Breakdown chips
       renderChips("eventChips", snapshot.event_counts || {});
     }
 
@@ -613,6 +702,39 @@ HTML_TEMPLATE = """<!doctype html>
     runSelect.addEventListener("change", refreshDashboard);
     refreshNow.addEventListener("click", refreshDashboard);
 
+    // --- Workspace preview ---
+    const previewSection = document.getElementById("previewSection");
+    const previewFrame = document.getElementById("previewFrame");
+    const previewRefreshBtn = document.getElementById("previewRefreshBtn");
+    const previewOpenLink = document.getElementById("previewOpenLink");
+
+    // The dashboard serves workspace files at /workspace/
+    const wsBase = "/workspace/";
+    fetch(wsBase + "index.html", {method: "HEAD", cache: "no-store"})
+      .then(r => {
+        if (r.ok) {
+          previewSection.style.display = "";
+          previewFrame.src = wsBase;
+          previewOpenLink.href = wsBase;
+        }
+      })
+      .catch(() => {});
+
+    if (previewRefreshBtn) {
+      previewRefreshBtn.addEventListener("click", () => {
+        if (previewFrame.src) {
+          previewFrame.src = previewFrame.src;
+        }
+      });
+    }
+
+    // Auto-refresh preview every 5s
+    setInterval(() => {
+      if (previewFrame.src && previewSection.style.display !== "none") {
+        previewFrame.src = wsBase + "?_t=" + Date.now();
+      }
+    }, 5000);
+
     scheduleRefresh();
     refreshDashboard();
   </script>
@@ -630,6 +752,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--recent-limit", type=int, default=80)
     parser.add_argument("--refresh-ms", type=int, default=1200)
     parser.add_argument("--open-browser", action="store_true")
+    parser.add_argument(
+        "--workspace",
+        default=str(REPO_ROOT / "workspace"),
+        help="Path to workspace directory for live preview (default: workspace/)",
+    )
     return parser.parse_args()
 
 
@@ -652,12 +779,14 @@ class DashboardServer(ThreadingHTTPServer):
         max_events: int,
         recent_limit: int,
         refresh_ms: int,
+        workspace: Optional[Path] = None,
     ) -> None:
         super().__init__(server_address, handler_cls)
         self.events_path = events_path
         self.max_events = max_events
         self.recent_limit = recent_limit
         self.refresh_ms = refresh_ms
+        self.workspace = workspace
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -680,10 +809,47 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_response(HTTPStatus.NO_CONTENT)
             self.end_headers()
             return
+        if parsed.path.startswith("/workspace/") or parsed.path == "/workspace":
+            self._serve_workspace_file(parsed.path)
+            return
         self.send_error(HTTPStatus.NOT_FOUND, "not found")
 
     def log_message(self, fmt: str, *args: Any) -> None:
         del fmt, args
+
+    def _serve_workspace_file(self, path: str) -> None:
+        """Serve a static file from the workspace directory."""
+        workspace = self.server.workspace
+        if workspace is None or not workspace.is_dir():
+            self.send_error(HTTPStatus.NOT_FOUND, "workspace not configured")
+            return
+
+        # Strip /workspace/ prefix
+        rel = path[len("/workspace/"):] or "index.html"
+        file_path = (workspace / rel).resolve()
+
+        # Prevent path traversal
+        try:
+            file_path.relative_to(workspace)
+        except ValueError:
+            self.send_error(HTTPStatus.FORBIDDEN, "forbidden")
+            return
+
+        if file_path.is_dir():
+            file_path = file_path / "index.html"
+
+        if not file_path.is_file():
+            self.send_error(HTTPStatus.NOT_FOUND, "not found")
+            return
+
+        content = file_path.read_bytes()
+        content_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(content)
 
     def _serve_index(self) -> None:
         html = HTML_TEMPLATE.replace("__REFRESH_MS__", str(self.server.refresh_ms))
@@ -737,6 +903,8 @@ def _first(values: Dict[str, list[str]], key: str) -> Optional[str]:
 def main() -> None:
     args = _parse_args()
     events_path = Path(args.events_path)
+    workspace_path = Path(args.workspace)
+    workspace_resolved = workspace_path.resolve() if workspace_path.is_dir() else None
 
     server = DashboardServer(
         (args.host, args.port),
@@ -745,13 +913,18 @@ def main() -> None:
         max_events=max(1, int(args.max_events)),
         recent_limit=max(1, int(args.recent_limit)),
         refresh_ms=max(200, int(args.refresh_ms)),
+        workspace=workspace_resolved,
     )
     url = f"http://{args.host}:{args.port}"
     print("=" * 64)
-    print("AUTONOMY LIVE DASHBOARD")
+    print("BUILD DASHBOARD")
     print("=" * 64)
-    print(f"URL: {url}")
-    print(f"Events path: {events_path}")
+    print(f"URL:       {url}")
+    print(f"Events:    {events_path}")
+    if workspace_resolved:
+        print(f"Preview:   {url}/workspace/ (live preview embedded)")
+    else:
+        print(f"Preview:   disabled (workspace dir not found: {workspace_path})")
     print("Press Ctrl+C to stop.")
     print("=" * 64)
 

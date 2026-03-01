@@ -124,18 +124,6 @@ class TestControllerFactory:
 class TestStartupVCDomainPolicyHook:
     """Verify the domain policy hook gates tool calls correctly."""
 
-    def test_outreach_allowed_within_limit(self):
-        hook = build_startup_vc_domain_policy_hook({"max_targets_per_cycle": 2})
-        assert hook("send_outreach_email", "", {}) is None
-        assert hook("send_outreach_email", "", {}) is None
-
-    def test_outreach_blocked_over_limit(self):
-        hook = build_startup_vc_domain_policy_hook({"max_targets_per_cycle": 1})
-        assert hook("send_outreach_email", "", {}) is None
-        result = hook("send_outreach_email", "", {})
-        assert result is not None
-        assert "cycle limit" in result
-
     def test_web_search_allowed_within_limit(self):
         hook = build_startup_vc_domain_policy_hook({"max_web_searches_per_cycle": 3})
         assert hook("web_search_startups", "", {}) is None

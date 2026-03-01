@@ -1,6 +1,3 @@
-from .startup_agent import SimulatedStartup
-from .vc_agent import SimulatedVC
-from .scenarios import run_scenario
 from .customer_agent import (
     FounderCustomerAgent,
     VCCustomerAgent,
@@ -40,9 +37,6 @@ from .customer_transition_logic import (
 )
 
 __all__ = [
-    "SimulatedStartup",
-    "SimulatedVC",
-    "run_scenario",
     "FounderCustomerAgent",
     "VCCustomerAgent",
     "VisitorCustomerAgent",

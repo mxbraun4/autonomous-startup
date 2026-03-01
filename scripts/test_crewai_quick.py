@@ -32,8 +32,7 @@ print("\nTest 2: Importing tools...")
 try:
     from src.crewai_agents.tools import (
         get_startups_tool,
-        content_generator_tool,
-        tool_builder_tool
+        tool_builder_tool,
     )
     print("  [OK] All tools imported")
 except Exception as e:
@@ -93,20 +92,6 @@ try:
     assert result['status'] == 'success', "Unexpected status"
     assert result['sector'] == 'fintech', "Should return correct sector"
     print(f"  [OK] get_startups_tool executed: found {result['count']} startups")
-
-    # Execute content generator
-    from src.crewai_agents.tools import content_generator_tool
-
-    content_result = content_generator_tool.run(
-        startup_name="TestCo",
-        sector="fintech",
-        recent_news="Series A"
-    )
-    content_data = json.loads(content_result)
-
-    assert 'message' in content_data, "Should return message"
-    assert 'TestCo' in content_data['message'], "Message should mention startup"
-    print(f"  [OK] Content generator works (score: {content_data['personalization_score']:.2f})")
 
 except Exception as e:
     print(f"  [FAIL] Tool execution error: {e}")

@@ -1,6 +1,6 @@
 """CrewAI Agents - Convert our Planners to Agents."""
 
-from typing import Optional
+from typing import Any, Optional
 
 from src.crewai_agents.runtime_env import configure_runtime_environment
 from src.utils.config import settings
@@ -25,7 +25,6 @@ from src.crewai_agents.tools import (
     register_dynamic_tool,
     list_dynamic_tools,
     execute_dynamic_tool,
-    analytics_tool,
     run_quality_checks_tool,
     # Consensus memory tools
     share_insight,
@@ -36,6 +35,84 @@ from src.crewai_agents.tools import (
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+_litellm_patched = False
+
+
+def ensure_litellm_tracing() -> None:
+    """Monkey-patch ``litellm.completion`` to emit ``llm_call`` events.
+
+    CrewAI overwrites ``litellm.callbacks`` during every ``kickoff()``,
+    so a callback-based approach cannot survive.  Instead we wrap the
+    completion function itself, which is immune to list resets.
+    """
+    global _litellm_patched
+    if _litellm_patched:
+        return
+    _litellm_patched = True
+
+    try:
+        import litellm
+    except ImportError:
+        return
+
+    import time as _time
+    _original = litellm.completion
+
+    def _traced_completion(*args: Any, **kwargs: Any) -> Any:
+        t0 = _time.monotonic()
+        result = _original(*args, **kwargs)
+        duration_ms = round((_time.monotonic() - t0) * 1000, 1)
+
+        try:
+            from src.crewai_agents.tools import get_event_logger
+
+            el = get_event_logger()
+            if el is None:
+                return result
+
+            model = str(kwargs.get("model", ""))
+            messages = kwargs.get("messages") or (args[1] if len(args) > 1 else [])
+            if isinstance(messages, list) and messages:
+                last_msg = str(messages[-1].get("content", ""))
+            else:
+                last_msg = ""
+            msg_summary = last_msg
+
+            resp_text = ""
+            if hasattr(result, "choices") and result.choices:
+                choice = result.choices[0]
+                if hasattr(choice, "message"):
+                    resp_text = str(choice.message.content or "")
+                    # Deepseek and other models may return empty content with tool_calls
+                    if not resp_text and hasattr(choice.message, "tool_calls"):
+                        tool_calls = choice.message.tool_calls
+                        if tool_calls:
+                            tc = tool_calls[0]
+                            tc_name = getattr(tc, "function", None)
+                            if tc_name is not None:
+                                tc_name = getattr(tc_name, "name", str(tc_name))
+                            tc_args = ""
+                            if hasattr(tc, "function") and hasattr(tc.function, "arguments"):
+                                tc_args = str(tc.function.arguments or "")[:100]
+                            resp_text = f"[tool_call] {tc_name}({tc_args})"
+            resp_summary = resp_text
+
+            el.emit("llm_call", {
+                "agent": "",
+                "model": model,
+                "message_summary": msg_summary,
+                "response_summary": resp_summary,
+                "duration_ms": duration_ms,
+            })
+        except Exception:
+            pass
+
+        return result
+
+    litellm.completion = _traced_completion
+    logger.info("litellm.completion patched for llm_call tracing")
 
 
 def _with_prompt_override(backstory: str, prompt_override: Optional[str]) -> str:
@@ -153,13 +230,13 @@ def create_master_coordinator(
     backstory = _with_prompt_override(
         '''You are an experienced startup ecosystem operator who has built and scaled
         multiple platforms connecting startups with investors. You understand the importance of
-        data quality, product innovation, and effective outreach. You coordinate specialized teams
-        to execute on strategy, measure results, and adapt based on learnings.
+        data quality, product innovation, and effective coordination. You coordinate specialized teams
+        to execute on strategy, evaluate results, and adapt based on learnings.
 
         Your approach:
         - Start by analyzing the current state and recent performance
         - Decompose high-level goals into specific objectives for each team
-        - Delegate to specialists (data, product, outreach) while maintaining strategic oversight
+        - Delegate to specialists (data, product, development) while maintaining strategic oversight
         - Synthesize results and extract learnings to improve next iteration
         '''
         + workspace_note,
@@ -172,7 +249,7 @@ def create_master_coordinator(
 
     return Agent(
         role='Strategic Coordinator',
-        goal='Execute Build-Measure-Learn cycles to continuously improve the startup-VC matching platform',
+        goal='Execute Build-Evaluate-Learn cycles to continuously improve the startup-VC matching platform',
         backstory=backstory,
         llm=llm or get_llm("coordinator"),
         tools=tools,
@@ -267,18 +344,22 @@ def create_developer_agent(
             "improve HTML/CSS/JS files based on customer feedback and HTTP check results."
         )
     backstory = _with_prompt_override(
-        '''You are a pragmatic software engineer responsible for turning product ideas
-        into working platform capabilities. You focus on shipping small, testable
-        improvements that increase match quality, explainability, and operator efficiency.
+        '''You are a web developer building a startup-VC matching website.
+        You write HTML, CSS, and JavaScript files in the workspace/ directory using
+        the workspace file tools (write_workspace_file, read_workspace_file, list_workspace_files).
 
         Your approach:
-        - Review product feedback and acceptance criteria before building
-        - Use shared team insights to understand what changed and why
-        - Implement or refine tools/features incrementally
-        - Validate behavior and report tradeoffs, risks, and next steps
+        - Read the product spec from team insights before building
+        - Inspect existing workspace files to understand current state
+        - Write complete, well-structured HTML pages with proper styling
+        - Create real website pages: landing page, founders page, investors page,
+          fit-score calculator, about page, and shared navigation/styles
+        - Each iteration, produce at least one new or improved HTML/CSS/JS file
+        - Replace any placeholder content with real website content
 
-        You collaborate tightly with the Product Strategy Expert. Product feedback is
-        shared through team insight tools, and you use that feedback to drive execution.
+        You collaborate tightly with the Product Strategy Expert. Product specs are
+        shared through team insight tools, and you implement them as workspace files.
+        Do NOT build internal Python tools — focus on user-facing web pages.
         '''
         + workspace_note,
         prompt_override,
@@ -290,7 +371,6 @@ def create_developer_agent(
         list_dynamic_tools,
         execute_dynamic_tool,
         data_validator_tool,
-        analytics_tool,
         get_startups_tool,
         get_vcs_tool,
         make_share_insight("developer"),
@@ -306,7 +386,7 @@ def create_developer_agent(
         tools=tools,
         llm=llm or get_llm("developer"),
         verbose=True,
-        allow_delegation=True,
+        allow_delegation=False,
         memory=True
     )
 
@@ -335,17 +415,21 @@ def create_product_strategist(
             "site and produce improvement requirements."
         )
     backstory = _with_prompt_override(
-        '''You are a product manager with a strong technical background. You identify
-        user needs by analyzing interaction patterns, feedback, and workflow inefficiencies.
-        You excel at translating needs into clear product specifications.
+        '''You are a product manager building a startup-VC matching website.
+        The product vision: a platform where founders find matching investors and VCs
+        discover relevant startups, with fit-score calculations and personalized introductions.
+
+        The website is built as HTML/CSS/JS pages in the workspace/ directory.
+        Key pages include: landing page (index.html), founders page, investors page,
+        fit-score calculator, and about/how-it-works page.
 
         Your approach:
-        - Listen to user pain points and observe workflow patterns
-        - Identify opportunities where automation or tools can add value
-        - Design solutions that are simple, effective, and well-tested
-        - Ensure new tools integrate smoothly with existing platform
+        - Inspect the current workspace files to understand what exists
+        - Identify the highest-priority missing or placeholder page
+        - Write a clear, actionable spec for the Developer Agent to implement
+        - Focus on user-facing website pages, NOT internal Python tools
 
-        You use the tool_builder_tool to create specifications for new tools and features.
+        You hand off build specs to the Developer Agent via share_insight.
         '''
         + workspace_note,
         prompt_override,
@@ -369,7 +453,7 @@ def create_product_strategist(
         tools=tools,
         llm=llm or get_llm("product"),
         verbose=True,
-        allow_delegation=True,
+        allow_delegation=False,
         memory=True
     )
 

@@ -86,16 +86,16 @@ class TestSemanticDocument:
 class TestEpisode:
     def test_creation(self):
         ep = Episode(
-            agent_id="outreach",
-            episode_type=EpisodeType.OUTREACH,
+            agent_id="developer",
+            episode_type=EpisodeType.GENERAL,
             context={"target": "startup_x"},
-            action="sent_email",
-            outcome={"response": "interested"},
+            action="built_feature",
+            outcome={"result": "completed"},
             success=True,
-            summary_text="Sent outreach to startup_x, got positive response",
+            summary_text="Built feature for startup_x, completed successfully",
         )
         assert ep.success is True
-        assert ep.action == "sent_email"
+        assert ep.action == "built_feature"
 
     def test_episode_type_enum(self):
         ep = Episode(agent_id="a", episode_type=EpisodeType.DATA_COLLECTION)

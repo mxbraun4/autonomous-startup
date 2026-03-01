@@ -37,19 +37,10 @@ ENV/
 .env
 .env.local
 
-# Memory data (runtime generated)
-data/memory/episodic.db
-data/memory/workflows.json
-data/memory/
-data/crewai_local/
-data/crewai_storage/
-data/crewai_local_runtime/
-data/crewai_storage_runtime/
-data/memory_runtime/
-data/memory_runtime_tmp/
-data/generated_tools/
-data/collected/
-nul
+# Runtime data (all subdirs except seed/)
+data/
+!data/seed/
+*.db-journal
 
 # Workspace versioned snapshots
 workspace/.versions/

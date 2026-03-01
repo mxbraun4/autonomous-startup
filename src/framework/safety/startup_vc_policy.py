@@ -13,16 +13,13 @@ from typing import Any, Callable, Dict, Optional
 # Tool names that correspond to the CrewAI tools defined in
 # ``src/crewai_agents/tools.py``.  Must match the ``name`` attribute on
 # each ``@tool`` decorated function.
-TOOL_SEND_OUTREACH_EMAIL = "send_outreach_email"
 TOOL_WEB_SEARCH_STARTUPS = "web_search_startups"
 TOOL_WEB_SEARCH_VCS = "web_search_vcs"
 
 # Policy key names read from the policies dict.
-POLICY_MAX_OUTREACH_PER_CYCLE = "max_targets_per_cycle"
 POLICY_MAX_WEB_SEARCHES_PER_CYCLE = "max_web_searches_per_cycle"
 
 # Defaults
-_DEFAULT_MAX_OUTREACH = 5
 _DEFAULT_MAX_WEB_SEARCHES = 20
 
 
@@ -38,19 +35,13 @@ def build_startup_vc_domain_policy_hook(
 
     Enforced constraints
     --------------------
-    * ``send_outreach_email`` is capped at ``max_targets_per_cycle``
-      invocations per hook instance (default 5).
     * ``web_search_startups`` and ``web_search_vcs`` are capped at
       ``max_web_searches_per_cycle`` combined invocations (default 20).
     """
-    max_outreach = int(
-        policies.get(POLICY_MAX_OUTREACH_PER_CYCLE, _DEFAULT_MAX_OUTREACH)
-    )
     max_web_searches = int(
         policies.get(POLICY_MAX_WEB_SEARCHES_PER_CYCLE, _DEFAULT_MAX_WEB_SEARCHES)
     )
 
-    outreach_count = 0
     web_search_count = 0
 
     def hook(
@@ -58,16 +49,8 @@ def build_startup_vc_domain_policy_hook(
         capability: str,
         arguments: Dict[str, Any],
     ) -> Optional[str]:
-        nonlocal outreach_count, web_search_count
+        nonlocal web_search_count
         name = tool_name or capability
-
-        if name == TOOL_SEND_OUTREACH_EMAIL:
-            outreach_count += 1
-            if outreach_count > max_outreach:
-                return (
-                    f"Outreach send blocked: cycle limit reached "
-                    f"({max_outreach} per cycle)"
-                )
 
         if name in (TOOL_WEB_SEARCH_STARTUPS, TOOL_WEB_SEARCH_VCS):
             web_search_count += 1

@@ -42,8 +42,12 @@ python scripts/run.py --mode web --iterations 3 --target-url http://localhost:30
 # Scheduler mode (long-lived trigger loop)
 python scripts/run.py --mode scheduler --cron "*/30 * * * *"
 
-# Live dashboard (tail NDJSON events in real time)
+# Live dashboard (tail NDJSON events in real time, includes workspace preview)
 python scripts/run.py --mode dashboard --events-path data/memory/web_autonomy_events.ndjson
+
+# Workspace live preview (standalone, auto-refreshes on file changes)
+python scripts/run.py --mode preview
+python scripts/run.py --mode preview --port 3000 --open-browser
 
 # Customer simulation
 python scripts/run_customer_simulation.py
@@ -102,7 +106,6 @@ autonomous-startup/
 │   ├── simulation/        # Customer simulation, HTTP checks
 │   ├── workspace/         # File tools, HTTP server, versioning
 │   ├── data/              # Database layer
-│   ├── memory/            # Legacy memory components
 │   ├── llm/               # LLM client
 │   └── utils/             # Config, logging
 ├── workspace/             # Agent-built marketplace website
@@ -151,9 +154,10 @@ Framework runtime policies (`RunConfig.policies`) control guardrail behavior:
 |------|---------|
 | `README.md` | This file |
 | `AGENTS.md` | Developer/agent guide with change rules |
-| `PRODUCT_VISION.md` | Product direction and acquisition strategy |
-| `CUSTOMER_SIMULATION.md` | Customer simulation spec (state machines, transition logic) |
-| `next_steps.md` | Full autonomy roadmap |
+| `docs/PRODUCT_VISION.md` | Product direction and acquisition strategy |
+| `docs/CUSTOMER_SIMULATION.md` | Customer simulation spec (state machines, transition logic) |
+| `docs/next_steps.md` | Remaining work and priorities |
+| `docs/DONE.md` | Shipped milestones and decision log |
 
 ## Testing
 
@@ -181,4 +185,4 @@ pip install pytest pytest-cov
 
 ## License
 
-MIT License -- see LICENSE file for details.
+MIT License

@@ -181,16 +181,6 @@ class StartupDatabase:
             logger.error(f"Failed to add VC: {e}")
             return False
 
-    def add_startups_batch(self, startups: List[Dict[str, Any]]) -> int:
-        """Add multiple startups in batch."""
-        count = sum(1 for s in startups if self.add_startup(s))
-        return count
-
-    def add_vcs_batch(self, vcs: List[Dict[str, Any]]) -> int:
-        """Add multiple VCs in batch."""
-        count = sum(1 for v in vcs if self.add_vc(v))
-        return count
-
     def get_startups(
         self,
         sector: Optional[str] = None,
@@ -268,113 +258,6 @@ class StartupDatabase:
             'total_outreach': outreach_count,
             'sectors': sectors
         }
-
-    def log_outreach(
-        self,
-        recipient_type: str,
-        recipient_id: str,
-        recipient_name: str,
-        subject: str,
-        message: str,
-        recipient_email: str = "",
-        channel: str = "email",
-        campaign_id: str = "",
-        metadata: Dict[str, Any] = None
-    ) -> int:
-        """Log an outreach attempt.
-
-        Args:
-            recipient_type: Type of recipient (startup/vc)
-            recipient_id: ID of the recipient
-            recipient_name: Name of recipient
-            subject: Email subject
-            message: Email message body
-            recipient_email: Email address
-            channel: Outreach channel
-            campaign_id: Campaign identifier
-            metadata: Additional metadata
-
-        Returns:
-            ID of the outreach record
-        """
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            INSERT INTO outreach
-            (recipient_type, recipient_id, recipient_name, recipient_email,
-             subject, message, channel, campaign_id, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            recipient_type,
-            recipient_id,
-            recipient_name,
-            recipient_email,
-            subject,
-            message,
-            channel,
-            campaign_id,
-            json.dumps(metadata) if metadata else None
-        ))
-        self.conn.commit()
-        return cursor.lastrowid
-
-    def get_outreach_history(
-        self,
-        recipient_id: str = None,
-        campaign_id: str = None,
-        limit: int = 50
-    ) -> List[Dict[str, Any]]:
-        """Get outreach history.
-
-        Args:
-            recipient_id: Filter by recipient
-            campaign_id: Filter by campaign
-            limit: Maximum results
-
-        Returns:
-            List of outreach records
-        """
-        cursor = self.conn.cursor()
-        query = "SELECT * FROM outreach WHERE 1=1"
-        params = []
-
-        if recipient_id:
-            query += " AND recipient_id = ?"
-            params.append(recipient_id)
-
-        if campaign_id:
-            query += " AND campaign_id = ?"
-            params.append(campaign_id)
-
-        query += " ORDER BY sent_at DESC LIMIT ?"
-        params.append(limit)
-
-        cursor.execute(query, params)
-        return [dict(row) for row in cursor.fetchall()]
-
-    def update_outreach_response(
-        self,
-        outreach_id: int,
-        response: str,
-        status: str = "responded"
-    ) -> bool:
-        """Update outreach with response.
-
-        Args:
-            outreach_id: ID of outreach record
-            response: Response received
-            status: New status
-
-        Returns:
-            True if successful
-        """
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            UPDATE outreach
-            SET response = ?, status = ?, response_at = ?
-            WHERE id = ?
-        """, (response, status, datetime.now(), outreach_id))
-        self.conn.commit()
-        return cursor.rowcount > 0
 
     def close(self) -> None:
         """Close database connection (idempotent)."""
