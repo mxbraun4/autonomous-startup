@@ -9,12 +9,9 @@ from .tools import (
     get_startups_tool,
     get_vcs_tool,
     get_database_stats,
-    # Outreach
-    send_outreach_email,
-    get_outreach_history,
-    content_generator_tool,
     # Analysis
     data_validator_tool,
+    content_generator_tool,
     analytics_tool,
     run_quality_checks_tool,
     register_dynamic_tool,
@@ -30,7 +27,6 @@ from .agents import (
     create_reviewer_agent,
     create_data_strategist,
     create_product_strategist,
-    create_outreach_strategist,
 )
 from .crews import (
     create_autonomous_startup_crew,
@@ -50,10 +46,8 @@ __all__ = [
     'get_startups_tool',
     'get_vcs_tool',
     'get_database_stats',
-    'send_outreach_email',
-    'get_outreach_history',
-    'content_generator_tool',
     'data_validator_tool',
+    'content_generator_tool',
     'analytics_tool',
     'run_quality_checks_tool',
     'register_dynamic_tool',
@@ -67,7 +61,6 @@ __all__ = [
     'create_reviewer_agent',
     'create_data_strategist',
     'create_product_strategist',
-    'create_outreach_strategist',
     # Crews & Flows
     'create_autonomous_startup_crew',
     'run_build_measure_learn_cycle',
