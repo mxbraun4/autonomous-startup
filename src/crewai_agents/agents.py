@@ -291,6 +291,8 @@ def create_developer_agent(
         execute_dynamic_tool,
         data_validator_tool,
         analytics_tool,
+        get_startups_tool,
+        get_vcs_tool,
         make_share_insight("developer"),
         get_team_insights,
     ]

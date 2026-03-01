@@ -146,8 +146,8 @@ class StartupVCAdapter(BaseDomainAdapter):
                 ),
             )
         else:
-            # Non-workspace flow: emit the 2 hardcoded specialist tasks.
-            tasks.extend([
+            # Non-workspace flow: emit the data_specialist task.
+            tasks.append(
                 TaskSpec(
                     run_id=run_id,
                     cycle_id=cycle_id,
@@ -158,40 +158,8 @@ class StartupVCAdapter(BaseDomainAdapter):
                     constraints={"max_targets": self._max_targets_per_cycle},
                     priority=1,
                 ),
-                TaskSpec(
-                    run_id=run_id,
-                    cycle_id=cycle_id,
-                    task_id=f"startup_vc_matching_cycle_{cycle_id}",
-                    objective="Generate explainable startup-to-VC match shortlist",
-                    agent_role="matching_specialist",
-                    required_capabilities=["match_scoring", "explanation_generation"],
-                    constraints={"shortlist_size": self._max_targets_per_cycle},
-                    priority=2,
-                ),
-            ])
+            )
         return tasks
-        return [
-            TaskSpec(
-                run_id=run_id,
-                cycle_id=cycle_id,
-                task_id=f"startup_vc_data_cycle_{cycle_id}",
-                objective="Identify startup/VC data coverage gaps and refresh top gaps",
-                agent_role="data_specialist",
-                required_capabilities=["data_coverage_analysis", "database_write"],
-                constraints={"max_targets": self._max_targets_per_cycle},
-                priority=1,
-            ),
-            TaskSpec(
-                run_id=run_id,
-                cycle_id=cycle_id,
-                task_id=f"startup_vc_matching_cycle_{cycle_id}",
-                objective="Generate explainable startup-to-VC match shortlist",
-                agent_role="matching_specialist",
-                required_capabilities=["match_scoring", "explanation_generation"],
-                constraints={"shortlist_size": self._max_targets_per_cycle},
-                priority=2,
-            ),
-        ]
 
     def simulate_environment(
         self,
