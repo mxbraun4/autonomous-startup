@@ -40,27 +40,6 @@ SEED_WORKFLOWS = {
         },
         "score": 0.75,
     },
-    "outreach_campaign": {
-        "workflow": {
-            "description": "Startup outreach campaign workflow",
-            "steps": [
-                "Get startups from database matching criteria",
-                "Research each startup for personalization",
-                "Generate personalized outreach message",
-                "Send outreach email",
-                "Log outreach in database",
-                "Track responses and update status",
-            ],
-            "best_practices": [
-                "Mention specific recent news or achievements",
-                "Keep messages under 150 words",
-                "Include clear call-to-action",
-                "Send Tuesday-Thursday 9-11am for best response",
-                "Follow up after 3-4 days if no response",
-            ],
-        },
-        "score": 0.80,
-    },
     "vc_matching": {
         "workflow": {
             "description": "Startup-VC matching workflow",
@@ -99,9 +78,7 @@ def initialize_database() -> None:
 
 async def seed_unified_store() -> None:
     """Seed memory through the non-legacy UnifiedStore."""
-    from src.framework.contracts import ConsensusEntry
     from src.framework.storage.unified_store import UnifiedStore
-    from src.framework.types import EntryType
 
     data_dir = str(Path(settings.memory_data_dir).resolve())
     Path(data_dir).mkdir(parents=True, exist_ok=True)
@@ -115,17 +92,6 @@ async def seed_unified_store() -> None:
                 created_by="seed_memory",
                 provenance="initial seed",
             )
-
-        await store.cons_set(
-            ConsensusEntry(
-                key="strategy.outreach.best_time",
-                value="Tuesday-Thursday 9-11am",
-                entry_type=EntryType.STRATEGY,
-                confidence=0.80,
-                source_agent_id="seed_memory",
-                source_evidence=["industry best practices"],
-            )
-        )
 
         proc_types = await store.proc_list_types()
         logger.info("Seeded %s workflows via UnifiedStore (data_dir=%s)", len(proc_types), data_dir)
@@ -147,7 +113,6 @@ def main() -> None:
     print("\nNext steps:")
     print("  1. Run simulation: python scripts/run.py")
     print("  2. The system will collect startup/VC data via web search")
-    print("  3. Outreach campaigns will use collected data")
 
 
 if __name__ == "__main__":

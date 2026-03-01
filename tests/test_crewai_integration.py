@@ -21,10 +21,8 @@ def test_tools_creation():
     """Test that tools can be created."""
     from src.crewai_agents.tools import (
         get_startups_tool,
-        content_generator_tool,
         tool_builder_tool,
         data_validator_tool,
-        analytics_tool,
         run_quality_checks_tool,
         register_dynamic_tool,
         list_dynamic_tools,
@@ -34,10 +32,8 @@ def test_tools_creation():
     # CrewAI @tool decorator produces Tool objects with a .run() method
     for t in [
         get_startups_tool,
-        content_generator_tool,
         tool_builder_tool,
         data_validator_tool,
-        analytics_tool,
         run_quality_checks_tool,
         register_dynamic_tool,
         list_dynamic_tools,
@@ -61,26 +57,6 @@ def test_get_startups_tool_execution():
     assert result['stage'] == 'seed'
     assert 'count' in result
     assert 'startups' in result
-
-
-def test_content_generator_tool():
-    """Test content generator tool."""
-    import json
-    from src.crewai_agents.tools import content_generator_tool
-
-    # CrewAI tools are invoked via .run()
-    result_json = content_generator_tool.run(
-        startup_name="TestStartup",
-        sector="fintech",
-        recent_news="Series A funding"
-    )
-
-    result = json.loads(result_json)
-
-    assert 'message' in result
-    assert 'personalization_score' in result
-    assert 'TestStartup' in result['message']
-    assert result['personalization_score'] > 0
 
 
 def test_run_quality_checks_tool_syntax_only():
@@ -170,9 +146,8 @@ def test_single_iteration():
 
     # Verify metrics
     metrics = results['metrics_evolution'][0]
-    assert 'response_rate' in metrics
-    assert 'meeting_rate' in metrics
-    assert metrics['response_rate'] >= 0
+    assert 'qa_passed' in metrics
+    assert 'task_count' in metrics
 
 
 if __name__ == "__main__":

@@ -85,13 +85,13 @@ class TestEpisodicIntegration:
             summary_text="Searched for fintech seed-stage startups, found 5 results",
         ))
         store.ep_record(Episode(
-            agent_id="outreach_expert",
-            episode_type=EpisodeType.OUTREACH,
+            agent_id="developer",
+            episode_type=EpisodeType.GENERAL,
             context={"target": "startup_x"},
-            action="send_email",
-            outcome={"response": "interested"},
+            action="build_feature",
+            outcome={"result": "completed"},
             success=True,
-            summary_text="Sent personalised email to startup_x, they expressed interest",
+            summary_text="Built matching feature for startup_x, completed successfully",
         ))
 
         # Structured search
@@ -114,12 +114,12 @@ class TestEpisodicIntegration:
         ))
         store.ep_record(Episode(
             agent_id="a1",
-            episode_type=EpisodeType.OUTREACH,
+            episode_type=EpisodeType.GENERAL,
             context={},
-            action="sent emails to healthtech companies",
-            outcome={"sent": 5},
+            action="built healthtech landing page",
+            outcome={"pages": 5},
             success=False,
-            summary_text="Sent outreach to 5 healthtech companies, no responses received",
+            summary_text="Built landing pages for 5 healthtech companies, QA failed",
         ))
 
         results = store.ep_search_similar("fintech scraping Y Combinator")
@@ -129,12 +129,12 @@ class TestEpisodicIntegration:
         for success in [True, True, False, True]:
             store.ep_record(Episode(
                 agent_id="a1",
-                episode_type=EpisodeType.OUTREACH,
+                episode_type=EpisodeType.GENERAL,
                 context={},
                 outcome={},
                 success=success,
             ))
-        rate = store.ep_get_success_rate("a1", EpisodeType.OUTREACH)
+        rate = store.ep_get_success_rate("a1", EpisodeType.GENERAL)
         assert 0.7 <= rate <= 0.8
 
     def test_get_by_id(self, store):
@@ -309,13 +309,13 @@ class TestCrossTierIntegration:
 
         # Agent pulls this into working memory
         store.wm_put(WorkingMemoryItem(
-            agent_id="outreach_expert",
+            agent_id="developer",
             item_type=ItemType.RETRIEVED_FACT,
             content={"fact": "Stripe processes $1T in payments annually"},
             source_memory_type="semantic",
             source_entity_id="sem_doc_1",
         ))
 
-        items = store.wm_list("outreach_expert", item_type=ItemType.RETRIEVED_FACT)
+        items = store.wm_list("developer", item_type=ItemType.RETRIEVED_FACT)
         assert len(items) == 1
         assert items[0].source_entity_id == "sem_doc_1"

@@ -4,8 +4,6 @@ anthropic==0.75.0
 openai==1.83.0
 pydantic==2.11.10
 python-dotenv==1.1.1
-numpy==2.3.5
 pydantic-settings==2.10.1
 pytest==9.0.2
 chromadb==1.1.1
-aiosqlite==0.21.0

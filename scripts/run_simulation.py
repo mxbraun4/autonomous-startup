@@ -8,6 +8,8 @@ else:
 add_repo_root_to_path(__file__)
 configure_stdio_utf8()
 
+import threading
+import webbrowser
 from pathlib import Path
 
 from src.crewai_agents import run_build_measure_learn_cycle  # delegates to BuildMeasureLearnFlow
@@ -70,110 +72,130 @@ def _assert_writable_directory(path: Path) -> None:
     probe.unlink(missing_ok=True)
 
 
-def _percentage_change(baseline: float, latest: float) -> float | None:
-    """Return percent delta from baseline, or None when baseline is zero."""
-    if baseline <= 0:
+def _start_dashboard(port: int = 8765, open_browser: bool = True) -> str | None:
+    """Start the live dashboard server on a daemon thread.
+
+    Returns the dashboard URL, or None if the server fails to start.
+    """
+    from scripts.live_dashboard import DashboardServer, DashboardHandler
+
+    repo_root = Path(__file__).resolve().parent.parent
+    events_path = repo_root / "data" / "memory" / "web_autonomy_events.ndjson"
+    workspace = repo_root / "workspace"
+
+    try:
+        server = DashboardServer(
+            ("127.0.0.1", port),
+            DashboardHandler,
+            events_path=events_path,
+            max_events=8000,
+            recent_limit=80,
+            refresh_ms=1200,
+            workspace=workspace if workspace.is_dir() else None,
+        )
+    except OSError as exc:
+        logger.warning("Dashboard server failed to bind port %s: %s", port, exc)
         return None
-    return ((latest - baseline) / baseline) * 100.0
+
+    url = f"http://127.0.0.1:{port}"
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.5}, daemon=True)
+    thread.start()
+
+    logger.info("Live dashboard started at %s", url)
+    print(f"  Dashboard: {url}")
+
+    if open_browser:
+        try:
+            webbrowser.open(url, new=2)
+        except Exception:
+            pass
+
+    return url
+
+
+def _start_preview_server(port: int = 8080, open_browser: bool = True) -> str | None:
+    """Start the workspace preview server on a daemon thread.
+
+    Returns the preview URL, or None if the server fails to start.
+    """
+    from scripts.serve_workspace import PreviewServer, PreviewHandler
+
+    workspace = Path(__file__).resolve().parent.parent / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    # Write a placeholder so the server has something to show immediately
+    index = workspace / "index.html"
+    if not index.exists():
+        index.write_text(
+            "<html><body><h1>Workspace</h1>"
+            "<p>Waiting for agents to build...</p>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+    try:
+        server = PreviewServer(
+            ("127.0.0.1", port),
+            PreviewHandler,
+            workspace=workspace,
+        )
+    except OSError as exc:
+        logger.warning("Preview server failed to bind port %s: %s", port, exc)
+        return None
+
+    url = f"http://127.0.0.1:{port}"
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.5}, daemon=True)
+    thread.start()
+
+    logger.info("Workspace preview started at %s", url)
+    print(f"  Preview: {url}")
+
+    if open_browser:
+        try:
+            webbrowser.open(url, new=2)
+        except Exception:
+            pass
+
+    return url
 
 
 def display_results(results: dict) -> None:
     """Display simulation results.
 
     Args:
-        results: Results from Build-Measure-Learn cycles
+        results: Results from Build-Evaluate-Learn cycles
     """
     print("\n" + "="*60)
     print("CREWAI AUTONOMOUS STARTUP SIMULATION - RESULTS")
     print("="*60)
 
+    metrics = results.get("metrics_evolution", [])
+    learnings = results.get("learnings", [])
+
     print("\nPerformance Evolution:")
-    for i, metrics in enumerate(results['metrics_evolution'], 1):
+    for i, m in enumerate(metrics, 1):
+        qa = "PASS" if m.get("qa_passed") else "FAIL"
+        tasks = m.get("task_count", "?")
+        successes = m.get("success_count", "?")
+        failures = m.get("failure_count", "?")
         print(f"\n  Iteration {i}:")
-        print(f"    Response rate: {metrics['response_rate']:.1%}")
-        print(f"    Meeting rate: {metrics['meeting_rate']:.1%}")
-        print(f"    Total sent: {metrics['total_sent']}")
-        print(f"    Responses: {metrics['responses']}")
-        print(f"    Meetings: {metrics['meetings']}")
+        print(f"    QA gate: {qa}")
+        print(f"    Tasks: {tasks} (success={successes}, fail={failures})")
 
-    # Calculate improvement
-    if len(results['metrics_evolution']) > 1:
-        first = results['metrics_evolution'][0]
-        last = results['metrics_evolution'][-1]
-
-        response_improvement = _percentage_change(
-            first['response_rate'],
-            last['response_rate'],
-        )
-        meeting_improvement = _percentage_change(
-            first['meeting_rate'],
-            last['meeting_rate'],
-        )
-
-        print("\n" + "="*60)
-        print("IMPROVEMENT SUMMARY")
-        print("="*60)
-
-        if response_improvement is None:
-            print(
-                f"  Response rate: {first['response_rate']:.1%} -> {last['response_rate']:.1%} "
-                "(n/a: zero baseline)"
-            )
-        else:
-            print(
-                f"  Response rate: {first['response_rate']:.1%} -> {last['response_rate']:.1%} "
-                f"(+{response_improvement:.0f}%)"
-            )
-
-        if meeting_improvement is None:
-            print(
-                f"  Meeting rate: {first['meeting_rate']:.1%} -> {last['meeting_rate']:.1%} "
-                "(n/a: zero baseline)"
-            )
-        else:
-            print(
-                f"  Meeting rate: {first['meeting_rate']:.1%} -> {last['meeting_rate']:.1%} "
-                f"(+{meeting_improvement:.0f}%)"
-            )
+    # QA pass rate
+    if metrics:
+        passes = sum(1 for m in metrics if m.get("qa_passed"))
+        print(f"\n  QA pass rate: {passes}/{len(metrics)}")
 
     print("\n" + "="*60)
     print("SIMULATION COMPLETE")
     print("="*60)
 
-    # --- Evidence-based takeaways instead of unconditional claims -----------
-    metrics = results.get("metrics_evolution", [])
-    learnings = results.get("learnings", [])
-
-    # Did agents actually execute?
     if metrics:
         print(f"\n  Iterations executed: {len(metrics)}")
     else:
         print("\n  [WARN] No iterations completed.")
 
-    # Was any real outreach logged?
-    sources = [m.get("measurement_source", "unknown") for m in metrics]
-    has_real_signal = any(s == "outreach_logs" for s in sources)
-    if has_real_signal:
-        print("  [OK] Measurement based on real outreach logs")
-    else:
-        no_signal = all(s == "no_signal" for s in sources)
-        if no_signal:
-            print("  [--] No outreach was logged; metrics are zero (no signal)")
-        else:
-            print(f"  [--] Measurement sources: {', '.join(set(sources))}")
-
-    # Did performance actually improve?
-    if len(metrics) >= 2:
-        first_rr = metrics[0].get("response_rate", 0)
-        last_rr = metrics[-1].get("response_rate", 0)
-        if last_rr > first_rr:
-            print("  [OK] Response rate improved across iterations")
-        elif last_rr == first_rr:
-            print("  [--] Response rate unchanged across iterations")
-        else:
-            print("  [!!] Response rate decreased across iterations")
-
-    # Were learnings captured?
     if learnings:
         print(f"  [OK] {len(learnings)} learning(s) captured")
     else:
@@ -202,6 +224,33 @@ def main():
         choices=[0, 1, 2],
         help='Verbosity level: 0=quiet, 1=normal, 2=detailed (default: 2)'
     )
+    parser.add_argument(
+        '--no-preview',
+        action='store_true',
+        help='Disable the auto-starting workspace preview server',
+    )
+    parser.add_argument(
+        '--no-workspace',
+        action='store_true',
+        help='Disable workspace file tools for agents',
+    )
+    parser.add_argument(
+        '--preview-port',
+        type=int,
+        default=8080,
+        help='Port for the workspace preview server (default: 8080)',
+    )
+    parser.add_argument(
+        '--no-dashboard',
+        action='store_true',
+        help='Disable the auto-starting live dashboard',
+    )
+    parser.add_argument(
+        '--dashboard-port',
+        type=int,
+        default=8765,
+        help='Port for the live dashboard server (default: 8765)',
+    )
 
     args = parser.parse_args()
 
@@ -217,6 +266,36 @@ def main():
 
     # Initialise memory system
     _init_memory_store()
+
+    # Initialise event logger for observability
+    from src.framework.observability.logger import EventLogger
+    from src.crewai_agents.tools import set_event_logger
+
+    events_path = Path(__file__).resolve().parent.parent / "data" / "memory" / "web_autonomy_events.ndjson"
+    event_logger = EventLogger(persist_path=str(events_path))
+    set_event_logger(event_logger)
+    logger.info("EventLogger initialised (persist_path=%s)", events_path)
+
+    # Configure workspace file tools for agents
+    if not args.no_workspace:
+        from src.workspace.file_tools import configure_workspace_root
+        workspace_path = Path(__file__).resolve().parent.parent / "workspace"
+        workspace_path.mkdir(parents=True, exist_ok=True)
+        configure_workspace_root(str(workspace_path))
+        logger.info("Workspace root configured at %s", workspace_path)
+
+    # Start live dashboard in background
+    if not args.no_dashboard:
+        _start_dashboard(
+            port=args.dashboard_port,
+            open_browser=not args.no_preview,
+        )
+
+    # Start workspace preview server in background
+    preview_url = _start_preview_server(
+        port=args.preview_port,
+        open_browser=not args.no_preview,
+    )
 
     # Run Build-Measure-Learn cycles
     results = run_build_measure_learn_cycle(

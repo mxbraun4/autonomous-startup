@@ -71,11 +71,12 @@ def build_run_snapshot(
 
     if run_id:
         selected_run_id = run_id
-        scoped = [event for event in ordered if event.run_id == run_id]
+        scoped = [event for event in ordered if event.run_id == run_id or event.run_id is None]
     else:
         selected_run_id = run_ids[0] if run_ids else None
         scoped = [
-            event for event in ordered if selected_run_id is None or event.run_id == selected_run_id
+            event for event in ordered
+            if selected_run_id is None or event.run_id == selected_run_id or event.run_id is None
         ]
 
     event_counts = Counter(event.event_type for event in scoped)
@@ -84,6 +85,8 @@ def build_run_snapshot(
     cycle_rows: Dict[int, Dict[str, Any]] = {}
     last_gate_payload: Dict[str, Any] = {}
     last_cycle_end_payload: Dict[str, Any] = {}
+    llm_calls: List[Dict[str, Any]] = []
+    agent_exchanges: List[Dict[str, Any]] = []
     run_started_at: Optional[str] = None
     run_ended_at: Optional[str] = None
 
@@ -141,6 +144,31 @@ def build_run_snapshot(
             last_gate_payload = dict(payload)
         elif event.event_type == "cycle_end":
             last_cycle_end_payload = dict(payload)
+        elif event.event_type == "llm_call":
+            llm_calls.append({
+                "sequence": event.sequence,
+                "cycle_id": cycle_id,
+                "agent": str(payload.get("agent", "")),
+                "model": str(payload.get("model", "")),
+                "message_summary": _truncate(str(payload.get("message_summary", "")), limit=150),
+                "message_full": str(payload.get("message_summary", "")),
+                "response_summary": _truncate(str(payload.get("response_summary", "")), limit=150),
+                "response_full": str(payload.get("response_summary", "")),
+                "duration_ms": payload.get("duration_ms", 0),
+            })
+        elif event.event_type == "agent_exchange":
+            agent_exchanges.append({
+                "sequence": event.sequence,
+                "cycle_id": cycle_id,
+                "from_agent": str(payload.get("from_agent", "")),
+                "exchange_type": str(payload.get("exchange_type", "")),
+                "key": str(payload.get("key", payload.get("topic", ""))),
+                "value_summary": _truncate(
+                    str(payload.get("value_summary", payload.get("count", ""))),
+                    limit=150,
+                ),
+                "value_full": str(payload.get("value_summary", payload.get("count", ""))),
+            })
 
     cycle_summaries = [cycle_rows[key] for key in sorted(cycle_rows)]
     top_tools = [
@@ -210,6 +238,8 @@ def build_run_snapshot(
         "cycles": cycle_summaries,
         "active_tasks": list(active_tasks.values()),
         "latest_gate": latest_gate,
+        "llm_calls": list(reversed(llm_calls[-50:])),
+        "agent_exchanges": list(reversed(agent_exchanges[-50:])),
         "recent_events": recent_rows,
     }
 
@@ -361,5 +391,19 @@ def _event_summary(event: ObservabilityEvent) -> str:
             ]
         ).strip()
         return _truncate(text, limit=140)
+
+    if event_type == "llm_call":
+        agent = str(payload.get("agent", "")).strip()
+        model = str(payload.get("model", "")).strip()
+        dur = payload.get("duration_ms", "")
+        text = f"{agent} model={model} {dur}ms"
+        return _truncate(" ".join(text.split()), limit=140)
+
+    if event_type == "agent_exchange":
+        from_agent = str(payload.get("from_agent", "")).strip()
+        ex_type = str(payload.get("exchange_type", "")).strip()
+        key = str(payload.get("key", payload.get("topic", ""))).strip()
+        text = f"{from_agent} {ex_type} {key}"
+        return _truncate(" ".join(text.split()), limit=140)
 
     return ""

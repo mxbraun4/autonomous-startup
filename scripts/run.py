@@ -17,6 +17,7 @@ def _mode_script(mode: str) -> Path:
         "framework": scripts_dir / "run_framework_simulation.py",
         "scheduler": scripts_dir / "run_scheduler.py",
         "dashboard": scripts_dir / "live_dashboard.py",
+        "preview": scripts_dir / "serve_workspace.py",
     }
     if mode not in mapping:
         raise ValueError(f"Unsupported mode: {mode}")
@@ -31,11 +32,11 @@ def build_command(mode: str, passthrough_args: List[str]) -> List[str]:
 
 def main(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Unified runner for CrewAI, web-autonomy, framework, scheduler, and dashboard modes.",
+        description="Unified runner for CrewAI, web-autonomy, framework, scheduler, dashboard, and preview modes.",
     )
     parser.add_argument(
         "--mode",
-        choices=["crewai", "web", "framework", "scheduler", "dashboard"],
+        choices=["crewai", "web", "framework", "scheduler", "dashboard", "preview"],
         default="crewai",
         help="Execution mode (default: crewai)",
     )

@@ -24,6 +24,7 @@ from src.utils.config import settings
 from src.utils.logging import get_logger
 
 if TYPE_CHECKING:
+    from src.framework.observability.logger import EventLogger
     from src.framework.storage.sync_wrapper import SyncUnifiedStore
 
 logger = get_logger(__name__)
@@ -33,6 +34,9 @@ _db: Optional[StartupDatabase] = None
 
 # Global memory store instance (SyncUnifiedStore)
 _memory_store: Optional["SyncUnifiedStore"] = None
+
+# Global event logger instance (EventLogger)
+_event_logger: Optional["EventLogger"] = None
 
 # Dynamic runtime tool registry (autonomy gap: dynamic tool creation + self deployment)
 _dynamic_tool_specs: Dict[str, Dict[str, Any]] = {}
@@ -72,6 +76,18 @@ def set_memory_store(store: "SyncUnifiedStore") -> None:
 def get_memory_store() -> Optional["SyncUnifiedStore"]:
     """Get the current memory store (may be None if not initialised)."""
     return _memory_store
+
+
+def set_event_logger(event_logger: "EventLogger") -> None:
+    """Inject the event logger for observability."""
+    global _event_logger
+    _event_logger = event_logger
+    logger.info("Event logger injected into CrewAI tools")
+
+
+def get_event_logger() -> Optional["EventLogger"]:
+    """Get the current event logger (may be None if not initialised)."""
+    return _event_logger
 
 
 def _tool_artifact_dir() -> Path:
@@ -687,128 +703,6 @@ def get_database_stats() -> str:
 
 
 # =============================================================================
-# OUTREACH TOOLS
-# =============================================================================
-
-@tool("Send Outreach Email")
-def send_outreach_email(
-    recipient_name: str,
-    recipient_email: str,
-    subject: str,
-    message: str,
-    recipient_type: str = "startup",
-    recipient_id: str = "",
-    campaign_id: str = "default"
-) -> str:
-    """Send a simulated outreach email and log it to the database.
-
-    This tool simulates sending an email and records the outreach attempt
-    in the database for tracking and analytics.
-
-    Args:
-        recipient_name: Name of the recipient (company or person)
-        recipient_email: Email address to send to
-        subject: Email subject line
-        message: Email body content
-        recipient_type: Type of recipient ('startup' or 'vc')
-        recipient_id: Database ID of the recipient (if known)
-        campaign_id: Campaign identifier for grouping outreach
-
-    Returns:
-        Confirmation with outreach ID
-    """
-    logger.info(f"Sending outreach email to {recipient_name} <{recipient_email}>")
-
-    db = get_database()
-
-    # Log the outreach attempt
-    outreach_id = db.log_outreach(
-        recipient_type=recipient_type,
-        recipient_id=recipient_id or recipient_name.lower().replace(' ', '_'),
-        recipient_name=recipient_name,
-        recipient_email=recipient_email,
-        subject=subject,
-        message=message,
-        channel="email",
-        campaign_id=campaign_id,
-        metadata={
-            'simulated': True,
-            'word_count': len(message.split()),
-            'subject_length': len(subject)
-        }
-    )
-
-    return json.dumps({
-        'status': 'sent',
-        'outreach_id': outreach_id,
-        'recipient': recipient_name,
-        'email': recipient_email,
-        'subject': subject,
-        'message_preview': message[:100] + '...' if len(message) > 100 else message,
-        'note': 'Email simulated - logged to database for tracking'
-    }, indent=2)
-
-
-@tool("Get Outreach History")
-def get_outreach_history(campaign_id: str = "", limit: int = 20) -> str:
-    """Get history of outreach attempts.
-
-    Args:
-        campaign_id: Filter by campaign (optional)
-        limit: Maximum number of records to return
-
-    Returns:
-        JSON with outreach history
-    """
-    logger.info(f"Getting outreach history (campaign: {campaign_id or 'all'})")
-
-    db = get_database()
-    history = db.get_outreach_history(
-        campaign_id=campaign_id if campaign_id else None,
-        limit=limit
-    )
-
-    # Calculate stats
-    total = len(history)
-    responded = sum(1 for h in history if h.get('status') == 'responded')
-    response_rate = responded / total if total > 0 else 0
-
-    return json.dumps({
-        'status': 'success',
-        'total_outreach': total,
-        'responded': responded,
-        'response_rate': response_rate,
-        'history': history
-    }, indent=2)
-
-
-@tool("Record Outreach Response")
-def record_outreach_response(outreach_id: int, response: str, interested: bool = False) -> str:
-    """Record a response to an outreach attempt.
-
-    Args:
-        outreach_id: ID of the outreach record
-        response: The response received
-        interested: Whether the recipient expressed interest
-
-    Returns:
-        Confirmation of update
-    """
-    logger.info(f"Recording response for outreach {outreach_id}")
-
-    db = get_database()
-    status = "interested" if interested else "responded"
-    success = db.update_outreach_response(outreach_id, response, status)
-
-    return json.dumps({
-        'status': 'success' if success else 'failed',
-        'outreach_id': outreach_id,
-        'new_status': status,
-        'message': f"Response recorded for outreach {outreach_id}" if success else "Failed to update"
-    }, indent=2)
-
-
-# =============================================================================
 # ANALYSIS AND CONTENT TOOLS
 # =============================================================================
 
@@ -858,55 +752,6 @@ def data_validator_tool(data_json: str) -> str:
             'status': 'error',
             'reason': str(e)
         })
-
-
-@tool("Generate Outreach Content")
-def content_generator_tool(startup_name: str, sector: str, recent_news: str = "") -> str:
-    """Generate personalized outreach message for a startup.
-
-    Args:
-        startup_name: Name of the startup
-        sector: Startup sector
-        recent_news: Recent news or achievements
-
-    Returns:
-        Personalized outreach message
-    """
-    logger.info(f"Content generator: Creating message for {startup_name}")
-
-    message_parts = [
-        f"Hi {startup_name} team,",
-        "",
-    ]
-
-    if recent_news:
-        message_parts.append(f"Congratulations on {recent_news.lower()}!")
-    else:
-        message_parts.append(f"I came across {startup_name} and was impressed by your work in {sector}.")
-
-    message_parts.extend([
-        "",
-        f"We're working with VCs who are actively looking for innovative {sector} startups. "
-        "Based on your profile, I think there could be some great matches.",
-        "",
-        "Would you be open to a brief 15-minute call to explore potential introductions?",
-        "",
-        "Best regards"
-    ])
-
-    message = "\n".join(message_parts)
-
-    score = 0.5
-    if recent_news:
-        score += 0.3
-    if len(message) < 600:
-        score += 0.2
-
-    return json.dumps({
-        'message': message,
-        'personalization_score': min(score, 1.0),
-        'word_count': len(message.split())
-    }, indent=2)
 
 
 @tool("Build Tool Specification")
@@ -1046,49 +891,6 @@ def execute_dynamic_tool(tool_name: str, payload_json: str = "{}") -> str:
     return json.dumps(result, indent=2)
 
 
-@tool("Analyze Metrics")
-def analytics_tool(campaign_results: str) -> str:
-    """Analyze campaign performance metrics.
-
-    Args:
-        campaign_results: JSON string with campaign results
-
-    Returns:
-        Analysis with insights and recommendations
-    """
-    logger.info("Analytics tool: Analyzing campaign metrics")
-
-    try:
-        results = json.loads(campaign_results)
-        response_rate = results.get('response_rate', 0)
-        meeting_rate = results.get('meeting_rate', 0)
-
-        insights = []
-        if response_rate > 0.30:
-            insights.append("Excellent response rate - campaign is highly effective")
-        elif response_rate > 0.20:
-            insights.append("Good response rate - above industry average")
-        else:
-            insights.append("Low response rate - needs optimization")
-
-        recommendations = []
-        if response_rate < 0.25:
-            recommendations.extend([
-                "Increase personalization in messages",
-                "Reference recent startup news/achievements"
-            ])
-
-        return json.dumps({
-            'metrics': results,
-            'insights': insights,
-            'recommendations': recommendations,
-            'overall_grade': 'A' if response_rate > 0.30 else 'B' if response_rate > 0.20 else 'C'
-        }, indent=2)
-
-    except Exception as e:
-        return json.dumps({'error': str(e)})
-
-
 # =============================================================================
 # CONSENSUS MEMORY TOOLS
 # =============================================================================
@@ -1109,6 +911,11 @@ def share_insight(key: str, value: str, evidence: str = "") -> str:
     Returns:
         Confirmation that the insight was stored
     """
+    return _share_insight_impl(key, value, evidence, source_agent="crewai_agent")
+
+
+def _share_insight_impl(key: str, value: str, evidence: str, *, source_agent: str) -> str:
+    """Core implementation for share_insight with explicit source_agent."""
     store = get_memory_store()
     if store is None:
         return json.dumps({
@@ -1121,18 +928,55 @@ def share_insight(key: str, value: str, evidence: str = "") -> str:
     entry = ConsensusEntry(
         key=key,
         value=value,
-        source_agent_id="crewai_agent",
+        source_agent_id=source_agent,
         source_evidence=[evidence] if evidence else [],
         confidence=0.9,
     )
     entity_id = store.cons_set(entry)
 
+    el = get_event_logger()
+    if el is not None:
+        val_summary = value[:200] + "..." if len(value) > 200 else value
+        el.emit("agent_exchange", {
+            "exchange_type": "share_insight",
+            "from_agent": source_agent,
+            "key": key,
+            "value_summary": val_summary,
+        })
+
     return json.dumps({
         "status": "success",
         "entity_id": entity_id,
         "key": key,
+        "source_agent": source_agent,
         "message": f"Insight stored under '{key}'",
     }, indent=2)
+
+
+def make_share_insight(role: str):
+    """Factory that returns a role-specific share_insight @tool.
+
+    Each agent gets its own version so ``source_agent_id`` is always correct.
+    """
+
+    @tool(f"Share Insight ({role})")
+    def _share_insight_for_role(key: str, value: str, evidence: str = "") -> str:
+        """Share a finding with other agents via consensus memory.
+
+        Use this tool to record insights, learnings, or facts so other agents
+        can access them in future iterations.
+
+        Args:
+            key: A namespaced key (e.g., "outreach.best_subject_line", "data.top_gap_sector")
+            value: The insight or fact to share
+            evidence: Supporting evidence or reasoning
+
+        Returns:
+            Confirmation that the insight was stored
+        """
+        return _share_insight_impl(key, value, evidence, source_agent=role)
+
+    return _share_insight_for_role
 
 
 @tool("Get Team Insights")
@@ -1166,6 +1010,15 @@ def get_team_insights(topic: str = "") -> str:
         }
         for e in entries
     ]
+
+    el = get_event_logger()
+    if el is not None:
+        el.emit("agent_exchange", {
+            "exchange_type": "get_insights",
+            "from_agent": "crewai_agent",
+            "topic": topic or "all",
+            "count": len(insights),
+        })
 
     return json.dumps({
         "status": "success",

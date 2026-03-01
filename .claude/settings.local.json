@@ -6,7 +6,8 @@
       "Bash(find:*)",
       "Bash(git -C \"E:\\\\autonomous-startup\" branch -a)",
       "Bash(git -C \"E:\\\\autonomous-startup\" log --graph --oneline --decorate -10 main)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(sort:*)"
     ]
   }
 }

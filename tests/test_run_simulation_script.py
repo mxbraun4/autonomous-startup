@@ -5,15 +5,6 @@ from pathlib import Path
 import pytest
 
 import scripts.run_simulation as run_simulation
-from scripts.run_simulation import _percentage_change
-
-
-def test_percentage_change_with_zero_baseline():
-    assert _percentage_change(0.0, 0.25) is None
-
-
-def test_percentage_change_with_nonzero_baseline():
-    assert _percentage_change(0.20, 0.30) == pytest.approx(50.0)
 
 
 def test_init_memory_store_uses_configured_data_dir(monkeypatch, tmp_path):

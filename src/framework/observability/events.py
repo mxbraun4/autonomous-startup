@@ -27,6 +27,8 @@ EVENT_TYPES_REQUIRED = {
     "policy_patch_applied",
     "procedure_updated",
     "agent_reasoning",
+    "llm_call",
+    "agent_exchange",
 }
 
 
