@@ -48,7 +48,6 @@ logger = get_logger(__name__)
 ROLE_COORDINATOR = "coordinator"
 ROLE_PRODUCT_STRATEGIST = "product_strategist"
 ROLE_DATA_SPECIALIST = "data_specialist"
-ROLE_MATCHING_SPECIALIST = "matching_specialist"
 ROLE_WORKSPACE_DEVELOPER = "workspace_developer"
 
 # ---------------------------------------------------------------------------
@@ -163,7 +162,6 @@ _AVAILABLE_AGENTS = [
     "product_strategist",
     "workspace_developer",
     "data_specialist",
-    "matching_specialist",
 ]
 
 
@@ -235,7 +233,7 @@ def _parse_delegated_tasks(output_text: str) -> Optional[List[Dict[str, Any]]]:
 
 
 def _default_delegation(input_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Fallback delegation: delegate to all 4 agents with sensible defaults."""
+    """Fallback delegation: delegate to all 3 agents with sensible defaults."""
     return [
         {
             "agent_role": "product_strategist",
@@ -252,11 +250,6 @@ def _default_delegation(input_data: Dict[str, Any]) -> List[Dict[str, Any]]:
             "objective": "Identify startup/VC data coverage gaps and refresh top gaps",
             "priority": 3,
         },
-        {
-            "agent_role": "matching_specialist",
-            "objective": "Generate explainable startup-to-VC match shortlist",
-            "priority": 4,
-        },
     ]
 
 
@@ -272,7 +265,7 @@ def make_coordinator_agent(
     into the TaskGraph for execution by specialist agents.
 
     In mock mode the LLM output won't parse as valid JSON, so the agent
-    falls back to ``_default_delegation()`` which delegates to all 4 agents.
+    falls back to ``_default_delegation()`` which delegates to all 3 agents.
     """
     from src.workspace.file_tools import (
         read_workspace_file,
@@ -448,59 +441,6 @@ def make_data_specialist_agent(
         except Exception as exc:
             logger.warning("data_specialist crew failed: %s", exc)
             output_text = f"Data specialist crew error: {exc}"
-            reasoning = ""
-
-        return {
-            "output_text": output_text,
-            "reasoning": reasoning,
-            "tool_calls": call_ids,
-            "tokens_used": 0,
-        }
-
-    return agent
-
-
-def make_matching_specialist_agent(
-    runtime: Any,
-    *,
-    llm: Optional[LLM] = None,
-) -> Callable[..., Dict[str, Any]]:
-    """Return a framework-compatible callable that runs a CrewAI matching crew."""
-
-    def agent(task_spec: Any, tools: Any, context: Any) -> Dict[str, Any]:
-        input_data = dict(getattr(task_spec, "input_data", {}) or {})
-        objective = getattr(task_spec, "objective", "") or "Generate startup-to-VC match shortlist"
-        constraints = dict(getattr(task_spec, "constraints", {}) or {})
-        shortlist_size = constraints.get("shortlist_size", 5)
-        task_id = getattr(task_spec, "task_id", "unknown")
-
-        crewai_agent = create_product_strategist(llm or get_llm("product"))
-        call_ids: List[str] = []
-        _bridge_crewai_tools(crewai_agent, runtime, ROLE_MATCHING_SPECIALIST, task_id, call_ids)
-
-        crewai_task = Task(
-            description=(
-                f"{objective}\n\n"
-                f"Shortlist size: {shortlist_size}\n"
-                f"Additional input: {input_data}"
-            ),
-            agent=crewai_agent,
-            expected_output="Match shortlist with scores and explanations for each match.",
-        )
-        crew = Crew(
-            agents=[crewai_agent],
-            tasks=[crewai_task],
-            process=Process.sequential,
-            verbose=False,
-            memory=False,
-        )
-        try:
-            result = crew.kickoff()
-            output_text = _crew_kickoff_result(result)
-            reasoning = _extract_crew_reasoning(result)
-        except Exception as exc:
-            logger.warning("matching_specialist crew failed: %s", exc)
-            output_text = f"Matching specialist crew error: {exc}"
             reasoning = ""
 
         return {
@@ -700,22 +640,15 @@ def register_startup_vc_agents(
 ) -> None:
     """Register the startup-VC agents with the task router.
 
-    When *enable_workspace* is True, registers all 5 agents: coordinator,
-    product_strategist, workspace_developer, data_specialist, and
-    matching_specialist. When False, only data_specialist and
-    matching_specialist are registered (unchanged).
+    When *enable_workspace* is True, registers all 4 agents: coordinator,
+    product_strategist, workspace_developer, and data_specialist.
+    When False, only data_specialist is registered.
     """
     router.register_agent(
         agent_id=ROLE_DATA_SPECIALIST,
         agent_role=ROLE_DATA_SPECIALIST,
         capabilities=[CAP_DATA_COVERAGE_ANALYSIS, CAP_DATABASE_WRITE],
         agent_instance=make_data_specialist_agent(runtime, llm=llm),
-    )
-    router.register_agent(
-        agent_id=ROLE_MATCHING_SPECIALIST,
-        agent_role=ROLE_MATCHING_SPECIALIST,
-        capabilities=[CAP_MATCH_SCORING, CAP_EXPLANATION_GENERATION],
-        agent_instance=make_matching_specialist_agent(runtime, llm=llm),
     )
     if enable_workspace:
         router.register_agent(
@@ -733,6 +666,9 @@ def register_startup_vc_agents(
         router.register_agent(
             agent_id=ROLE_WORKSPACE_DEVELOPER,
             agent_role=ROLE_WORKSPACE_DEVELOPER,
-            capabilities=[CAP_WORKSPACE_READ, CAP_WORKSPACE_WRITE, CAP_WORKSPACE_LIST],
+            capabilities=[
+                CAP_WORKSPACE_READ, CAP_WORKSPACE_WRITE, CAP_WORKSPACE_LIST,
+                CAP_MATCH_SCORING, CAP_EXPLANATION_GENERATION,
+            ],
             agent_instance=make_workspace_dev_reviewer_agent(runtime, llm=llm),
         )

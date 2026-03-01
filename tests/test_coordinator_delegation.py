@@ -41,11 +41,11 @@ class TestParseDelegatedTasksRawJson:
     """Parse delegated_tasks from raw JSON (no code fence)."""
 
     def test_parse_raw_json(self) -> None:
-        text = '{"delegated_tasks": [{"agent_role": "matching_specialist", "objective": "Score matches"}]}'
+        text = '{"delegated_tasks": [{"agent_role": "workspace_developer", "objective": "Score matches"}]}'
         result = _parse_delegated_tasks(text)
         assert result is not None
         assert len(result) == 1
-        assert result[0]["agent_role"] == "matching_specialist"
+        assert result[0]["agent_role"] == "workspace_developer"
 
 
 class TestParseDelegatedTasksGarbage:
@@ -85,17 +85,16 @@ class TestParseDelegatedTasksBareArray:
 
 
 class TestDefaultDelegation:
-    """_default_delegation returns all 4 agent roles with correct priorities."""
+    """_default_delegation returns all 3 agent roles with correct priorities."""
 
-    def test_default_delegation_returns_four_agents(self) -> None:
+    def test_default_delegation_returns_three_agents(self) -> None:
         result = _default_delegation({})
-        assert len(result) == 4
+        assert len(result) == 3
 
         roles = [t["agent_role"] for t in result]
         assert "product_strategist" in roles
         assert "workspace_developer" in roles
         assert "data_specialist" in roles
-        assert "matching_specialist" in roles
 
     def test_default_delegation_priorities_ascending(self) -> None:
         result = _default_delegation({})

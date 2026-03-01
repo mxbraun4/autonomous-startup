@@ -82,7 +82,7 @@ class TestControllerFactory:
         runtime = controller._executor._runtime
         assert runtime._store is store
 
-    def test_three_agents_registered(self):
+    def test_one_agent_registered(self):
         args = _default_args()
         controller, _, _ = create_startup_vc_run_controller(
             args, store=_StubStore()
@@ -90,8 +90,7 @@ class TestControllerFactory:
         agents = controller._executor._runtime._router.list_agents()
         agent_ids = {a.agent_id for a in agents}
         assert "data_specialist" in agent_ids
-        assert "matching_specialist" in agent_ids
-        # coordinator, product_strategist, workspace_developer may or may not be present depending on workspace_enabled
+        # coordinator, product_strategist, workspace_developer only present when workspace is enabled
 
     def test_six_capabilities_registered(self):
         args = _default_args()

@@ -113,7 +113,7 @@ class TestAdapterWithoutWorkspaceNoCoordinatorTask:
             "coordinator task must not appear when workspace_root is None"
         )
         assert "data_specialist" in roles
-        assert "matching_specialist" in roles
+        assert len(tasks) == 1, "Expected exactly one data_specialist task"
 
 
 class TestCoordinatorReceivesFeedbackInInputData:
