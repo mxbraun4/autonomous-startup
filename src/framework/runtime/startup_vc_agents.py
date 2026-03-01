@@ -656,7 +656,6 @@ def _passthrough_callable(**kwargs: Any) -> Dict[str, Any]:
 
 def register_startup_vc_capabilities(registry: CapabilityRegistry) -> None:
     """Register capability labels used by StartupVCAdapter tasks.
-    """Register the capability labels used by StartupVCAdapter tasks.
 
     These are passthrough entries: the real tool invocations happen inside
     the CrewAI agents that have their own tool sets.
@@ -706,8 +705,6 @@ def register_startup_vc_agents(
     matching_specialist. When False, only data_specialist and
     matching_specialist are registered (unchanged).
     """
-    """Register the startup-VC agents with the task router."""
-
     router.register_agent(
         agent_id=ROLE_DATA_SPECIALIST,
         agent_role=ROLE_DATA_SPECIALIST,

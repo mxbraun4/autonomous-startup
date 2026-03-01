@@ -75,11 +75,6 @@ class LearnPhaseOutput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _campaign_id_for_iteration(iteration: int) -> str:
-    """Deterministic outreach campaign id used for measurement."""
-    return f"iteration_{iteration}"
-
-
 def _collect_measure_metrics(
     iteration: int,
     build_result_text: str,
@@ -195,10 +190,6 @@ def create_build_phase_tasks(
     if reviewer_task is not None:
         tasks.append(reviewer_task)
     return tasks
-    base_tasks = [product_task, developer_task]
-    if reviewer_task is not None:
-        base_tasks.append(reviewer_task)
-    return base_tasks
 
 
 def create_learn_phase_task(coordinator, build_results: str, measure_results: str) -> Task:
