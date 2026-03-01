@@ -170,6 +170,28 @@ class StartupVCAdapter(BaseDomainAdapter):
                 ),
             ])
         return tasks
+        return [
+            TaskSpec(
+                run_id=run_id,
+                cycle_id=cycle_id,
+                task_id=f"startup_vc_data_cycle_{cycle_id}",
+                objective="Identify startup/VC data coverage gaps and refresh top gaps",
+                agent_role="data_specialist",
+                required_capabilities=["data_coverage_analysis", "database_write"],
+                constraints={"max_targets": self._max_targets_per_cycle},
+                priority=1,
+            ),
+            TaskSpec(
+                run_id=run_id,
+                cycle_id=cycle_id,
+                task_id=f"startup_vc_matching_cycle_{cycle_id}",
+                objective="Generate explainable startup-to-VC match shortlist",
+                agent_role="matching_specialist",
+                required_capabilities=["match_scoring", "explanation_generation"],
+                constraints={"shortlist_size": self._max_targets_per_cycle},
+                priority=2,
+            ),
+        ]
 
     def simulate_environment(
         self,
@@ -254,7 +276,7 @@ class StartupVCAdapter(BaseDomainAdapter):
                 "policy_violations": int(len(validation_errors)),
                 "loop_denials": 0,
                 "unhandled_exceptions": base_metrics["failed_count"],
-                "delegated_task_count": max(0, base_metrics["total_tasks"] - 3),
+                "delegated_task_count": max(0, base_metrics["total_tasks"] - 2),
                 "determinism_variance": 0.0 if not validation_errors else 1.0,
                 "procedure_score": procedure_score,
                 "customer_metrics": customer_metrics,
@@ -312,7 +334,7 @@ class StartupVCAdapter(BaseDomainAdapter):
             "policy_violations": 0,
             "loop_denials": 0,
             "unhandled_exceptions": _safe_int(base_metrics.get("failed_count"), 0),
-            "delegated_task_count": max(0, _safe_int(base_metrics.get("total_tasks"), 0) - 3),
+            "delegated_task_count": max(0, _safe_int(base_metrics.get("total_tasks"), 0) - 2),
             "determinism_variance": 0.0,
             "procedure_score": match_quality_score,
         }

@@ -75,6 +75,11 @@ class LearnPhaseOutput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _campaign_id_for_iteration(iteration: int) -> str:
+    """Deterministic outreach campaign id used for measurement."""
+    return f"iteration_{iteration}"
+
+
 def _collect_measure_metrics(
     iteration: int,
     build_result_text: str,
@@ -190,6 +195,10 @@ def create_build_phase_tasks(
     if reviewer_task is not None:
         tasks.append(reviewer_task)
     return tasks
+    base_tasks = [product_task, developer_task]
+    if reviewer_task is not None:
+        base_tasks.append(reviewer_task)
+    return base_tasks
 
 
 def create_learn_phase_task(coordinator, build_results: str, measure_results: str) -> Task:
@@ -353,7 +362,6 @@ class _FlowState(BaseModel):
     metrics_evolution: List[Dict[str, Any]] = Field(default_factory=list)
     learnings: List[str] = Field(default_factory=list)
     prompt_overrides: Dict[str, str] = Field(default_factory=dict)
-    agent_spawn_events: List[Dict[str, Any]] = Field(default_factory=list)
 
     # Learning feedback: procedure hints injected into next BUILD
     procedure_hints: str = ""
@@ -772,12 +780,6 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         m = self.state.measure_output
         measure_dict: Dict[str, Any] = m.model_dump() if m else {}
 
-        spawn_event = {}
-        if self.state.agent_spawn_events:
-            latest = self.state.agent_spawn_events[-1]
-            if int(latest.get("iteration", -1)) == int(self.state.iteration):
-                spawn_event = latest
-
         iteration_result = {
             "iteration": self.state.iteration,
             "build": self.state.build_result_text,
@@ -789,7 +791,6 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             },
             "autonomy": {
                 "prompt_overrides": dict(self.state.prompt_overrides),
-                "agent_spawn_event": spawn_event,
             },
         }
 
