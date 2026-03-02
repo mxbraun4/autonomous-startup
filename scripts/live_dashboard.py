@@ -110,7 +110,7 @@ HTML_TEMPLATE = """<!doctype html>
     }
     .cards {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 10px;
     }
     .card {
@@ -124,6 +124,8 @@ HTML_TEMPLATE = """<!doctype html>
     .card:nth-child(2) { animation-delay: 60ms; }
     .card:nth-child(3) { animation-delay: 120ms; }
     .card:nth-child(4) { animation-delay: 180ms; }
+    .card:nth-child(5) { animation-delay: 240ms; }
+    .card:nth-child(6) { animation-delay: 300ms; }
     .label {
       font-size: 11px;
       text-transform: uppercase;
@@ -254,6 +256,14 @@ HTML_TEMPLATE = """<!doctype html>
     .expandable.expanded .full-text {
       display: block;
     }
+    #agentReasoningBody td:nth-child(4),
+    #agentReasoningBody td:nth-child(5) {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12px;
+      line-height: 1.5;
+      max-width: 420px;
+    }
     .error {
       margin: 0;
       padding: 8px 12px;
@@ -272,7 +282,7 @@ HTML_TEMPLATE = """<!doctype html>
       to { opacity: 1; transform: translateX(0); }
     }
     @media (max-width: 1080px) {
-      .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 720px) {
@@ -331,6 +341,16 @@ HTML_TEMPLATE = """<!doctype html>
         <div class="value" id="qaValue">-</div>
         <div class="meta" id="qaMeta">&nbsp;</div>
       </article>
+      <article class="card">
+        <div class="label">Tools Called</div>
+        <div class="value" id="toolsValue">0</div>
+        <div class="meta" id="toolsMeta">&nbsp;</div>
+      </article>
+      <article class="card">
+        <div class="label">DB Records</div>
+        <div class="value" id="dbRecordsValue">0</div>
+        <div class="meta" id="dbRecordsMeta">&nbsp;</div>
+      </article>
     </section>
 
     <section class="panel" id="previewSection" style="display: none;">
@@ -368,6 +388,20 @@ HTML_TEMPLATE = """<!doctype html>
           </tr>
         </thead>
         <tbody id="sharedKnowledgeBody"></tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>Learnings</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Iter</th>
+            <th>Key</th>
+            <th>Insight</th>
+          </tr>
+        </thead>
+        <tbody id="learningsBody"></tbody>
       </table>
     </section>
 
@@ -417,6 +451,27 @@ HTML_TEMPLATE = """<!doctype html>
           </thead>
           <tbody id="currentActivityBody"></tbody>
         </table>
+      </section>
+    </section>
+
+    <section class="grid">
+      <section class="panel">
+        <h2>Tool Usage</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Tool Name</th>
+              <th>Calls</th>
+            </tr>
+          </thead>
+          <tbody id="toolUsageBody"></tbody>
+        </table>
+      </section>
+      <section class="panel">
+        <h2>Collected Data</h2>
+        <div id="dbStatsContent" style="padding: 14px;">
+          <p style="color: var(--ink-soft); font-size: 13px;">Loading...</p>
+        </div>
       </section>
     </section>
 
@@ -599,22 +654,19 @@ HTML_TEMPLATE = """<!doctype html>
         {"value_summary": "value_full"}
       );
 
-      // Agent Reasoning (was LLM Calls)
+      // Agent Reasoning (was LLM Calls) — always expanded, no toggle
       renderRows(
         "agentReasoningBody",
         (snapshot.llm_calls || []).map((item) => ({
           cycle_id: item.cycle_id ?? "-",
           agent: item.agent || "-",
           model: item.model || "-",
-          message_summary: item.message_summary || "-",
           message_full: item.message_full || item.message_summary || "-",
-          response_summary: item.response_summary || "-",
           response_full: item.response_full || item.response_summary || "-",
           duration_ms: item.duration_ms != null ? item.duration_ms + " ms" : "-",
         })),
-        ["cycle_id", "agent", "model", "message_summary", "response_summary", "duration_ms"],
-        "No agent reasoning yet",
-        {"message_summary": "message_full", "response_summary": "response_full"}
+        ["cycle_id", "agent", "model", "message_full", "response_full", "duration_ms"],
+        "No agent reasoning yet"
       );
 
       // Iteration History (was Cycle Outcomes)
@@ -657,6 +709,42 @@ HTML_TEMPLATE = """<!doctype html>
         "No events yet"
       );
 
+      // Tools Called card
+      const tools = snapshot.tools || {};
+      setText("toolsValue", tools.called || 0);
+      setText("toolsMeta", `denied: ${tools.denied || 0}  errors: ${tools.errors || 0}`);
+
+      // Tool Usage table
+      renderRows(
+        "toolUsageBody",
+        (tools.top_called || []).map((item) => ({
+          tool_name: item.tool_name || "-",
+          count: item.count || 0,
+        })),
+        ["tool_name", "count"],
+        "No tools yet"
+      );
+
+      // Learnings (insights from agent exchanges)
+      renderRows(
+        "learningsBody",
+        (snapshot.agent_exchanges || [])
+          .filter((item) => {
+            const etype = (item.exchange_type || "").toLowerCase();
+            const key = (item.key || "").toLowerCase();
+            return etype.includes("share_insight") && key.startsWith("learn.");
+          })
+          .map((item) => ({
+            cycle_id: item.cycle_id ?? "-",
+            key: item.key || "-",
+            value_summary: item.value_summary || item.value_full || "-",
+            value_full: item.value_full || item.value_summary || "-",
+          })),
+        ["cycle_id", "key", "value_summary"],
+        "No learnings yet",
+        {"value_summary": "value_full"}
+      );
+
       // Event Breakdown chips
       renderChips("eventChips", snapshot.event_counts || {});
     }
@@ -674,10 +762,52 @@ HTML_TEMPLATE = """<!doctype html>
       return response.json();
     }
 
+    async function fetchDbStats() {
+      try {
+        const response = await fetch("/api/db-stats", { cache: "no-store" });
+        if (!response.ok) return null;
+        return await response.json();
+      } catch { return null; }
+    }
+
+    function renderDbStats(stats) {
+      if (!stats) {
+        setText("dbRecordsValue", "0");
+        setText("dbRecordsMeta", "no database");
+        const content = document.getElementById("dbStatsContent");
+        if (content) content.innerHTML = `<p style="color: var(--ink-soft); font-size: 13px;">Database unavailable</p>`;
+        return;
+      }
+      const total = (stats.total_startups || 0) + (stats.total_vcs || 0);
+      setText("dbRecordsValue", total);
+      const sectors = stats.sectors || [];
+      setText("dbRecordsMeta", `${sectors.length} sector${sectors.length !== 1 ? "s" : ""}`);
+
+      const content = document.getElementById("dbStatsContent");
+      if (!content) return;
+      const startups = stats.total_startups || 0;
+      const vcs = stats.total_vcs || 0;
+      let html = `<div style="display: flex; gap: 20px; margin-bottom: 12px;">`;
+      html += `<div><span style="font-size: 22px; font-weight: 700;">${startups}</span><div class="label">Startups</div></div>`;
+      html += `<div><span style="font-size: 22px; font-weight: 700;">${vcs}</span><div class="label">VCs</div></div>`;
+      html += `</div>`;
+      if (sectors.length > 0) {
+        html += `<div style="display: flex; flex-wrap: wrap; gap: 6px;">`;
+        sectors.forEach(s => {
+          html += `<span class="chip">${escapeHtml(s)}</span>`;
+        });
+        html += `</div>`;
+      } else {
+        html += `<p style="color: var(--ink-soft); font-size: 13px;">No sectors collected yet</p>`;
+      }
+      content.innerHTML = html;
+    }
+
     async function refreshDashboard() {
       try {
-        const snapshot = await fetchSnapshot();
+        const [snapshot, dbStats] = await Promise.all([fetchSnapshot(), fetchDbStats()]);
         renderSnapshot(snapshot);
+        renderDbStats(dbStats);
         errorBox.style.display = "none";
       } catch (error) {
         errorBox.textContent = error instanceof Error ? error.message : String(error);
@@ -710,15 +840,23 @@ HTML_TEMPLATE = """<!doctype html>
 
     // The dashboard serves workspace files at /workspace/
     const wsBase = "/workspace/";
-    fetch(wsBase + "index.html", {method: "HEAD", cache: "no-store"})
-      .then(r => {
-        if (r.ok) {
-          previewSection.style.display = "";
-          previewFrame.src = wsBase;
-          previewOpenLink.href = wsBase;
-        }
-      })
-      .catch(() => {});
+    function checkWorkspaceFiles() {
+      fetch("/api/workspace-files", {cache: "no-store"})
+        .then(r => r.json())
+        .then(data => {
+          const files = data.files || [];
+          if (files.length > 0) {
+            const first = files[0];
+            previewSection.style.display = "";
+            previewFrame.src = wsBase + first;
+            previewOpenLink.href = wsBase + first;
+          } else {
+            previewSection.style.display = "none";
+          }
+        })
+        .catch(() => {});
+    }
+    checkWorkspaceFiles();
 
     if (previewRefreshBtn) {
       previewRefreshBtn.addEventListener("click", () => {
@@ -730,9 +868,10 @@ HTML_TEMPLATE = """<!doctype html>
 
     // Auto-refresh preview every 5s
     setInterval(() => {
-      if (previewFrame.src && previewSection.style.display !== "none") {
-        previewFrame.src = wsBase + "?_t=" + Date.now();
+      if (previewSection.style.display !== "none" && previewFrame.src) {
+        previewFrame.src = previewFrame.src.split("?")[0] + "?_t=" + Date.now();
       }
+      checkWorkspaceFiles();
     }, 5000);
 
     scheduleRefresh();
@@ -802,6 +941,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/snapshot":
             self._serve_snapshot(parsed.query)
             return
+        if parsed.path == "/api/db-stats":
+            self._serve_db_stats()
+            return
+        if parsed.path == "/api/workspace-files":
+            self._serve_workspace_files_api()
+            return
         if parsed.path == "/healthz":
             self._send_json({"status": "ok"})
             return
@@ -850,6 +995,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(content)
+
+    def _serve_db_stats(self) -> None:
+        """Return database statistics as JSON."""
+        try:
+            from src.crewai_agents.tools import get_database
+
+            db = get_database()
+            stats = db.get_stats()
+            self._send_json(stats)
+        except Exception as exc:
+            self._send_json(
+                {"total_startups": 0, "total_vcs": 0, "total_outreach": 0, "sectors": [], "error": str(exc)},
+            )
+
+    def _serve_workspace_files_api(self) -> None:
+        """Return list of HTML files in the workspace directory."""
+        workspace = self.server.workspace
+        if workspace is None or not workspace.is_dir():
+            self._send_json({"files": []})
+            return
+        html_files = sorted(
+            f.name for f in workspace.iterdir() if f.is_file() and f.suffix.lower() in (".html", ".htm")
+        )
+        self._send_json({"files": html_files})
 
     def _serve_index(self) -> None:
         html = HTML_TEMPLATE.replace("__REFRESH_MS__", str(self.server.refresh_ms))

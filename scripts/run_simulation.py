@@ -251,7 +251,6 @@ def main():
         default=8765,
         help='Port for the live dashboard server (default: 8765)',
     )
-
     args = parser.parse_args()
 
     print("\n" + "="*60)

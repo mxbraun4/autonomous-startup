@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     anthropic_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
 
+    # External service keys
+    serper_api_key: Optional[str] = None
+
     # LLM model identifiers (litellm format)
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_default_model: str = ""
