@@ -1,4 +1,9 @@
 """CrewAI Tools - Including web-enabled data collection tools."""
+# NOTE: CrewAI caches tool results by default (cache_function returns True).
+# Any tool whose output changes between calls (database reads, file reads,
+# quality checks) MUST pass ``cache_function=_NO_CACHE`` to the @tool
+# decorator, otherwise agents see stale results after writes/mutations.
+_NO_CACHE = lambda _args=None, _result=None: False  # noqa: E731
 import atexit
 import json
 import os
@@ -1134,3 +1139,20 @@ def get_team_insights(topic: str = "") -> str:
         "topic": topic or "all",
         "insights": insights,
     }, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Disable CrewAI's per-tool result cache for every tool whose output can
+# change between calls (file reads after writes, DB queries after inserts,
+# quality checks, team insights after new shares, etc.).
+# The default cache_function returns True which causes stale results.
+# ---------------------------------------------------------------------------
+for _t in (
+    run_quality_checks_tool,
+    get_startups_tool,
+    get_vcs_tool,
+    get_database_stats,
+    list_dynamic_tools,
+    get_team_insights,
+):
+    _t.cache_function = _NO_CACHE

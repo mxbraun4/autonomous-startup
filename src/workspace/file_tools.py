@@ -110,7 +110,6 @@ def _list_impl(subdirectory: str = "") -> dict:
 # CrewAI @tool decorated functions
 # ---------------------------------------------------------------------------
 
-
 @tool
 def read_workspace_file(file_path: str) -> str:
     """Read a file from the workspace directory."""
@@ -127,3 +126,12 @@ def write_workspace_file(file_path: str, content: str) -> str:
 def list_workspace_files(subdirectory: str = "") -> str:
     """Recursively list all files in the workspace (excluding .versions/)."""
     return json.dumps(_list_impl(subdirectory))
+
+
+# Disable CrewAI's per-tool result cache for workspace tools.  The default
+# cache_function returns True (= always cache), which causes reads after
+# writes to return stale content for the same file_path argument.
+_NO_CACHE = lambda _args=None, _result=None: False  # noqa: E731
+read_workspace_file.cache_function = _NO_CACHE
+write_workspace_file.cache_function = _NO_CACHE
+list_workspace_files.cache_function = _NO_CACHE
