@@ -27,6 +27,7 @@ from src.crewai_agents.agents import (
     create_reviewer_agent,
     create_product_strategist,
     ensure_litellm_tracing,
+    set_current_cycle_id,
     get_llm,
 )
 from src.utils.logging import get_logger
@@ -278,7 +279,7 @@ def create_autonomous_startup_crew(
         manager_llm=coordinator_llm,
         verbose=_verbose_flag(verbose),
         memory=False,
-        cache=True,
+        cache=False,
         max_rpm=10,
     )
 
@@ -501,6 +502,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         """Execute the BUILD phase: product feedback + developer implementation."""
         self.state.iteration += 1
         i = self.state.iteration
+        set_current_cycle_id(i)
         self._emit("cycle_start", {"cycle_id": i})
         shared_llm = self.state.llm
         developer_llm = shared_llm or get_llm("developer")
@@ -650,6 +652,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             process=Process.sequential,
             verbose=_verbose_flag(self.state.verbose),
             memory=False,
+            cache=False,
         )
 
         logger.info("BUILD PHASE: Executing...")
@@ -734,6 +737,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 process=Process.sequential,
                 verbose=_verbose_flag(self.state.verbose),
                 memory=False,
+                cache=False,
             )
             try:
                 ensure_litellm_tracing()
@@ -870,6 +874,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             process=Process.sequential,
             verbose=_verbose_flag(self.state.verbose),
             memory=False,
+            cache=False,
         )
 
         ensure_litellm_tracing()

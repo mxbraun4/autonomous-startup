@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 
+import requests
+
 from src.crewai_agents.runtime_env import (
     configure_runtime_environment,
     patch_crewai_storage_paths,
@@ -398,131 +400,237 @@ def run_quality_checks_tool(
 
 
 # =============================================================================
-# WEB DATA COLLECTION TOOLS
+# WEB DATA COLLECTION TOOLS — Serper.dev backed with graceful fallback
 # =============================================================================
+
+def _serper_search(
+    query: str,
+    search_type: str = "search",
+    n_results: int = 10,
+) -> Dict[str, Any]:
+    """Call the Serper.dev REST API and return parsed JSON.
+
+    Returns a dict with ``"status": "skipped"`` when ``SERPER_API_KEY`` is not
+    configured, so callers degrade gracefully.
+    """
+    api_key = settings.serper_api_key
+    if not api_key:
+        return {"status": "skipped", "reason": "SERPER_API_KEY not set"}
+
+    url = "https://google.serper.dev/search"
+    headers = {
+        "X-API-KEY": api_key,
+        "Content-Type": "application/json",
+    }
+    payload = {"q": query, "num": n_results}
+
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.RequestException as exc:
+        logger.warning("Serper API error: %s", exc)
+        return {"status": "error", "reason": str(exc)}
+
+
+def _fetch_url(url: str, max_chars: int = 4000) -> Dict[str, Any]:
+    """Fetch a URL, strip HTML tags, and return truncated plain text."""
+    try:
+        resp = requests.get(url, timeout=10, headers={"User-Agent": "AutonomousStartupBot/1.0"})
+        resp.raise_for_status()
+        # Strip HTML tags via regex
+        text = re.sub(r"<[^>]+>", " ", resp.text)
+        # Collapse whitespace
+        text = re.sub(r"\s+", " ", text).strip()
+        truncated = len(text) > max_chars
+        text = text[:max_chars]
+        return {"status": "ok", "text": text, "truncated": truncated, "url": url}
+    except requests.RequestException as exc:
+        logger.warning("fetch_url error for %s: %s", url, exc)
+        return {"status": "error", "reason": str(exc), "url": url}
+
 
 @tool("Search Web for Startups")
 def web_search_startups(query: str, sector: str = "technology") -> str:
-    """Search the web for startup information.
-
-    Use this tool to find startups by searching for them online. The LLM will
-    process the search results and extract relevant startup information.
+    """Search the web for startup information using Serper.dev.
 
     Args:
-        query: Search query (e.g., "fintech startups funding 2024", "YC batch startups")
+        query: Search query (e.g., "fintech startups funding 2024")
         sector: Target sector to focus on
 
     Returns:
-        Instructions for the agent to perform web search and extract data
+        JSON with organic search results or skip/error status
     """
     logger.info(f"Web search for startups: {query} (sector: {sector})")
 
-    # This tool returns instructions for the LLM to use its web capabilities
+    raw = _serper_search(f"{query} {sector} startups")
+    if raw.get("status") in ("skipped", "error"):
+        return json.dumps(raw, indent=2)
+
+    organic = raw.get("organic", [])
+    results = []
+    for item in organic:
+        results.append({
+            "title": item.get("title", ""),
+            "link": item.get("link", ""),
+            "snippet": item.get("snippet", ""),
+            "sector": sector,
+        })
+
     return json.dumps({
-        'action': 'web_search',
-        'query': query,
-        'sector': sector,
-        'instructions': f"""
-Search the web for: "{query}"
-
-From the search results, extract startup information including:
-- Company name
-- Description/what they do
-- Sector: {sector}
-- Funding stage (seed, series_a, series_b, etc.)
-- Recent news or achievements
-- Website URL if available
-- Location if mentioned
-
-After extracting, use the 'Save Startup to Database' tool to store each startup found.
-""",
-        'suggested_searches': [
-            f"{sector} startups funding 2024",
-            f"new {sector} companies launched",
-            f"Y Combinator {sector} startups",
-            f"Product Hunt {sector} launches",
-            f"TechCrunch {sector} funding news"
-        ]
+        "status": "success",
+        "query": query,
+        "sector": sector,
+        "result_count": len(results),
+        "results": results,
+        "instructions": (
+            "Extract startup names, descriptions, stages, and websites from the "
+            "results above, then use 'Save Startup to Database' for each."
+        ),
     }, indent=2)
 
 
 @tool("Search Web for VCs")
 def web_search_vcs(query: str, focus_sector: str = "technology") -> str:
-    """Search the web for VC and investor information.
-
-    Use this tool to find VCs and investors by searching online. The LLM will
-    process the results and extract relevant VC information.
+    """Search the web for VC and investor information using Serper.dev.
 
     Args:
-        query: Search query (e.g., "seed stage VCs fintech", "active VC firms 2024")
+        query: Search query (e.g., "seed stage VCs fintech")
         focus_sector: Sector focus to filter VCs
 
     Returns:
-        Instructions for the agent to perform web search and extract data
+        JSON with organic search results or skip/error status
     """
     logger.info(f"Web search for VCs: {query} (focus: {focus_sector})")
 
+    raw = _serper_search(f"{query} {focus_sector} venture capital investors")
+    if raw.get("status") in ("skipped", "error"):
+        return json.dumps(raw, indent=2)
+
+    organic = raw.get("organic", [])
+    results = []
+    for item in organic:
+        results.append({
+            "title": item.get("title", ""),
+            "link": item.get("link", ""),
+            "snippet": item.get("snippet", ""),
+            "focus_sector": focus_sector,
+        })
+
     return json.dumps({
-        'action': 'web_search',
-        'query': query,
-        'focus_sector': focus_sector,
-        'instructions': f"""
-Search the web for: "{query}"
-
-From the search results, extract VC/investor information including:
-- Firm name
-- Investment sectors they focus on
-- Stage focus (seed, series_a, series_b, growth)
-- Check size range if mentioned
-- Recent investments or activity
-- Geographic focus
-- Website URL if available
-
-After extracting, use the 'Save VC to Database' tool to store each VC found.
-""",
-        'suggested_searches': [
-            f"{focus_sector} venture capital firms",
-            f"seed stage investors {focus_sector}",
-            f"active VCs investing in {focus_sector} 2024",
-            f"top {focus_sector} investors",
-            f"VC firms recent investments {focus_sector}"
-        ]
+        "status": "success",
+        "query": query,
+        "focus_sector": focus_sector,
+        "result_count": len(results),
+        "results": results,
+        "instructions": (
+            "Extract VC firm names, sectors, stage focus, and websites from the "
+            "results above, then use 'Save VC to Database' for each."
+        ),
     }, indent=2)
 
 
 @tool("Fetch and Parse Webpage")
 def fetch_webpage(url: str, extract_type: str = "startups") -> str:
-    """Fetch a webpage and extract startup or VC information.
-
-    Use this tool to fetch a specific URL and extract structured data from it.
+    """Fetch a webpage and return its text content for extraction.
 
     Args:
         url: The URL to fetch
         extract_type: What to extract - 'startups' or 'vcs'
 
     Returns:
-        Instructions for the agent to fetch and parse the page
+        JSON with page text (HTML stripped, truncated to 4000 chars) or error
     """
     logger.info(f"Fetch webpage: {url} (extract: {extract_type})")
 
-    extraction_fields = {
-        'startups': ['name', 'description', 'sector', 'stage', 'funding', 'website', 'location', 'recent_news'],
-        'vcs': ['name', 'sectors', 'stage_focus', 'check_size', 'geography', 'recent_activity', 'website']
-    }
+    result = _fetch_url(url)
+    result["extract_type"] = extract_type
+    if result.get("status") == "ok":
+        result["instructions"] = (
+            f"Extract {extract_type} information from the page text above, "
+            f"then use the appropriate 'Save to Database' tool for each entry found."
+        )
+    return json.dumps(result, indent=2)
+
+
+@tool("Run Data Collection")
+def run_data_collection(sectors: str = "fintech,healthtech,ai_ml,devtools,saas") -> str:
+    """Search the web for startups and VCs across the given sectors and save them to the database.
+
+    This is a convenience tool that performs a full data-collection sweep:
+    it searches Serper.dev for startups and VCs in each sector, persists
+    every result to the SQLite database, and returns a summary.
+
+    Requires SERPER_API_KEY to be set; returns status=skipped otherwise.
+
+    Args:
+        sectors: Comma-separated list of sectors to search
+            (e.g. "fintech,healthtech,ai_ml")
+
+    Returns:
+        JSON summary with counts of startups and VCs saved per sector
+    """
+    if not settings.serper_api_key:
+        return json.dumps({"status": "skipped", "reason": "SERPER_API_KEY not set"})
+
+    sector_list = [s.strip().lower().replace(" ", "_") for s in sectors.split(",") if s.strip()]
+    logger.info("run_data_collection: sectors=%s", sector_list)
+
+    db = get_database()
+    sector_results: List[Dict[str, Any]] = []
+
+    for sector in sector_list:
+        startups_saved = 0
+        vcs_saved = 0
+
+        # --- startups ---
+        raw = _serper_search(f"{sector} startups funding", n_results=5)
+        for item in raw.get("organic", []):
+            name = (item.get("title") or "").split(" - ")[0].split(" | ")[0].strip()
+            if not name:
+                continue
+            success = db.add_startup({
+                "name": name,
+                "description": item.get("snippet", ""),
+                "sector": sector,
+                "stage": "unknown",
+                "website": item.get("link", ""),
+                "source": "serper",
+                "fundraising_status": "unknown",
+            })
+            if success:
+                startups_saved += 1
+
+        # --- VCs ---
+        raw = _serper_search(f"{sector} venture capital investors", n_results=5)
+        for item in raw.get("organic", []):
+            name = (item.get("title") or "").split(" - ")[0].split(" | ")[0].strip()
+            if not name:
+                continue
+            success = db.add_vc({
+                "name": name,
+                "sectors": [sector],
+                "stage_focus": "unknown",
+                "website": item.get("link", ""),
+                "source": "serper",
+            })
+            if success:
+                vcs_saved += 1
+
+        sector_results.append({
+            "sector": sector,
+            "startups_saved": startups_saved,
+            "vcs_saved": vcs_saved,
+        })
+
+    total_startups = sum(r["startups_saved"] for r in sector_results)
+    total_vcs = sum(r["vcs_saved"] for r in sector_results)
 
     return json.dumps({
-        'action': 'fetch_url',
-        'url': url,
-        'extract_type': extract_type,
-        'instructions': f"""
-Fetch the webpage at: {url}
-
-Extract {extract_type} information from the page content. Look for:
-{', '.join(extraction_fields.get(extract_type, extraction_fields['startups']))}
-
-For each {extract_type[:-1]} found, use the appropriate 'Save to Database' tool.
-""",
-        'fields_to_extract': extraction_fields.get(extract_type, extraction_fields['startups'])
+        "status": "success",
+        "total_startups_saved": total_startups,
+        "total_vcs_saved": total_vcs,
+        "by_sector": sector_results,
     }, indent=2)
 
 

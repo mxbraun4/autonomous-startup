@@ -13,6 +13,7 @@ from src.crewai_agents.tools import (
     web_search_startups,
     web_search_vcs,
     fetch_webpage,
+    run_data_collection,
     save_startup,
     save_vc,
     # Database tools
@@ -38,6 +39,36 @@ logger = get_logger(__name__)
 
 
 _litellm_patched = False
+
+# Module-level context for the current cycle, updated by the flow before
+# each crew kickoff so that litellm tracing events carry iteration info.
+_current_cycle_id: int | None = None
+
+
+def set_current_cycle_id(cycle_id: int | None) -> None:
+    """Set the active cycle/iteration id for litellm tracing."""
+    global _current_cycle_id
+    _current_cycle_id = cycle_id
+
+
+def _extract_agent_from_messages(messages: list) -> str:
+    """Best-effort extraction of the CrewAI agent role from the system message."""
+    if not messages:
+        return ""
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("role") != "system":
+            continue
+        content = str(msg.get("content", ""))
+        # CrewAI system prompts start with "You are <Role>.\n"
+        if content.startswith("You are "):
+            first_line = content.split("\n", 1)[0]
+            # Strip "You are " prefix and trailing period
+            role = first_line[len("You are "):].rstrip(". ")
+            if role:
+                return role
+    return ""
 
 
 def ensure_litellm_tracing() -> None:
@@ -99,13 +130,21 @@ def ensure_litellm_tracing() -> None:
                             resp_text = f"[tool_call] {tc_name}({tc_args})"
             resp_summary = resp_text
 
-            el.emit("llm_call", {
-                "agent": "",
+            agent_name = _extract_agent_from_messages(
+                messages if isinstance(messages, list) else []
+            )
+
+            payload: dict[str, Any] = {
+                "agent": agent_name,
                 "model": model,
                 "message_summary": msg_summary,
                 "response_summary": resp_summary,
                 "duration_ms": duration_ms,
-            })
+            }
+            if _current_cycle_id is not None:
+                payload["cycle_id"] = _current_cycle_id
+
+            el.emit("llm_call", payload)
         except Exception:
             pass
 
@@ -300,6 +339,7 @@ def create_data_strategist(
         goal='Maintain comprehensive, high-quality startup and VC data with zero critical gaps',
         backstory=backstory,
         tools=[
+            run_data_collection,
             web_search_startups,
             web_search_vcs,
             fetch_webpage,
