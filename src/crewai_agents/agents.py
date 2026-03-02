@@ -61,11 +61,11 @@ def _extract_agent_from_messages(messages: list) -> str:
         if msg.get("role") != "system":
             continue
         content = str(msg.get("content", ""))
-        # CrewAI system prompts start with "You are <Role>.\n"
+        # CrewAI system prompts: "You are <Role>. You are a <backstory>..."
+        # Split on first period to isolate the role name.
         if content.startswith("You are "):
-            first_line = content.split("\n", 1)[0]
-            # Strip "You are " prefix and trailing period
-            role = first_line[len("You are "):].rstrip(". ")
+            after_prefix = content[len("You are "):]
+            role = after_prefix.split(".")[0].strip()
             if role:
                 return role
     return ""

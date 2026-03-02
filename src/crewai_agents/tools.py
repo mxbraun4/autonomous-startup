@@ -45,6 +45,17 @@ _memory_store: Optional["SyncUnifiedStore"] = None
 # Global event logger instance (EventLogger)
 _event_logger: Optional["EventLogger"] = None
 
+# Current cycle/iteration id — set by the flow before each crew kickoff
+# so that tool-emitted events carry the correct iteration number.
+_current_cycle_id: Optional[int] = None
+
+
+def set_current_cycle_id(cycle_id: Optional[int]) -> None:
+    """Set the active cycle/iteration id for tool-emitted events."""
+    global _current_cycle_id
+    _current_cycle_id = cycle_id
+
+
 # Dynamic runtime tool registry (autonomy gap: dynamic tool creation + self deployment)
 _dynamic_tool_specs: Dict[str, Dict[str, Any]] = {}
 _dynamic_tool_invocations: Dict[str, int] = {}
@@ -1055,6 +1066,7 @@ def _share_insight_impl(key: str, value: str, evidence: str, *, source_agent: st
             "from_agent": source_agent,
             "key": key,
             "value_summary": val_summary,
+            "cycle_id": _current_cycle_id,
         })
 
     return json.dumps({
@@ -1131,6 +1143,7 @@ def get_team_insights(topic: str = "") -> str:
             "from_agent": "crewai_agent",
             "topic": topic or "all",
             "count": len(insights),
+            "cycle_id": _current_cycle_id,
         })
 
     return json.dumps({

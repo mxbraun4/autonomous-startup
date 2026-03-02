@@ -27,9 +27,10 @@ from src.crewai_agents.agents import (
     create_reviewer_agent,
     create_product_strategist,
     ensure_litellm_tracing,
-    set_current_cycle_id,
+    set_current_cycle_id as _set_agent_cycle_id,
     get_llm,
 )
+from src.crewai_agents.tools import set_current_cycle_id as _set_tools_cycle_id
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -502,7 +503,8 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         """Execute the BUILD phase: product feedback + developer implementation."""
         self.state.iteration += 1
         i = self.state.iteration
-        set_current_cycle_id(i)
+        _set_agent_cycle_id(i)
+        _set_tools_cycle_id(i)
         self._emit("cycle_start", {"cycle_id": i})
         shared_llm = self.state.llm
         developer_llm = shared_llm or get_llm("developer")
