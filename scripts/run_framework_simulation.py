@@ -155,7 +155,7 @@ def create_startup_vc_run_controller(
     if workspace_root:
         ws_path = Path(workspace_root).resolve()
         ws_path.mkdir(parents=True, exist_ok=True)
-        from src.workspace.file_tools import configure_workspace_root
+        from src.workspace_tools.file_tools import configure_workspace_root
         configure_workspace_root(str(ws_path))
 
     adapter = StartupVCAdapter(

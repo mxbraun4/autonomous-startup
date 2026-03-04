@@ -1,8 +1,10 @@
 """Tests for Layer I domain adapters."""
 
+import sqlite3
 from types import SimpleNamespace
 
 from src.framework.adapters import StartupVCAdapter
+from src.framework.adapters.startup_vc import _map_feedback_entry
 from src.framework.autonomy.run_controller import RunController
 from src.framework.contracts import EvaluationResult, GateDecision, RunConfig
 
@@ -169,4 +171,134 @@ def test_run_controller_uses_domain_adapter_when_task_builder_absent(tmp_path):
     assert run_config.policies["max_children_per_parent"] == 9
     # Adapter defaults still merged in.
     assert "loop_window_size" in run_config.policies
+
+
+# ---------------------------------------------------------------------------
+# _map_feedback_entry tests
+# ---------------------------------------------------------------------------
+
+
+def _make_entry(**overrides):
+    base = {
+        "step_id": "visit_to_signup",
+        "feedback_category": "signup_conversion",
+        "feedback_to_system": "Form was confusing",
+        "feedback_action_hint": "Simplify the signup form",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_map_feedback_entry_signup_maps_to_friction():
+    result = _map_feedback_entry(_make_entry(feedback_category="signup_conversion"))
+    assert result["feedback_type"] == "friction"
+    assert result["page"] == "signup"
+
+
+def test_map_feedback_entry_signup_validation_maps_to_friction():
+    result = _map_feedback_entry(_make_entry(feedback_category="signup_validation"))
+    assert result["feedback_type"] == "friction"
+
+
+def test_map_feedback_entry_match_quality_maps_to_bug():
+    result = _map_feedback_entry(
+        _make_entry(
+            feedback_category="match_quality",
+            step_id="matched_to_interested",
+        )
+    )
+    assert result["feedback_type"] == "bug"
+    assert result["page"] == "fit-score"
+
+
+def test_map_feedback_entry_engagement_maps_to_feature_request():
+    result = _map_feedback_entry(_make_entry(feedback_category="engagement"))
+    assert result["feedback_type"] == "feature_request"
+
+
+def test_map_feedback_entry_interest_gate_maps_to_feature_request():
+    result = _map_feedback_entry(
+        _make_entry(
+            feedback_category="interest_gate",
+            step_id="engaged_to_interest_check",
+        )
+    )
+    assert result["feedback_type"] == "feature_request"
+    assert result["page"] == "investors"
+
+
+def test_map_feedback_entry_success_maps_to_praise():
+    result = _map_feedback_entry(_make_entry(feedback_category="success"))
+    assert result["feedback_type"] == "praise"
+
+
+def test_map_feedback_entry_unknown_category_defaults_to_friction():
+    result = _map_feedback_entry(_make_entry(feedback_category="unknown_xyz"))
+    assert result["feedback_type"] == "friction"
+
+
+def test_map_feedback_entry_message_combines_fields():
+    result = _map_feedback_entry(
+        _make_entry(
+            feedback_to_system="Too slow",
+            feedback_action_hint="Speed up loading",
+        )
+    )
+    assert result["message"] == "Too slow | Action: Speed up loading"
+
+
+def test_map_feedback_entry_page_from_step_id():
+    assert _map_feedback_entry(_make_entry(step_id="visit_to_signup"))["page"] == "signup"
+    assert _map_feedback_entry(_make_entry(step_id="signup_to_matched"))["page"] == "signup"
+    assert _map_feedback_entry(_make_entry(step_id="matched_to_interested"))["page"] == "fit-score"
+    assert _map_feedback_entry(_make_entry(step_id="interested_to_meeting"))["page"] == "investors"
+    assert _map_feedback_entry(_make_entry(step_id="some_other_step"))["page"] == "platform"
+
+
+def test_map_feedback_entry_has_id_and_timestamp():
+    result = _map_feedback_entry(_make_entry())
+    assert len(result["id"]) == 16
+    assert "T" in result["timestamp"]  # ISO format
+
+
+# ---------------------------------------------------------------------------
+# _write_simulation_feedback_to_db tests
+# ---------------------------------------------------------------------------
+
+
+def test_write_simulation_feedback_to_db_writes_entries(tmp_path):
+    adapter = StartupVCAdapter(
+        use_customer_simulation=False,
+        workspace_root=str(tmp_path),
+    )
+    feedback = [
+        _make_entry(feedback_category="signup_conversion"),
+        _make_entry(feedback_category="match_quality", step_id="matched_to_interested"),
+    ]
+    adapter._write_simulation_feedback_to_db(feedback)
+
+    db_path = tmp_path / "feedback.db"
+    assert db_path.exists()
+    with sqlite3.connect(str(db_path)) as conn:
+        rows = conn.execute("SELECT * FROM feedback").fetchall()
+    assert len(rows) == 2
+
+
+def test_write_simulation_feedback_to_db_noop_without_workspace():
+    adapter = StartupVCAdapter(use_customer_simulation=False)
+    # workspace_root is None — should not raise
+    adapter._write_simulation_feedback_to_db([_make_entry()])
+
+
+def test_write_simulation_feedback_to_db_caps_at_20(tmp_path):
+    adapter = StartupVCAdapter(
+        use_customer_simulation=False,
+        workspace_root=str(tmp_path),
+    )
+    feedback = [_make_entry() for _ in range(30)]
+    adapter._write_simulation_feedback_to_db(feedback)
+
+    with sqlite3.connect(str(tmp_path / "feedback.db")) as conn:
+        rows = conn.execute("SELECT * FROM feedback").fetchall()
+    assert len(rows) == 20
 

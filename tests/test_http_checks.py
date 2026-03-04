@@ -2,7 +2,7 @@
 import pytest
 from pathlib import Path
 
-from src.workspace.server import WorkspaceServer
+from src.workspace_tools.server import WorkspaceServer
 from src.simulation.http_checks import WorkspaceHTTPChecker
 
 

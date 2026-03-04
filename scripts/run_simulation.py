@@ -240,17 +240,6 @@ def main():
         default=8080,
         help='Port for the workspace preview server (default: 8080)',
     )
-    parser.add_argument(
-        '--no-dashboard',
-        action='store_true',
-        help='Disable the auto-starting live dashboard',
-    )
-    parser.add_argument(
-        '--dashboard-port',
-        type=int,
-        default=8765,
-        help='Port for the live dashboard server (default: 8765)',
-    )
     args = parser.parse_args()
 
     print("\n" + "="*60)
@@ -277,18 +266,17 @@ def main():
 
     # Configure workspace file tools for agents
     if not args.no_workspace:
-        from src.workspace.file_tools import configure_workspace_root
+        from src.workspace_tools.file_tools import configure_workspace_root
         workspace_path = Path(__file__).resolve().parent.parent / "workspace"
         workspace_path.mkdir(parents=True, exist_ok=True)
         configure_workspace_root(str(workspace_path))
         logger.info("Workspace root configured at %s", workspace_path)
 
     # Start live dashboard in background
-    if not args.no_dashboard:
-        _start_dashboard(
-            port=args.dashboard_port,
-            open_browser=not args.no_preview,
-        )
+    _start_dashboard(
+        port=8765,
+        open_browser=not args.no_preview,
+    )
 
     # Start workspace preview server in background
     preview_url = _start_preview_server(

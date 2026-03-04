@@ -22,10 +22,6 @@ from src.crewai_agents.tools import (
     get_database_stats,
     # Analysis tools
     data_validator_tool,
-    tool_builder_tool,
-    register_dynamic_tool,
-    list_dynamic_tools,
-    execute_dynamic_tool,
     run_quality_checks_tool,
     # Consensus memory tools
     share_insight,
@@ -61,11 +57,11 @@ def _extract_agent_from_messages(messages: list) -> str:
         if msg.get("role") != "system":
             continue
         content = str(msg.get("content", ""))
-        # CrewAI system prompts start with "You are <Role>.\n"
+        # CrewAI system prompts: "You are <Role>. You are a <backstory>..."
+        # Split on first period to isolate the role name.
         if content.startswith("You are "):
-            first_line = content.split("\n", 1)[0]
-            # Strip "You are " prefix and trailing period
-            role = first_line[len("You are "):].rstrip(". ")
+            after_prefix = content[len("You are "):]
+            role = after_prefix.split(".")[0].strip()
             if role:
                 return role
     return ""
@@ -294,13 +290,84 @@ def create_master_coordinator(
         tools=tools,
         verbose=True,
         allow_delegation=True,
-        memory=True
+        memory=True,
+        max_iter=15,
+    )
+
+
+def create_build_coordinator(
+    llm: LLM = None,
+    prompt_override: Optional[str] = None,
+    extra_tools: Optional[list] = None,
+) -> Agent:
+    """Create the BUILD Coordinator agent.
+
+    This agent orchestrates the BUILD phase by dispatching tasks to specialist
+    agents (product_strategist, developer, reviewer) via the dispatch_task tool
+    and deciding whether to loop back based on results.
+
+    Args:
+        llm: LLM instance to use
+        prompt_override: Optional autonomous prompt refinement string
+        extra_tools: Additional tools (dispatch_task tool + workspace read tools injected by caller)
+
+    Returns:
+        BUILD Coordinator agent
+    """
+    backstory = _with_prompt_override(
+        '''You are a BUILD phase coordinator responsible for orchestrating specialist
+        agents to produce high-quality website iterations. You do NOT write code or
+        product specs yourself — instead you dispatch tasks to specialists and read
+        their results.
+
+        Your dispatch workflow:
+        1. Dispatch to product_strategist — ask them to survey the workspace and
+           write a build spec for the next page or improvement.
+        2. Dispatch to developer — pass the product spec and ask them to implement it
+           in the workspace.
+        3. Dispatch to reviewer — ask them to run QA checks on the workspace output
+           and report PASS/FAIL with issues.
+        4. If the reviewer reports FAIL, dispatch back to developer with the specific
+           issues to fix, then re-dispatch to reviewer.
+
+        You have a limited dispatch budget, so be efficient:
+        - Read the workspace yourself (you have read-only file tools) before the first
+          dispatch to understand current state.
+        - Include all necessary context in each dispatch — agents do NOT share memory
+          between dispatches.
+        - Stop dispatching once the reviewer reports PASS or you run out of budget.
+
+        After all dispatches, summarize what was built, what passed QA, and what
+        remains for the next iteration.
+
+        CRITICAL RULE: You MUST call the dispatch_task_to_agent tool at least once before
+        giving your final answer. NEVER return a text description of what you would dispatch.
+        Actually call the tool. If you return without dispatching, your response will be rejected.
+        ''',
+        prompt_override,
+    )
+
+    tools = [make_share_insight("coordinator"), get_team_insights]
+    if extra_tools:
+        tools.extend(extra_tools)
+
+    return Agent(
+        role='BUILD Coordinator',
+        goal='Orchestrate product_strategist, developer, and reviewer to produce a QA-passing website iteration',
+        backstory=backstory,
+        llm=llm or get_llm("coordinator"),
+        tools=tools,
+        verbose=True,
+        allow_delegation=False,
+        memory=True,
+        max_iter=20,
     )
 
 
 def create_data_strategist(
     llm: LLM = None,
     prompt_override: Optional[str] = None,
+    extra_tools: Optional[list] = None,
 ) -> Agent:
     """Create the Data Strategy Expert agent.
 
@@ -334,28 +401,33 @@ def create_data_strategist(
         prompt_override,
     )
 
+    tools = [
+        run_data_collection,
+        web_search_startups,
+        web_search_vcs,
+        fetch_webpage,
+        save_startup,
+        save_vc,
+        get_startups_tool,
+        get_vcs_tool,
+        get_database_stats,
+        data_validator_tool,
+        make_share_insight("data_strategist"),
+        get_team_insights,
+    ]
+    if extra_tools:
+        tools.extend(extra_tools)
+
     return Agent(
         role='Data Strategy Expert',
         goal='Maintain comprehensive, high-quality startup and VC data with zero critical gaps',
         backstory=backstory,
-        tools=[
-            run_data_collection,
-            web_search_startups,
-            web_search_vcs,
-            fetch_webpage,
-            save_startup,
-            save_vc,
-            get_startups_tool,
-            get_vcs_tool,
-            get_database_stats,
-            data_validator_tool,
-            make_share_insight("data_strategist"),
-            get_team_insights,
-        ],
+        tools=tools,
         llm=llm or get_llm("data"),
         verbose=True,
         allow_delegation=True,
-        memory=True
+        memory=True,
+        max_iter=10,
     )
 
 
@@ -379,9 +451,10 @@ def create_developer_agent(
     workspace_note = ""
     if extra_tools:
         workspace_note = (
-            "\n\n        You also have workspace file tools that let you read, write, and "
-            "list files in a product workspace directory. Use these to build and "
-            "improve HTML/CSS/JS files based on customer feedback and HTTP check results."
+            "\n\n        You also have workspace file tools that let you read and write "
+            "files in a product workspace directory. Use check_workspace_http after "
+            "writing pages to verify they load correctly. Use submit_test_feedback "
+            "to validate the feedback pipeline."
         )
     backstory = _with_prompt_override(
         '''You are a web developer building a startup-VC matching website.
@@ -406,13 +479,6 @@ def create_developer_agent(
     )
 
     tools = [
-        tool_builder_tool,
-        register_dynamic_tool,
-        list_dynamic_tools,
-        execute_dynamic_tool,
-        data_validator_tool,
-        get_startups_tool,
-        get_vcs_tool,
         make_share_insight("developer"),
         get_team_insights,
     ]
@@ -427,7 +493,8 @@ def create_developer_agent(
         llm=llm or get_llm("developer"),
         verbose=True,
         allow_delegation=False,
-        memory=True
+        memory=True,
+        max_iter=10,
     )
 
 
@@ -464,6 +531,9 @@ def create_product_strategist(
         fit-score calculator, and about/how-it-works page.
 
         Your approach:
+        - Check database stats to understand what data is available
+        - If the database is thin (< 20 startups + VCs), use web search tools
+          to collect a few more entries before planning
         - Inspect the current workspace files to understand what exists
         - Identify the highest-priority missing or placeholder page
         - Write a clear, actionable spec for the Developer Agent to implement
@@ -476,10 +546,11 @@ def create_product_strategist(
     )
 
     tools = [
-        tool_builder_tool,
-        register_dynamic_tool,
-        list_dynamic_tools,
-        execute_dynamic_tool,
+        get_database_stats,
+        web_search_startups,
+        web_search_vcs,
+        save_startup,
+        save_vc,
         make_share_insight("product_strategist"),
         get_team_insights,
     ]
@@ -494,7 +565,8 @@ def create_product_strategist(
         llm=llm or get_llm("product"),
         verbose=True,
         allow_delegation=False,
-        memory=True
+        memory=True,
+        max_iter=12,
     )
 
 
@@ -520,7 +592,9 @@ def create_reviewer_agent(
         workspace_note = (
             "\n\n        You also have workspace file tools that let you read and list "
             "files in a product workspace directory. Use these to inspect website "
-            "files and verify correctness, structure, and quality."
+            "files and verify correctness, structure, and quality. You also have "
+            "check_workspace_http to serve pages over HTTP and verify they load, "
+            "forms work, and navigation links resolve."
         )
     backstory = _with_prompt_override(
         '''You are a strict software QA reviewer. Your responsibility is to catch
@@ -554,6 +628,7 @@ def create_reviewer_agent(
         llm=llm or get_llm("reviewer"),
         verbose=True,
         allow_delegation=False,
-        memory=True
+        memory=True,
+        max_iter=7,
     )
 

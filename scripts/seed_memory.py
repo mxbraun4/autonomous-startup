@@ -10,7 +10,7 @@ else:
 
 add_repo_root_to_path(__file__)
 
-from src.data.database import StartupDatabase
+from src.database.database import StartupDatabase
 from src.utils.config import settings
 from src.utils.logging import setup_logging, get_logger
 
