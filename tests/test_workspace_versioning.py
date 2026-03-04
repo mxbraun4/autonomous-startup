@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from src.workspace.versioning import WorkspaceVersioning
+from src.workspace_tools.versioning import WorkspaceVersioning
 
 
 class TestWorkspaceVersioning:

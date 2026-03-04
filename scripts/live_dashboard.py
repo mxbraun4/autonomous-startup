@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import mimetypes
+
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -351,28 +351,6 @@ HTML_TEMPLATE = """<!doctype html>
         <div class="value" id="dbRecordsValue">0</div>
         <div class="meta" id="dbRecordsMeta">&nbsp;</div>
       </article>
-    </section>
-
-    <section class="panel" id="previewSection" style="display: none;">
-      <h2>
-        Website Preview
-        <span style="float: right; font-size: 12px; font-weight: 400; text-transform: none;">
-          <button id="previewRefreshBtn" type="button"
-            style="padding: 3px 10px; font-size: 11px; border-radius: 6px; cursor: pointer; border: 1px solid var(--line); background: #fafafa; color: var(--ink); font-weight: 500;">
-            Reload
-          </button>
-          <a id="previewOpenLink" href="#" target="_blank"
-            style="margin-left: 8px; color: var(--accent); text-decoration: none; font-weight: 500;">
-            Open in new tab &#8599;
-          </a>
-        </span>
-      </h2>
-      <div style="position: relative; width: 100%; height: 520px; background: #f0f4f7;">
-        <iframe id="previewFrame"
-          style="width: 100%; height: 100%; border: none;"
-          sandbox="allow-scripts allow-same-origin allow-forms"
-          loading="lazy"></iframe>
-      </div>
     </section>
 
     <section class="panel">
@@ -832,48 +810,6 @@ HTML_TEMPLATE = """<!doctype html>
     runSelect.addEventListener("change", refreshDashboard);
     refreshNow.addEventListener("click", refreshDashboard);
 
-    // --- Workspace preview ---
-    const previewSection = document.getElementById("previewSection");
-    const previewFrame = document.getElementById("previewFrame");
-    const previewRefreshBtn = document.getElementById("previewRefreshBtn");
-    const previewOpenLink = document.getElementById("previewOpenLink");
-
-    // The dashboard serves workspace files at /workspace/
-    const wsBase = "/workspace/";
-    function checkWorkspaceFiles() {
-      fetch("/api/workspace-files", {cache: "no-store"})
-        .then(r => r.json())
-        .then(data => {
-          const files = data.files || [];
-          if (files.length > 0) {
-            const first = files[0];
-            previewSection.style.display = "";
-            previewFrame.src = wsBase + first;
-            previewOpenLink.href = wsBase + first;
-          } else {
-            previewSection.style.display = "none";
-          }
-        })
-        .catch(() => {});
-    }
-    checkWorkspaceFiles();
-
-    if (previewRefreshBtn) {
-      previewRefreshBtn.addEventListener("click", () => {
-        if (previewFrame.src) {
-          previewFrame.src = previewFrame.src;
-        }
-      });
-    }
-
-    // Auto-refresh preview every 5s
-    setInterval(() => {
-      if (previewSection.style.display !== "none" && previewFrame.src) {
-        previewFrame.src = previewFrame.src.split("?")[0] + "?_t=" + Date.now();
-      }
-      checkWorkspaceFiles();
-    }, 5000);
-
     scheduleRefresh();
     refreshDashboard();
   </script>
@@ -944,9 +880,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/db-stats":
             self._serve_db_stats()
             return
-        if parsed.path == "/api/workspace-files":
-            self._serve_workspace_files_api()
-            return
         if parsed.path == "/healthz":
             self._send_json({"status": "ok"})
             return
@@ -954,47 +887,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_response(HTTPStatus.NO_CONTENT)
             self.end_headers()
             return
-        if parsed.path.startswith("/workspace/") or parsed.path == "/workspace":
-            self._serve_workspace_file(parsed.path)
-            return
         self.send_error(HTTPStatus.NOT_FOUND, "not found")
 
     def log_message(self, fmt: str, *args: Any) -> None:
         del fmt, args
-
-    def _serve_workspace_file(self, path: str) -> None:
-        """Serve a static file from the workspace directory."""
-        workspace = self.server.workspace
-        if workspace is None or not workspace.is_dir():
-            self.send_error(HTTPStatus.NOT_FOUND, "workspace not configured")
-            return
-
-        # Strip /workspace/ prefix
-        rel = path[len("/workspace/"):] or "index.html"
-        file_path = (workspace / rel).resolve()
-
-        # Prevent path traversal
-        try:
-            file_path.relative_to(workspace)
-        except ValueError:
-            self.send_error(HTTPStatus.FORBIDDEN, "forbidden")
-            return
-
-        if file_path.is_dir():
-            file_path = file_path / "index.html"
-
-        if not file_path.is_file():
-            self.send_error(HTTPStatus.NOT_FOUND, "not found")
-            return
-
-        content = file_path.read_bytes()
-        content_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(content)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(content)
 
     def _serve_db_stats(self) -> None:
         """Return database statistics as JSON."""
@@ -1008,17 +904,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(
                 {"total_startups": 0, "total_vcs": 0, "total_outreach": 0, "sectors": [], "error": str(exc)},
             )
-
-    def _serve_workspace_files_api(self) -> None:
-        """Return list of HTML files in the workspace directory."""
-        workspace = self.server.workspace
-        if workspace is None or not workspace.is_dir():
-            self._send_json({"files": []})
-            return
-        html_files = sorted(
-            f.name for f in workspace.iterdir() if f.is_file() and f.suffix.lower() in (".html", ".htm")
-        )
-        self._send_json({"files": html_files})
 
     def _serve_index(self) -> None:
         html = HTML_TEMPLATE.replace("__REFRESH_MS__", str(self.server.refresh_ms))

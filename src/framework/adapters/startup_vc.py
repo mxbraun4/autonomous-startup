@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 from src.framework.adapters.base import BaseDomainAdapter
 from src.framework.contracts import EvaluationResult, TaskSpec
@@ -49,6 +52,48 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return int(default)
+
+
+def _map_feedback_entry(entry: Dict[str, Any]) -> Dict[str, str]:
+    """Convert a simulation ``failure_feedback`` entry to the ``feedback.db`` schema."""
+    step_id = str(entry.get("step_id") or "").lower()
+    if "signup" in step_id:
+        page = "signup"
+    elif "match" in step_id:
+        page = "fit-score"
+    elif "interest" in step_id:
+        page = "investors"
+    else:
+        page = "platform"
+
+    category = str(entry.get("feedback_category") or "").lower()
+    if category.startswith("signup"):
+        feedback_type = "friction"
+    elif category == "match_quality":
+        feedback_type = "bug"
+    elif category in {
+        "engagement",
+        "interest_gate",
+        "reciprocal_interest",
+        "meeting_conversion",
+    }:
+        feedback_type = "feature_request"
+    elif category == "success":
+        feedback_type = "praise"
+    else:
+        feedback_type = "friction"
+
+    system_msg = str(entry.get("feedback_to_system") or "")
+    action_hint = str(entry.get("feedback_action_hint") or "")
+    message = f"{system_msg} | Action: {action_hint}"
+
+    return {
+        "id": uuid4().hex[:16],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "page": page,
+        "feedback_type": feedback_type,
+        "message": message,
+    }
 
 
 class StartupVCAdapter(BaseDomainAdapter):
@@ -102,8 +147,8 @@ class StartupVCAdapter(BaseDomainAdapter):
         self._previous_simulation_results: Optional[Dict[str, Any]] = None
 
         if self._workspace_root:
-            from src.workspace.server import WorkspaceServer
-            from src.workspace.versioning import WorkspaceVersioning
+            from src.workspace_tools.server import WorkspaceServer
+            from src.workspace_tools.versioning import WorkspaceVersioning
 
             self._workspace_server = WorkspaceServer(
                 self._workspace_root,
@@ -210,6 +255,10 @@ class StartupVCAdapter(BaseDomainAdapter):
 
             customer_metrics = dict(environment_output.get("metrics") or {})
             diagnostics = dict(environment_output.get("diagnostics") or {})
+            # Bridge simulation feedback to workspace/feedback.db
+            self._write_simulation_feedback_to_db(
+                diagnostics.get("failure_feedback") or []
+            )
             validation_errors = diagnostics.get("input_validation_errors") or []
             if not isinstance(validation_errors, list):
                 validation_errors = [str(validation_errors)]
@@ -345,6 +394,48 @@ class StartupVCAdapter(BaseDomainAdapter):
                 params["vc_base_interest"] + landing_score * 0.10,
             )
         return params
+
+    def _write_simulation_feedback_to_db(
+        self, failure_feedback: List[Dict[str, Any]]
+    ) -> None:
+        """Write simulation failure_feedback entries to workspace/feedback.db."""
+        if self._workspace_root is None or not failure_feedback:
+            return
+
+        entries = failure_feedback[:20]  # cap per call
+        db_path = Path(self._workspace_root) / "feedback.db"
+        try:
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS feedback ("
+                    "  id TEXT PRIMARY KEY,"
+                    "  timestamp TEXT NOT NULL,"
+                    "  page TEXT NOT NULL,"
+                    "  feedback_type TEXT NOT NULL,"
+                    "  message TEXT NOT NULL"
+                    ")"
+                )
+                for raw in entries:
+                    mapped = _map_feedback_entry(raw)
+                    conn.execute(
+                        "INSERT OR IGNORE INTO feedback"
+                        " (id, timestamp, page, feedback_type, message)"
+                        " VALUES (?, ?, ?, ?, ?)",
+                        (
+                            mapped["id"],
+                            mapped["timestamp"],
+                            mapped["page"],
+                            mapped["feedback_type"],
+                            mapped["message"],
+                        ),
+                    )
+            logger.info(
+                "Wrote %d simulation feedback entries to %s",
+                len(entries),
+                db_path,
+            )
+        except Exception as exc:
+            logger.warning("Failed to write simulation feedback to DB: %s", exc)
 
     def _load_product_events(self) -> Optional[List[Dict[str, Any]]]:
         if self._product_events_loaded:

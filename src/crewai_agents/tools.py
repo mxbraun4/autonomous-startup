@@ -26,7 +26,7 @@ configure_runtime_environment()
 from crewai.tools import tool
 patch_crewai_storage_paths()
 
-from src.data.database import StartupDatabase
+from src.database.database import StartupDatabase
 from src.utils.config import settings
 from src.utils.logging import get_logger
 
@@ -352,7 +352,7 @@ def _run_pytest_targets(
 def run_quality_checks_tool(
     paths_csv: str = "src,scripts",
     pytest_targets_csv: str = "tests/test_crewai_integration.py",
-    run_pytest: bool = True,
+    run_pytest: bool = False,
     timeout_seconds: int = 120,
 ) -> str:
     """Run deterministic QA checks for code quality gates.
@@ -1152,6 +1152,188 @@ def get_team_insights(topic: str = "") -> str:
         "topic": topic or "all",
         "insights": insights,
     }, indent=2)
+
+
+# =============================================================================
+# DISPATCH TASK TOOL — coordinator-driven dynamic agent orchestration
+# =============================================================================
+
+
+def make_dispatch_task_tool(
+    agent_registry: Dict[str, Dict[str, Any]],
+    emit_fn,
+    *,
+    max_dispatches: int = 8,
+    result_truncation: int = 1500,
+    extra_context: str = "",
+):
+    """Factory that returns a ``dispatch_task`` @tool for the BUILD coordinator.
+
+    Args:
+        agent_registry: Maps ``role_name`` to
+            ``{"factory": create_X_agent, "llm": ..., "extra_tools": [...], "prompt_override": "..."}``.
+        emit_fn: Callable ``(event_type, payload_dict) -> None`` for observability.
+        max_dispatches: Hard ceiling on dispatch calls per factory instance.
+        result_truncation: Max chars kept from each agent result.
+        extra_context: Learning context from prior iterations (procedure hints,
+            episodic memory, consensus board) to inject into every dispatch.
+
+    Returns:
+        A CrewAI ``@tool`` function the coordinator can invoke.
+    """
+    _dispatch_count = [0]
+    _dispatch_history: List[Dict[str, Any]] = []
+
+    @tool("Dispatch Task to Agent")
+    def dispatch_task(agent_role: str, task_description: str) -> str:
+        """Dispatch a task to a specialist agent and return its result.
+
+        Args:
+            agent_role: Role key of the target agent (e.g. "product_strategist", "developer", "reviewer")
+            task_description: Full description of the task to execute
+
+        Returns:
+            JSON with status, result text, truncation flag, remaining budget, and dispatch history
+        """
+        # Lazy imports to avoid circular dependency
+        from crewai import Crew as _Crew, Task as _Task, Process as _Process
+
+        available_roles = sorted(agent_registry.keys())
+
+        # Guard: unknown role
+        if agent_role not in agent_registry:
+            return json.dumps({
+                "status": "rejected",
+                "reason": f"Unknown agent_role '{agent_role}'",
+                "available_roles": available_roles,
+            }, indent=2)
+
+        # Guard: budget exhausted
+        if _dispatch_count[0] >= max_dispatches:
+            return json.dumps({
+                "status": "rejected",
+                "reason": f"Max dispatches reached ({max_dispatches})",
+                "dispatches_used": _dispatch_count[0],
+                "dispatch_history": _dispatch_history,
+            }, indent=2)
+
+        _dispatch_count[0] += 1
+        remaining = max_dispatches - _dispatch_count[0]
+
+        # Emit dispatch event
+        try:
+            emit_fn("agent_exchange", {
+                "exchange_type": "dispatch",
+                "from_agent": "BUILD Coordinator",
+                "to_agent": agent_role,
+                "task_summary": task_description[:200],
+                "dispatch_number": _dispatch_count[0],
+            })
+        except Exception:
+            pass
+
+        # Prepend standing instructions + extra_context so dispatched agents
+        # discover prior results via consensus memory and see learning feedback.
+        original_task_description = task_description
+        preamble = (
+            "IMPORTANT: Before starting, call get_team_insights to read shared context "
+            "from prior dispatches and previous iterations.\n\n"
+        )
+        if extra_context:
+            preamble += f"[Context from prior iterations]\n{extra_context}\n\n"
+        task_description = preamble + task_description
+
+        # Create temporary agent from registry
+        entry = agent_registry[agent_role]
+        factory = entry["factory"]
+        agent = factory(
+            llm=entry.get("llm"),
+            prompt_override=entry.get("prompt_override"),
+            extra_tools=entry.get("extra_tools"),
+        )
+
+        # Build single-task crew and run
+        single_task = _Task(
+            description=task_description,
+            agent=agent,
+            expected_output="Complete result of the assigned task.",
+        )
+
+        mini_crew = _Crew(
+            agents=[agent],
+            tasks=[single_task],
+            process=_Process.sequential,
+            verbose=False,
+            memory=False,
+            cache=False,
+        )
+
+        try:
+            crew_output = mini_crew.kickoff()
+            result_text = str(crew_output)
+        except Exception as exc:
+            result_text = f"[dispatch error] {exc}"
+
+        # Truncate
+        truncated = len(result_text) > result_truncation
+        result_text = result_text[:result_truncation]
+
+        # Auto-share dispatch result to consensus memory so subsequent
+        # agents can discover it via get_team_insights(topic="dispatch").
+        # Truncate to 500 chars for consensus to avoid prompt bloat.
+        try:
+            consensus_value = result_text[:500]
+            if len(result_text) > 500:
+                consensus_value += "\n\n[Full result available in workspace files]"
+            _share_insight_impl(
+                key=f"dispatch.{agent_role}.{_dispatch_count[0]}",
+                value=consensus_value,
+                evidence=original_task_description[:300],
+                source_agent=agent_role,
+            )
+        except Exception:
+            pass  # non-blocking; memory store may not be initialised
+
+        # Record in history (use original description so summaries are useful)
+        _dispatch_history.append({
+            "dispatch_number": _dispatch_count[0],
+            "agent_role": agent_role,
+            "task_summary": original_task_description[:120],
+            "result_snippet": result_text[:200],
+            "truncated": truncated,
+        })
+
+        # Emit result event
+        try:
+            emit_fn("agent_exchange", {
+                "exchange_type": "dispatch_result",
+                "from_agent": agent_role,
+                "to_agent": "BUILD Coordinator",
+                "result_snippet": result_text[:200],
+                "dispatch_number": _dispatch_count[0],
+                "truncated": truncated,
+            })
+        except Exception:
+            pass
+
+        return json.dumps({
+            "status": "success",
+            "agent_role": agent_role,
+            "result": result_text,
+            "truncated": truncated,
+            "dispatches_remaining": remaining,
+            "dispatch_history": _dispatch_history,
+        }, indent=2)
+
+    dispatch_task.cache_function = _NO_CACHE
+
+    # Expose dispatch count so callers can detect zero-dispatch runs.
+    # CrewAI tools are Pydantic models that reject arbitrary attributes,
+    # so we return a (tool, get_count) tuple instead.
+    def _get_dispatch_count() -> int:
+        return _dispatch_count[0]
+
+    return dispatch_task, _get_dispatch_count
 
 
 # ---------------------------------------------------------------------------

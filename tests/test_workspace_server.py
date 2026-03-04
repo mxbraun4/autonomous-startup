@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.workspace.server import WorkspaceServer
+from src.workspace_tools.server import WorkspaceServer
 
 
 class TestWorkspaceServer:

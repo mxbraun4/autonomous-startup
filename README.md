@@ -3,7 +3,7 @@
 A multi-agent system built with **CrewAI** that autonomously runs Build-Measure-Learn cycles for a startup-VC marketplace. Agents build a real website, validate it via HTTP, and iterate based on customer simulation feedback.
 
 - Hierarchical multi-agent coordination
-- Product-building workspace (agents write HTML/CSS/JS, HTTP validation loop)
+- Product-building workspace (agents write HTML/CSS/JS + FastAPI backend, HTTP validation loop)
 - Customer simulation with deterministic match scoring
 - Framework guardrails (failover, loop detection, bounded delegation)
 - Adaptive autonomy (self-heal, policy tuning, diagnostics)
@@ -104,13 +104,13 @@ autonomous-startup/
 │   │   ├── safety/        # Policy engine, budget manager, action guard
 │   │   └── storage/       # Unified store, episodic/semantic/procedural backends
 │   ├── simulation/        # Customer simulation, HTTP checks
-│   ├── workspace/         # File tools, HTTP server, versioning
-│   ├── data/              # Database layer
+│   ├── workspace_tools/   # File tools, HTTP server, versioning
+│   ├── database/          # Database layer
 │   ├── llm/               # LLM client
 │   └── utils/             # Config, logging
 ├── workspace/             # Agent-built marketplace website
 ├── scripts/               # Entrypoints (run.py, seed, dashboard, etc.)
-├── tests/                 # 176+ tests
+├── tests/                 # 488+ tests
 └── data/seed/             # Seed data (customers, hypotheses, templates)
 ```
 
@@ -153,11 +153,9 @@ Framework runtime policies (`RunConfig.policies`) control guardrail behavior:
 | File | Purpose |
 |------|---------|
 | `README.md` | This file |
-| `AGENTS.md` | Developer/agent guide with change rules |
 | `docs/PRODUCT_VISION.md` | Product direction and acquisition strategy |
 | `docs/CUSTOMER_SIMULATION.md` | Customer simulation spec (state machines, transition logic) |
 | `docs/next_steps.md` | Remaining work and priorities |
-| `docs/DONE.md` | Shipped milestones and decision log |
 
 ## Testing
 

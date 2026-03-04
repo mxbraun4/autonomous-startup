@@ -267,7 +267,7 @@ def make_coordinator_agent(
     In mock mode the LLM output won't parse as valid JSON, so the agent
     falls back to ``_default_delegation()`` which delegates to all 3 agents.
     """
-    from src.workspace.file_tools import (
+    from src.workspace_tools.file_tools import (
         read_workspace_file,
         list_workspace_files,
     )
@@ -346,7 +346,7 @@ def make_product_strategist_agent(
 
     Inspects the site, produces improvement requirements, and shares insights.
     """
-    from src.workspace.file_tools import (
+    from src.workspace_tools.file_tools import (
         read_workspace_file,
         list_workspace_files,
     )
@@ -469,7 +469,7 @@ def make_workspace_dev_reviewer_agent(
       A. Developer fixes issues based on reviewer feedback.
       B. Reviewer re-inspects and reports final PASS/FAIL.
     """
-    from src.workspace.file_tools import (
+    from src.workspace_tools.file_tools import (
         read_workspace_file,
         write_workspace_file,
         list_workspace_files,
@@ -486,9 +486,10 @@ def make_workspace_dev_reviewer_agent(
             resolved_llm,
             extra_tools=[read_workspace_file, write_workspace_file, list_workspace_files],
         )
+        from src.workspace_tools.file_tools import review_workspace_files
         reviewer_agent = create_reviewer_agent(
             llm or get_llm("reviewer"),
-            extra_tools=[read_workspace_file, list_workspace_files],
+            extra_tools=[review_workspace_files],
         )
 
         call_ids: List[str] = []

@@ -23,6 +23,7 @@ patch_crewai_storage_paths()
 
 from src.crewai_agents.agents import (
     create_master_coordinator,
+    create_build_coordinator,
     create_developer_agent,
     create_reviewer_agent,
     create_product_strategist,
@@ -30,7 +31,10 @@ from src.crewai_agents.agents import (
     set_current_cycle_id as _set_agent_cycle_id,
     get_llm,
 )
-from src.crewai_agents.tools import set_current_cycle_id as _set_tools_cycle_id
+from src.crewai_agents.tools import (
+    set_current_cycle_id as _set_tools_cycle_id,
+    make_dispatch_task_tool,
+)
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -90,16 +94,24 @@ def create_build_phase_tasks(
         You are building a startup-VC matching website: a platform where founders
         find matching investors and VCs discover relevant startups, with fit-score
         calculations and personalized introductions.
-        The website lives in the workspace/ directory as HTML/CSS/JS files.
+        The website lives in the workspace/ directory as HTML/CSS/JS frontend files
+        and Python backend code (FastAPI).
 
         Steps:
-        1. Use list_workspace_files to see what pages exist already
-        2. Use read_workspace_file to inspect each existing page (especially index.html)
-        3. Identify which page or feature is missing or still a placeholder
-        4. Use get_team_insights to review any prior feedback or learnings
-        5. Write a clear build spec for the Developer Agent: what page to build,
+        1. Use get_database_stats to check data coverage. If total startups + VCs < 20,
+           search for more data and save it. Required call signatures:
+           - web_search_startups(query="your search terms") — query is REQUIRED
+           - web_search_vcs(query="your search terms") — query is REQUIRED
+           - save_startup(name="Startup Name") — name is REQUIRED
+           - save_vc(name="VC Name") — name is REQUIRED
+           If coverage is already >= 20, skip this step and move on.
+        2. Use list_workspace_files to see what pages exist already
+        3. Use read_workspace_file to inspect each existing page (especially index.html)
+        4. Identify which page or feature is missing or still a placeholder
+        5. Use get_team_insights to review any prior feedback or learnings
+        6. Write a clear build spec for the Developer Agent: what page to build,
            what sections it needs, what content/functionality to include
-        6. Use share_insight to hand off the spec to the Developer Agent
+        7. Use share_insight to hand off the spec to the Developer Agent
 
         The website needs these pages (prioritize what does not exist yet):
         - Landing page (index.html) — hero, value prop, CTA for founders and investors
@@ -108,7 +120,22 @@ def create_build_phase_tasks(
         - Fit Score Calculator — interactive tool that scores startup-VC fit
         - About/How It Works page — explains the matching platform
 
-        Do NOT spec internal Python tools. Focus on user-facing website pages.
+        Feedback System (required on every page):
+        - Create workspace/feedback.py with a FeedbackDB class that:
+          - Creates a SQLite database (workspace/feedback.db) with a feedback table
+            (columns: id TEXT, timestamp TEXT, page TEXT, feedback_type TEXT, message TEXT)
+          - Has add_feedback(page, feedback_type, message) and get_feedback() methods
+        - Build a feedback widget on every page (floating button or footer form)
+          that POSTs to /api/feedback with JSON body:
+          {{"page": "<page_name>", "feedback_type": "bug|friction|feature_request|praise", "message": "<user message>"}}
+        - The /api/feedback endpoint stores submissions in the SQLite database
+
+        Backend API endpoints (FastAPI, prioritize after at least one HTML page exists):
+        - POST /api/fit-score — compute and return startup-VC fit score
+        - POST /api/founders/profile — submit founder profile, persist, return matches
+        - GET /api/matches/{{founder_id}} — retrieve matching VCs for a founder
+
+        Spec both user-facing frontend pages AND backend API endpoints that power them.
         ''',
         agent=product_strategist,
         expected_output='''Product specification including:
@@ -123,24 +150,34 @@ def create_build_phase_tasks(
         description=f'''[Iteration {iteration}] Build or improve a website page in the workspace.
 
         You are a web developer building a startup-VC matching website.
-        All output goes into the workspace/ directory as HTML/CSS/JS files.
+        All output goes into the workspace/ directory as HTML/CSS/JS frontend files
+        and Python backend code.
 
         Steps:
-        1. Use get_team_insights to read the product spec from the Product Strategy Expert
-        2. Use list_workspace_files to see current workspace state
-        3. Use read_workspace_file to inspect any existing files you need to modify
-        4. Use write_workspace_file to create or update HTML/CSS/JS files
+        1. Use get_team_insights to read the product spec from the Product Strategy Expert.
+           The spec tells you WHICH file to build — focus on that ONE file.
+        2. If the target file already exists, use read_workspace_file to read ONLY
+           that file. Do NOT read every workspace file — focus on the one page
+           from the spec.
+        3. Use write_workspace_file to create or update the target HTML/CSS/JS file.
            - Write complete, well-structured HTML with proper doctype, head, body
            - Include inline CSS or a shared styles.css for consistent styling
            - Add interactivity with JavaScript where the spec requires it
-        5. Use read_workspace_file to verify what you wrote looks correct
-        6. Use share_insight to report what you built and what still needs work
+        4. Use read_workspace_file once to verify what you wrote looks correct.
+        5. Use share_insight to report what you built and what still needs work.
+
+        EFFICIENCY: You should need at most 1 read of the target file, 1-2
+        write_workspace_file calls, and 1 verification read. Aim for under
+        10 tool calls total. The product strategist already surveyed the workspace.
 
         IMPORTANT:
         - Every iteration must produce at least one new or improved workspace file
-        - Write real HTML/CSS/JS — not Python scripts, not test tools
+        - Write real HTML/CSS/JS for frontend AND Python (FastAPI) for backend API endpoints
+        - Write workspace/feedback.py with the FeedbackDB class alongside HTML pages
         - Replace any placeholder content (like "Waiting for agents to build...")
         - Pages should link to each other with consistent navigation
+        - After writing pages, use check_workspace_http to verify they load correctly
+        - Use submit_test_feedback to validate the feedback pipeline end-to-end
         ''',
         agent=developer_agent,
         context=[product_task],
@@ -156,21 +193,34 @@ def create_build_phase_tasks(
         reviewer_task = Task(
             description=f'''[Iteration {iteration}] Review the developer's workspace output for quality.
 
-        Steps:
-        1. Use list_workspace_files to see what files exist in the workspace
-        2. Use read_workspace_file to inspect each HTML file the developer created or modified
-        3. Verify workspace output quality:
+        IMPORTANT: You MUST call your tools to independently verify the workspace
+        before giving any final answer. Do NOT summarize the developer's context as
+        your review — you must independently verify by reading workspace files and
+        running quality checks. A review that skips tool calls is invalid.
+
+        Step 1: Call review_workspace_files ONCE — it lists all files AND reads every
+                HTML file in one shot. Use its output for all workspace checks.
+        Step 2: Verify workspace output quality (no tool call — use data from step 1):
            - At least one HTML file exists beyond a bare placeholder
            - HTML files have proper structure (<!DOCTYPE html>, <head>, <body>)
            - Pages contain real content related to startup-VC matching, not filler
            - Navigation links between pages work (href values are correct)
-        4. Run run_quality_checks_tool to check Python syntax in src/scripts
-        5. Use get_team_insights to see what the developer reported building
-        6. Use share_insight to publish QA status and any issues found
-        7. Report a PASS/FAIL recommendation
+        Step 3: Call run_quality_checks_tool ONCE to check Python syntax in src/scripts/workspace.
+                Pytest is OFF by default. Only pass run_pytest=True if you know
+                Python test files exist for the code being reviewed.
+        Step 4: Call check_workspace_http ONCE to verify pages load over HTTP.
+                This starts a temporary server and checks landing page, signup form,
+                and navigation links. Report the scores in your review.
+        Step 5: Call get_team_insights ONCE to see what the developer reported building.
+        Step 6: Call share_insight ONCE to publish your QA status and any issues found.
+        Step 7: Only AFTER completing steps 1-6, report a PASS/FAIL recommendation.
 
-        PASS if: workspace has real HTML content AND Python syntax is clean.
-        FAIL if: workspace is still placeholder-only OR HTML is malformed.
+        Do NOT repeat tool calls. Each tool must be called EXACTLY once.
+
+        PASS if: workspace has real HTML content AND Python syntax is clean
+              AND pages load over HTTP (http_landing_score >= 1.0).
+        FAIL if: workspace is still placeholder-only OR HTML is malformed
+              OR pages fail to load over HTTP.
         ''',
             agent=reviewer_agent,
             context=[developer_task],
@@ -178,6 +228,7 @@ def create_build_phase_tasks(
         - QA gate status (PASS/FAIL)
         - Workspace files reviewed and their quality assessment
         - Python syntax check results
+        - HTTP check scores (landing, signup, navigation)
         - Issues found (if any) with fix instructions
         '''
         )
@@ -211,6 +262,8 @@ def create_learn_phase_task(coordinator, build_results: str) -> Task:
         4. Identify what didn't work (stop or change)
         5. Extract specific, actionable insights for next iteration
         6. Formulate recommendations for each team
+        7. Review real user feedback (if present in USER_FEEDBACK section) —
+           usability issues, feature requests, friction points — and factor them into recommendations
 
         Focus on concrete, measurable insights that can drive improvement.
         ''',
@@ -221,13 +274,51 @@ def create_learn_phase_task(coordinator, build_results: str) -> Task:
         - Specific insights (3-5 concrete learnings)
         - Recommendations for next iteration (coordinator, product, developer as applicable)
         - Predicted improvement in key metrics
-        '''
+        ''',
     )
 
 
 def _verbose_flag(verbose: int) -> bool:
     """Convert integer verbosity to CrewAI v1.9 boolean flag."""
     return verbose > 0
+
+
+def _parse_learn_text(raw: str) -> tuple:
+    """Extract insights and recommendations from unstructured learn output.
+
+    Returns (insights: List[str], recommendations: Dict[str, str]).
+    """
+    import re
+
+    insights: List[str] = []
+    recommendations: Dict[str, str] = {}
+
+    # Extract bullet-point lines (- or * prefixed) as insights
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("- ", "* ", "• ")):
+            text = stripped.lstrip("-*• ").strip()
+            if text:
+                insights.append(text)
+
+    # Look for role-specific recommendation patterns like "developer: ..." or
+    # "Recommendation for product: ..."
+    role_pattern = re.compile(
+        r"(?:recommendation\s+for\s+)?(\w+)\s*:\s*(.+)",
+        re.IGNORECASE,
+    )
+    known_roles = {"coordinator", "developer", "product", "reviewer", "data"}
+    for line in raw.splitlines():
+        m = role_pattern.match(line.strip().lstrip("-*• "))
+        if m:
+            role = m.group(1).lower()
+            if role in known_roles:
+                recommendations[role] = m.group(2).strip()
+
+    # Cap insights to avoid bloat
+    insights = insights[:10]
+
+    return insights, recommendations
 
 
 def create_autonomous_startup_crew(
@@ -311,6 +402,72 @@ def run_build_measure_learn_cycle(
     return flow.run()
 
 
+def _create_coordinator_build_task(
+    coordinator_agent,
+    iteration: int,
+    available_roles: List[str],
+    extra_context: str = "",
+) -> Task:
+    """Create a single Task for the BUILD coordinator.
+
+    The description tells the coordinator about the product scope, lists
+    available agent roles, explains dispatch_task usage, and appends any
+    learning context from previous iterations.
+    """
+    role_descriptions = {
+        "product_strategist": "Surveys the workspace and database, identifies the next page/feature to build, writes a detailed build spec.",
+        "developer": "Implements HTML/CSS/JS pages and Python backend code in the workspace based on a build spec.",
+        "reviewer": "Runs QA checks (syntax, workspace validation, HTTP checks) and reports PASS/FAIL with specific issues.",
+    }
+    roles_block = "\n".join(
+        f"  - {role}: {role_descriptions.get(role, 'Specialist agent')}"
+        for role in available_roles
+    )
+
+    description = f'''[Iteration {iteration}] Orchestrate the BUILD phase for a startup-VC matching website.
+
+    PRODUCT SCOPE: A platform where founders find matching investors and VCs
+    discover relevant startups, with fit-score calculations and personalized
+    introductions. The website lives in workspace/ as HTML/CSS/JS frontend files
+    and Python backend code (FastAPI).
+
+    AVAILABLE AGENTS (use dispatch_task to call them):
+{roles_block}
+
+    RECOMMENDED WORKFLOW:
+    1. Read workspace files yourself to understand current state (you have read-only tools).
+    2. Dispatch to product_strategist: "Survey the workspace and database, then write
+       a build spec for the highest-priority missing or placeholder page."
+    3. Read the product_strategist result and extract the spec.
+    4. Dispatch to developer: Include the FULL build spec in the task description.
+       The developer does NOT have access to the product_strategist's result automatically.
+    5. Dispatch to reviewer: "Run QA checks on the workspace and report PASS/FAIL
+       with specific issues."
+    6. If reviewer reports FAIL: dispatch to developer with the exact issues, then
+       re-dispatch to reviewer.
+    7. Stop when reviewer reports PASS or you exhaust your dispatch budget.
+
+    IMPORTANT:
+    - Each dispatch creates a fresh agent — pass ALL context in the task_description.
+    - Be concise but complete in dispatch descriptions.
+    - After all dispatches, summarize what was built, QA status, and remaining work.
+    '''
+
+    if extra_context:
+        description += f"\n{extra_context}"
+
+    return Task(
+        description=description,
+        agent=coordinator_agent,
+        expected_output='''BUILD phase summary including:
+        - What was dispatched and to whom
+        - What was built or improved (with filenames)
+        - QA status (PASS/FAIL) and any remaining issues
+        - Recommendations for next iteration
+        ''',
+    )
+
+
 # ---------------------------------------------------------------------------
 # CrewAI Flow: Build-Measure-Learn with evaluation gates & learning feedback
 # ---------------------------------------------------------------------------
@@ -336,6 +493,7 @@ class _FlowState(BaseModel):
     build_failure_count: int = 0
     qa_passed: bool = True
     qa_result: Dict[str, Any] = Field(default_factory=dict)
+    user_feedback: Dict[str, Any] = Field(default_factory=dict)
     learn_output: Optional[LearnPhaseOutput] = None
     # Gate recommendation from the EVALUATE phase
     gate_recommendation: str = "continue"  # continue / pause / rollback / stop
@@ -348,6 +506,15 @@ class _FlowState(BaseModel):
 
     # Learning feedback: procedure hints injected into next BUILD
     procedure_hints: str = ""
+
+    # Simulation feedback collected during BUILD (before remediation)
+    simulation_feedback_summary: str = ""
+
+    # Active policies from PolicyUpdater, persisted across iterations
+    active_policies: Dict[str, Any] = Field(default_factory=dict)
+
+    # Previous cycle metrics for evaluator trend analysis
+    previous_cycle_metrics: Optional[Dict[str, Any]] = None
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -406,9 +573,11 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         return ProcedureUpdater(store)
 
     def _get_policy_updater(self):
-        """Lazy import of PolicyUpdater."""
-        from src.framework.learning import PolicyUpdater
-        return PolicyUpdater()
+        """Lazy import of PolicyUpdater, reused across iterations."""
+        if getattr(self, "_policy_updater", None) is None:
+            from src.framework.learning import PolicyUpdater
+            self._policy_updater = PolicyUpdater()
+        return self._policy_updater
 
     def _prompt_override(self, key: str) -> str:
         overrides = dict(self.state.prompt_overrides or {})
@@ -429,7 +598,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         # 1. Python syntax check (skip pytest to avoid timeout)
         try:
             raw = run_quality_checks_tool.run(
-                paths_csv="src,scripts",
+                paths_csv="src,scripts,workspace",
                 pytest_targets_csv="",
                 run_pytest=False,
                 timeout_seconds=60,
@@ -456,7 +625,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         workspace_ok = False
         workspace_info: Dict[str, Any] = {}
         try:
-            from src.workspace.file_tools import _read_impl, _list_impl
+            from src.workspace_tools.file_tools import _read_impl, _list_impl
 
             listing = _list_impl()
             files = listing.get("files", [])
@@ -485,71 +654,156 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         result["workspace"] = workspace_info
         result["workspace_ok"] = workspace_ok
 
-        # Gate passes if syntax is clean AND workspace has real content
+        # 3. HTTP checks — verify pages actually load via a temp server
+        http_ok = True  # non-blocking: degrades gracefully if server can't start
+        http_info: Dict[str, Any] = {}
+        if workspace_ok:
+            try:
+                from src.workspace_tools.file_tools import _check_http_impl
+
+                http_result = _check_http_impl()
+                if http_result.get("status") == "ok":
+                    http_info = http_result
+                    landing_score = float(http_result.get("http_landing_score", 0.0))
+                    # Fail gate if landing page doesn't load at all
+                    if landing_score < 1.0:
+                        http_ok = False
+                else:
+                    http_info = http_result
+            except Exception as http_exc:
+                http_info["error"] = str(http_exc)
+
+        result["http_checks"] = http_info
+        result["http_ok"] = http_ok
+
+        # Gate passes if syntax is clean AND workspace has real content AND landing loads
         syntax_ok = bool((result.get("syntax") or {}).get("syntax_ok", True))
-        result["qa_gate_passed"] = syntax_ok and workspace_ok
+        result["qa_gate_passed"] = syntax_ok and workspace_ok and http_ok
         if not workspace_ok:
+            result.setdefault("status", "failed")
+        if not http_ok:
             result.setdefault("status", "failed")
 
         return result
 
+    def _collect_user_feedback(self) -> str:
+        """Collect real user feedback from workspace/feedback.db (SQLite).
+
+        Queries the feedback table, stores entries in
+        ``self.state.user_feedback``, and returns a formatted summary.
+        """
+        import sqlite3 as _sqlite3
+        from src.workspace_tools.file_tools import _workspace_root
+
+        try:
+            if _workspace_root is None:
+                self.state.user_feedback = {}
+                return "  No user feedback received this iteration."
+
+            db_path = _workspace_root / "feedback.db"
+            if not db_path.exists():
+                self.state.user_feedback = {}
+                return "  No user feedback received this iteration."
+
+            with _sqlite3.connect(str(db_path)) as conn:
+                conn.row_factory = _sqlite3.Row
+                rows = conn.execute(
+                    "SELECT id, timestamp, page, feedback_type, message FROM feedback"
+                ).fetchall()
+
+            if not rows:
+                self.state.user_feedback = {}
+                return "  No user feedback received this iteration."
+
+            entries = [dict(r) for r in rows]
+            self.state.user_feedback = {"entries": entries, "count": len(entries)}
+
+            # Group by feedback_type
+            grouped: Dict[str, List[str]] = {}
+            for entry in entries:
+                ftype = entry.get("feedback_type", "general")
+                msg = entry.get("message", "")
+                page = entry.get("page", "unknown")
+                grouped.setdefault(ftype, []).append(f"[{page}] {msg}")
+
+            lines = [f"  Total feedback entries: {len(entries)}"]
+            for ftype, messages in grouped.items():
+                lines.append(f"  {ftype} ({len(messages)}):")
+                for msg in messages:
+                    lines.append(f"    - {msg}")
+
+            summary = "\n".join(lines)
+            logger.info("USER FEEDBACK: Collected %d entries.", len(entries))
+            return summary
+        except Exception as exc:
+            logger.warning("USER FEEDBACK: Failed to collect: %s", exc)
+            self.state.user_feedback = {}
+            return f"  Failed to collect user feedback: {exc}"
+
     def _qa_passed(self) -> bool:
         return bool((self.state.qa_result or {}).get("qa_gate_passed"))
 
+    def _format_qa_failures(self, qa_result: dict) -> str:
+        """Decompose QA result into a numbered, human-readable failure report."""
+        if not qa_result:
+            return "No QA results available."
+
+        sections: List[str] = []
+        failure_num = 0
+
+        # 1. Syntax failures (highest priority)
+        syntax = qa_result.get("syntax") or {}
+        if not syntax.get("syntax_ok", True):
+            failure_num += 1
+            lines = [f"{failure_num}. SYNTAX ERRORS"]
+            for entry in syntax.get("syntax_failures", []):
+                f_path = entry.get("file", "unknown")
+                error = entry.get("error", "unknown error")
+                lines.append(f"   - {f_path}: {error}")
+            lines.append("   Fix: correct the Python syntax errors above and re-check.")
+            sections.append("\n".join(lines))
+
+        # 2. Workspace validation failures
+        if not qa_result.get("workspace_ok", True):
+            failure_num += 1
+            ws = qa_result.get("workspace") or {}
+            html_count = len(ws.get("html_files", []))
+            non_placeholder = ws.get("non_placeholder_html_count", 0)
+            lines = [f"{failure_num}. WORKSPACE CONTENT MISSING"]
+            lines.append(f"   HTML files found: {html_count}")
+            lines.append(f"   Non-placeholder HTML files: {non_placeholder}")
+            lines.append("   Fix: create or update at least one HTML file with real content (>100 chars, no placeholder text).")
+            sections.append("\n".join(lines))
+
+        # 3. HTTP check failures
+        if not qa_result.get("http_ok", True):
+            failure_num += 1
+            http = qa_result.get("http_checks") or {}
+            lines = [f"{failure_num}. HTTP CHECK FAILURES"]
+            for key in ("http_landing_score", "http_signup_score", "http_nav_score"):
+                if key in http:
+                    lines.append(f"   - {key}: {http[key]}")
+            lines.append("   Fix: ensure the landing page loads correctly over HTTP (score >= 1.0).")
+            sections.append("\n".join(lines))
+
+        if not sections:
+            return "QA gate passed — no failures detected."
+
+        return f"QA FAILURE REPORT ({failure_num} issue(s)):\n\n" + "\n\n".join(sections)
+
     # -- BUILD phase ------------------------------------------------------
 
-    @start()
-    def build(self):
-        """Execute the BUILD phase: product feedback + developer implementation."""
-        self.state.iteration += 1
-        i = self.state.iteration
-        _set_agent_cycle_id(i)
-        _set_tools_cycle_id(i)
-        self._emit("cycle_start", {"cycle_id": i})
-        shared_llm = self.state.llm
-        developer_llm = shared_llm or get_llm("developer")
-        reviewer_llm = shared_llm or get_llm("reviewer")
-        product_llm = shared_llm or get_llm("product")
-        self.state.qa_passed = True
-        self.state.qa_result = {}
+    def _build_extra_context(self) -> str:
+        """Collect learning context from prior iterations and memory stores.
 
-        logger.info(f"\n{'='*60}")
-        logger.info(f"ITERATION {i}/{self.state.max_iterations}")
-        logger.info(f"{'='*60}\n")
-        logger.info("BUILD PHASE: Creating tasks...")
-
-        # Build workspace tool lists per role
-        ws_rw_tools: list = []  # read + write + list (developer, product)
-        ws_ro_tools: list = []  # read + list only (reviewer, coordinator)
-        if self.state.workspace_enabled:
-            try:
-                from src.workspace.file_tools import (
-                    read_workspace_file,
-                    write_workspace_file,
-                    list_workspace_files,
-                )
-                ws_rw_tools = [read_workspace_file, write_workspace_file, list_workspace_files]
-                ws_ro_tools = [read_workspace_file, list_workspace_files]
-            except Exception as _ws_exc:
-                logger.warning("Workspace tools unavailable: %s", _ws_exc)
-
-        developer_agent = create_developer_agent(
-            developer_llm,
-            prompt_override=self._prompt_override("developer"),
-            extra_tools=ws_rw_tools or None,
-        )
-        reviewer_agent = create_reviewer_agent(
-            reviewer_llm,
-            prompt_override=self._prompt_override("reviewer"),
-            extra_tools=ws_ro_tools or None,
-        )
-        product_strategist = create_product_strategist(
-            product_llm,
-            prompt_override=self._prompt_override("product"),
-            extra_tools=ws_rw_tools or None,
-        )
-        # Inject learning hints from previous iteration
+        Gathers procedure hints, procedural memory, episodic memory, and
+        consensus memory into a single string appended to BUILD task
+        descriptions.  Pure extraction from what was previously inline in
+        ``build()``.
+        """
         extra_context = ""
+
+        # Inject learning hints from previous iteration
         if self.state.procedure_hints:
             extra_context = (
                 f"\n\n[Previous iteration learnings]\n{self.state.procedure_hints}\n"
@@ -614,7 +868,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         except Exception as _ep_exc:
             logger.debug(f"Episodic memory read skipped: {_ep_exc}")
 
-        # Inject consensus memory (team knowledge board) into every task
+        # Inject consensus memory (team knowledge board)
         try:
             from src.crewai_agents.tools import get_memory_store
             _cons_store = get_memory_store()
@@ -637,13 +891,75 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         except Exception as _cons_exc:
             logger.debug(f"Consensus injection skipped: {_cons_exc}")
 
+        return extra_context
+
+    def _build_workspace_tools(self):
+        """Load workspace tools and return (ws_dev_tools, ws_product_tools, ws_ro_tools)."""
+        ws_dev_tools: list = []
+        ws_product_tools: list = []
+        ws_ro_tools: list = []
+        if self.state.workspace_enabled:
+            try:
+                from src.workspace_tools.file_tools import (
+                    read_workspace_file,
+                    write_workspace_file,
+                    list_workspace_files,
+                    review_workspace_files,
+                    check_workspace_http,
+                    submit_test_feedback,
+                )
+                ws_dev_tools = [
+                    read_workspace_file, write_workspace_file,
+                    list_workspace_files,
+                    check_workspace_http, submit_test_feedback,
+                ]
+                ws_product_tools = [
+                    read_workspace_file, list_workspace_files,
+                ]
+                ws_ro_tools = [review_workspace_files, check_workspace_http]
+            except Exception as _ws_exc:
+                logger.warning("Workspace tools unavailable: %s", _ws_exc)
+        return ws_dev_tools, ws_product_tools, ws_ro_tools
+
+    def _run_sequential_fallback(
+        self,
+        i: int,
+        developer_llm,
+        reviewer_llm,
+        product_llm,
+        ws_dev_tools: list,
+        ws_product_tools: list,
+        ws_ro_tools: list,
+        extra_context: str,
+    ):
+        """Fallback: run the legacy sequential Product→Developer→Reviewer pipeline.
+
+        Used when the coordinator dispatch loop throws an exception.
+        Returns (crew_output, task_count, success_count, failure_count).
+        """
+        logger.info("BUILD PHASE: Falling back to sequential pipeline...")
+        developer_agent = create_developer_agent(
+            developer_llm,
+            prompt_override=self._prompt_override("developer"),
+            extra_tools=ws_dev_tools or None,
+        )
+        reviewer_agent = create_reviewer_agent(
+            reviewer_llm,
+            prompt_override=self._prompt_override("reviewer"),
+            extra_tools=ws_ro_tools or None,
+        )
+        product_strategist = create_product_strategist(
+            product_llm,
+            prompt_override=self._prompt_override("product"),
+            extra_tools=ws_product_tools or None,
+        )
+
         build_tasks = create_build_phase_tasks(
             developer_agent,
             product_strategist,
             iteration=i,
             reviewer_agent=reviewer_agent,
         )
-
         if extra_context:
             for task in build_tasks:
                 task.description += extra_context
@@ -657,19 +973,12 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             cache=False,
         )
 
-        logger.info("BUILD PHASE: Executing...")
         task_count = len(build_tasks)
         success_count = 0
         failure_count = 0
-        self._emit("task_started", {
-            "task_id": f"build_crew_iter_{i}",
-            "agent_role": "build_crew",
-            "objective": f"BUILD phase iteration {i}",
-        })
         try:
             ensure_litellm_tracing()
             crew_output = build_crew.kickoff()
-            # CrewAI v1.9 CrewOutput exposes per-task results
             if hasattr(crew_output, "tasks_output"):
                 for to in crew_output.tasks_output:
                     status = getattr(to, "status", "success")
@@ -678,81 +987,279 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                     else:
                         failure_count += 1
             else:
-                # Assume all succeeded if no per-task info
                 success_count = task_count
         except Exception as exc:
-            logger.warning(f"BUILD PHASE failed: {exc}")
+            logger.warning(f"Sequential fallback also failed: {exc}")
             crew_output = None
             failure_count = task_count
 
+        return crew_output, task_count, success_count, failure_count
+
+    def _run_coordinator_remediation(
+        self,
+        i: int,
+        coordinator_llm,
+        ws_product_tools: list,
+    ) -> None:
+        """Run coordinator-driven remediation after QA gate failure.
+
+        Creates a fresh dispatch tool (budget=4), a fresh build coordinator,
+        and a remediation task with QA findings.
+        """
+        qa_report = self._format_qa_failures(self.state.qa_result)
+
+        # Use stored registry from build(); fall back if unavailable
+        registry = getattr(self, "_agent_registry", None)
+        if not registry:
+            logger.warning("No agent registry for remediation; skipping coordinator remediation")
+            return
+
+        remediation_dispatch, _get_remediation_count = make_dispatch_task_tool(
+            registry, self._emit, max_dispatches=4, result_truncation=1500,
+            extra_context="",
+        )
+
+        remediation_coordinator = create_build_coordinator(
+            coordinator_llm,
+            prompt_override=self._prompt_override("coordinator"),
+            extra_tools=[remediation_dispatch] + (ws_product_tools or []),
+        )
+
+        description = f'''[Iteration {i}] QA remediation required before coordinator review.
+
+            {qa_report}
+
+            You have a dispatch_task tool with a budget of 4 dispatches.
+            Available agents: {sorted(registry.keys())}
+
+            Steps:
+            1. Analyze the QA failures above
+            2. Dispatch to developer with specific fix instructions
+            3. Dispatch to reviewer to re-run QA checks
+            4. If still failing, dispatch to developer again with refined instructions
+
+            Do not start new feature work. Fix only the blocking defects.
+            '''
+
+        if self.state.simulation_feedback_summary:
+            description += f"\n\n[CUSTOMER FRICTION POINTS]\n{self.state.simulation_feedback_summary}"
+
+        remediation_task = Task(
+            description=description,
+            agent=remediation_coordinator,
+            expected_output='''QA remediation summary including:
+            - Root cause(s) identified
+            - Fixes applied
+            - Final QA status after remediation
+            '''
+        )
+
+        remediation_crew = Crew(
+            agents=[remediation_coordinator],
+            tasks=[remediation_task],
+            process=Process.sequential,
+            verbose=_verbose_flag(self.state.verbose),
+            memory=False,
+            cache=False,
+        )
+
+        try:
+            ensure_litellm_tracing()
+            remediation_output = remediation_crew.kickoff()
+
+            # Zero-dispatch guardrail for remediation
+            if _get_remediation_count() == 0:
+                logger.warning("Remediation coordinator returned without dispatching; retrying with forceful prompt")
+                retry_task = Task(
+                    description=(
+                        "You returned without making any dispatch_task_to_agent calls. "
+                        "You MUST call dispatch_task_to_agent at least once to fix the QA failures. "
+                        "Do NOT describe what you would do — actually call the tool NOW.\n\n"
+                        f"Available agents: {sorted(registry.keys())}\n\n"
+                        "Dispatch to developer with fix instructions from the QA report."
+                    ),
+                    agent=remediation_coordinator,
+                    expected_output="Summary of dispatched fix tasks and their results.",
+                )
+                retry_crew = Crew(
+                    agents=[remediation_coordinator],
+                    tasks=[retry_task],
+                    process=Process.sequential,
+                    verbose=_verbose_flag(self.state.verbose),
+                    memory=False,
+                    cache=False,
+                )
+                remediation_output = retry_crew.kickoff()
+
+            if remediation_output:
+                extra = str(remediation_output)
+                self.state.build_result_text = (
+                    f"{self.state.build_result_text}\n\n[QA_REMEDIATION]\n{extra}"
+                    if self.state.build_result_text
+                    else f"[QA_REMEDIATION]\n{extra}"
+                )
+        except Exception as exc:
+            logger.warning(f"Coordinator remediation failed: {exc}")
+
+    @start()
+    def build(self):
+        """Execute the BUILD phase via coordinator-driven dispatch loop.
+
+        The coordinator dispatches tasks to product_strategist, developer,
+        and reviewer agents, reading results and deciding whether to loop.
+        Falls back to the legacy sequential pipeline on failure.
+        """
+        self.state.iteration += 1
+        i = self.state.iteration
+        _set_agent_cycle_id(i)
+        _set_tools_cycle_id(i)
+        self._emit("cycle_start", {"cycle_id": i})
+        shared_llm = self.state.llm
+        coordinator_llm = shared_llm or get_llm("coordinator")
+        developer_llm = shared_llm or get_llm("developer")
+        reviewer_llm = shared_llm or get_llm("reviewer")
+        product_llm = shared_llm or get_llm("product")
+        self.state.qa_passed = True
+        self.state.qa_result = {}
+        self.state.simulation_feedback_summary = ""
+        self.state.build_result_text = ""
+        self.state.user_feedback = {}
+
+        logger.info(f"\n{'='*60}")
+        logger.info(f"ITERATION {i}/{self.state.max_iterations}")
+        logger.info(f"{'='*60}\n")
+        logger.info("BUILD PHASE: Creating coordinator dispatch loop...")
+
+        # Build workspace tool lists per role
+        ws_dev_tools, ws_product_tools, ws_ro_tools = self._build_workspace_tools()
+
+        # Collect learning context from prior iterations
+        extra_context = self._build_extra_context()
+
+        # Build agent registry for dispatch tool
+        agent_registry = {
+            "product_strategist": {
+                "factory": create_product_strategist,
+                "llm": product_llm,
+                "extra_tools": ws_product_tools or None,
+                "prompt_override": self._prompt_override("product"),
+            },
+            "developer": {
+                "factory": create_developer_agent,
+                "llm": developer_llm,
+                "extra_tools": ws_dev_tools or None,
+                "prompt_override": self._prompt_override("developer"),
+            },
+            "reviewer": {
+                "factory": create_reviewer_agent,
+                "llm": reviewer_llm,
+                "extra_tools": ws_ro_tools or None,
+                "prompt_override": self._prompt_override("reviewer"),
+            },
+        }
+        self._agent_registry = agent_registry
+
+        # Create dispatch tool and coordinator
+        max_dispatches = int(self.state.active_policies.get("max_total_delegated_tasks", 8))
+        dispatch_tool, _get_dispatch_count = make_dispatch_task_tool(
+            agent_registry, self._emit, max_dispatches=max_dispatches, result_truncation=1500,
+            extra_context=extra_context,
+        )
+        build_coordinator = create_build_coordinator(
+            coordinator_llm,
+            prompt_override=self._prompt_override("coordinator"),
+            extra_tools=[dispatch_tool] + (ws_product_tools or []),
+        )
+
+        # Create coordinator task
+        coordinator_task = _create_coordinator_build_task(
+            build_coordinator,
+            iteration=i,
+            available_roles=sorted(agent_registry.keys()),
+            extra_context=extra_context,
+        )
+
+        build_crew = Crew(
+            agents=[build_coordinator],
+            tasks=[coordinator_task],
+            process=Process.sequential,
+            verbose=_verbose_flag(self.state.verbose),
+            memory=False,
+            cache=False,
+        )
+
+        logger.info("BUILD PHASE: Executing coordinator dispatch loop...")
+        task_count = 1  # single coordinator task
+        success_count = 0
+        failure_count = 0
+        crew_output = None
+
+        self._emit("task_started", {
+            "task_id": f"build_coordinator_iter_{i}",
+            "agent_role": "BUILD Coordinator",
+            "objective": f"BUILD phase iteration {i} (coordinator dispatch)",
+        })
+        try:
+            ensure_litellm_tracing()
+            crew_output = build_crew.kickoff()
+            success_count = 1
+
+            # Zero-dispatch guardrail: if coordinator returned text without
+            # actually calling dispatch_task, retry with a forceful prompt.
+            if _get_dispatch_count() == 0:
+                logger.warning("Coordinator returned without dispatching; retrying with forceful prompt")
+                retry_task = Task(
+                    description=(
+                        "You returned a plan without making any dispatch_task_to_agent calls. "
+                        "You MUST call dispatch_task_to_agent at least once. Do NOT describe "
+                        "what you would do — actually call the tool NOW.\n\n"
+                        f"Available agents: {sorted(agent_registry.keys())}\n\n"
+                        "Recommended: dispatch to product_strategist first, then developer, then reviewer."
+                    ),
+                    agent=build_coordinator,
+                    expected_output="Summary of dispatched tasks and their results.",
+                )
+                retry_crew = Crew(
+                    agents=[build_coordinator],
+                    tasks=[retry_task],
+                    process=Process.sequential,
+                    verbose=_verbose_flag(self.state.verbose),
+                    memory=False,
+                    cache=False,
+                )
+                crew_output = retry_crew.kickoff()
+
+        except Exception as exc:
+            logger.warning(f"BUILD coordinator failed: {exc}; falling back to sequential")
+            crew_output, task_count, success_count, failure_count = (
+                self._run_sequential_fallback(
+                    i, developer_llm, reviewer_llm, product_llm,
+                    ws_dev_tools, ws_product_tools, ws_ro_tools,
+                    extra_context,
+                )
+            )
+
         self._emit("task_completed", {
-            "task_id": f"build_crew_iter_{i}",
+            "task_id": f"build_coordinator_iter_{i}",
             "task_status": "success" if crew_output else "failed",
             "success_count": success_count,
             "failure_count": failure_count,
         })
 
-        # Deterministic QA gate: enforce checks before coordinator review.
+        # Deterministic QA gate
         self.state.qa_result = self._run_quality_gate()
         self.state.qa_passed = self._qa_passed()
+
+        # Run simulation early so feedback is available for remediation
+        if self.state.qa_passed and self.state.workspace_enabled:
+            self._write_simulation_feedback()
+            feedback_summary = self._collect_user_feedback()
+            if feedback_summary and "No user feedback" not in feedback_summary:
+                self.state.simulation_feedback_summary = feedback_summary
+
         if not self.state.qa_passed:
-            logger.warning("QA gate failed; requesting developer remediation before coordinator review")
-
-            qa_findings_json = json.dumps(self.state.qa_result, indent=2, ensure_ascii=True)
-            fix_task = Task(
-                description=f'''[Iteration {i}] QA remediation required before coordinator review.
-
-            QA gate findings:
-            {qa_findings_json}
-
-            Steps:
-            1. Identify the root cause(s) of the QA failures
-            2. Implement the minimal fix required to pass QA
-            3. Share a concise fix summary and remaining risks via share_insight
-
-            Do not start new feature work. Fix only the blocking defects.
-            ''',
-                agent=developer_agent,
-                expected_output='''QA remediation summary including:
-            - Root cause(s)
-            - Fix applied
-            - Remaining risks (if any)
-            '''
-            )
-
-            recheck_task = Task(
-                description=f'''[Iteration {i}] Re-run QA quality gate after developer remediation.
-
-            Steps:
-            1. Run run_quality_checks_tool again
-            2. Share PASS/FAIL status with blocking issues (if any)
-            3. State whether this iteration can proceed to coordinator review
-            ''',
-                agent=reviewer_agent,
-                context=[fix_task],
-                expected_output='''QA recheck result with PASS/FAIL and blocking defects if any.'''
-            )
-
-            remediation_crew = Crew(
-                agents=[developer_agent, reviewer_agent],
-                tasks=[fix_task, recheck_task],
-                process=Process.sequential,
-                verbose=_verbose_flag(self.state.verbose),
-                memory=False,
-                cache=False,
-            )
-            try:
-                ensure_litellm_tracing()
-                remediation_output = remediation_crew.kickoff()
-                if remediation_output:
-                    extra = str(remediation_output)
-                    if crew_output:
-                        self.state.build_result_text = f"{self.state.build_result_text}\n\n[QA_REMEDIATION]\n{extra}"
-                    else:
-                        self.state.build_result_text = f"[QA_REMEDIATION]\n{extra}"
-            except Exception as exc:
-                logger.warning(f"QA remediation sub-crew failed: {exc}")
-
+            logger.warning("QA gate failed; running coordinator remediation")
+            self._run_coordinator_remediation(i, coordinator_llm, ws_product_tools)
             self.state.qa_result = self._run_quality_gate()
             self.state.qa_passed = self._qa_passed()
 
@@ -787,6 +1294,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
 
         try:
             from src.framework.contracts import CycleMetrics
+            procedure_score = self.state.build_success_count / max(1, self.state.build_task_count)
             metrics = CycleMetrics(
                 cycle_id=self.state.iteration,
                 task_count=self.state.build_task_count,
@@ -795,10 +1303,17 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 domain_metrics={
                     "qa_gate_passed": bool(self.state.qa_passed),
                     "determinism_variance": 0.0,
+                    "procedure_score": procedure_score,
                 },
             )
+
+            # Reconstruct previous CycleMetrics for trend analysis
+            previous_metrics = None
+            if self.state.previous_cycle_metrics:
+                previous_metrics = CycleMetrics(**self.state.previous_cycle_metrics)
+
             evaluator = self._get_evaluator()
-            result = evaluator.evaluate(metrics)
+            result = evaluator.evaluate(metrics, previous_metrics=previous_metrics)
             self.state.gate_recommendation = result.recommended_action
             logger.info(
                 f"  Gate result: {result.overall_status} -> {result.recommended_action}"
@@ -808,18 +1323,112 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             if result.overall_status != "pass":
                 try:
                     pu = self._get_policy_updater()
-                    patches = pu.propose_patches(result, {})
+                    patches = pu.propose_patches(result, self.state.active_policies)
                     if patches:
-                        pu.apply_patches({}, patches, {})
+                        version = pu.apply_patches(self.state.active_policies, patches)
+                        self.state.active_policies = dict(version.policies)
                         logger.info(f"  PolicyUpdater applied {len(patches)} patches")
                 except Exception as exc:
                     logger.warning(f"  PolicyUpdater skipped: {exc}")
+
+            # Save current metrics for next iteration's trend analysis
+            self.state.previous_cycle_metrics = metrics.model_dump()
 
         except Exception as exc:
             logger.warning(f"  Evaluation skipped: {exc}")
 
         if not self.state.qa_passed:
             self.state.gate_recommendation = "pause"
+
+        # Bridge: run simulation only if not already run in build()
+        if self.state.workspace_enabled and self.state.qa_passed and not self.state.simulation_feedback_summary:
+            self._write_simulation_feedback()
+            feedback_summary = self._collect_user_feedback()
+            if feedback_summary and "No user feedback" not in feedback_summary:
+                self.state.simulation_feedback_summary = feedback_summary
+
+    # -- Simulation feedback bridge ----------------------------------------
+
+    def _write_simulation_feedback(self) -> None:
+        """Run a lightweight customer simulation and write failure feedback to
+        ``workspace/feedback.db`` so the LEARN phase can read it."""
+        import sqlite3 as _sqlite3
+
+        try:
+            from src.simulation.customer_environment import (
+                build_customer_environment_input,
+                run_customer_environment,
+            )
+            from src.framework.adapters.startup_vc import (
+                _map_feedback_entry,
+                _stable_cycle_seed,
+            )
+            from src.workspace_tools.file_tools import _workspace_root
+
+            if _workspace_root is None:
+                return
+
+            iteration = self.state.iteration
+            success_rate = (
+                self.state.build_success_count / max(1, self.state.build_task_count)
+            )
+            score = max(0.0, min(1.0, success_rate))
+
+            env_input = build_customer_environment_input(
+                run_id=f"{self.state.id}_bml_feedback",
+                iteration=max(1, iteration),
+                seed=_stable_cycle_seed(42, self.state.id, iteration),
+                params={
+                    "founder_base_interest": min(1.0, 0.12 + 0.20 * score),
+                    "vc_base_interest": min(1.0, 0.10 + 0.18 * score),
+                    "meeting_rate_from_mutual_interest": min(
+                        1.0, 0.25 + 0.30 * score
+                    ),
+                    "derived_match_score_boost": min(1.0, 0.05 * score),
+                    "derived_explanation_quality_boost": min(1.0, 0.05 * score),
+                    "derived_personalization_score_boost": min(1.0, 0.05 * score),
+                    "derived_timing_score_boost": min(1.0, 0.04 * score),
+                },
+            )
+            env_output = run_customer_environment(env_input)
+            diagnostics = dict(env_output.get("diagnostics") or {})
+            failure_feedback = diagnostics.get("failure_feedback") or []
+            if not failure_feedback:
+                return
+
+            entries = failure_feedback[:20]
+            db_path = _workspace_root / "feedback.db"
+            with _sqlite3.connect(str(db_path)) as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS feedback ("
+                    "  id TEXT PRIMARY KEY,"
+                    "  timestamp TEXT NOT NULL,"
+                    "  page TEXT NOT NULL,"
+                    "  feedback_type TEXT NOT NULL,"
+                    "  message TEXT NOT NULL"
+                    ")"
+                )
+                for raw in entries:
+                    mapped = _map_feedback_entry(raw)
+                    conn.execute(
+                        "INSERT OR IGNORE INTO feedback"
+                        " (id, timestamp, page, feedback_type, message)"
+                        " VALUES (?, ?, ?, ?, ?)",
+                        (
+                            mapped["id"],
+                            mapped["timestamp"],
+                            mapped["page"],
+                            mapped["feedback_type"],
+                            mapped["message"],
+                        ),
+                    )
+            logger.info(
+                "BML feedback bridge: wrote %d entries to %s",
+                len(entries),
+                db_path,
+            )
+        except Exception as exc:
+            logger.warning("BML feedback bridge failed: %s", exc)
 
     # -- LEARN phase ------------------------------------------------------
 
@@ -862,6 +1471,14 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             self._record_iteration()
             return
 
+        # Collect real user feedback (simulation feedback available from cycle 1)
+        if self.state.qa_passed:
+            feedback_summary = self._collect_user_feedback()
+            self.state.build_result_text = (
+                f"{self.state.build_result_text}\n\n"
+                f"[USER_FEEDBACK]\n{feedback_summary}"
+            )
+
         coordinator_llm = self.state.llm or get_llm("coordinator")
         coordinator = create_master_coordinator(coordinator_llm)
 
@@ -885,7 +1502,14 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         if hasattr(learn_result, "pydantic") and learn_result.pydantic is not None:
             self.state.learn_output = learn_result.pydantic
         else:
-            self.state.learn_output = LearnPhaseOutput(summary=str(learn_result))
+            # Fallback: parse unstructured text into LearnPhaseOutput fields
+            raw_text = str(learn_result)
+            insights, recommendations = _parse_learn_text(raw_text)
+            self.state.learn_output = LearnPhaseOutput(
+                summary=raw_text,
+                insights=insights,
+                recommendations=recommendations,
+            )
 
         self._apply_learning_feedback()
         self._record_iteration()
@@ -909,6 +1533,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 "qa_passed": bool(self.state.qa_passed),
                 "qa_result": dict(self.state.qa_result or {}),
             },
+            "user_feedback": dict(self.state.user_feedback or {}),
             "autonomy": {
                 "prompt_overrides": dict(self.state.prompt_overrides),
             },

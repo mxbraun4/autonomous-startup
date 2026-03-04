@@ -21,11 +21,13 @@ from .tools import (
 )
 from .agents import (
     create_master_coordinator,
+    create_build_coordinator,
     create_developer_agent,
     create_reviewer_agent,
     create_data_strategist,
     create_product_strategist,
 )
+from .tools import make_dispatch_task_tool
 from .crews import (
     create_autonomous_startup_crew,
     run_build_measure_learn_cycle,
@@ -52,10 +54,13 @@ __all__ = [
     'get_team_insights',
     # Agents
     'create_master_coordinator',
+    'create_build_coordinator',
     'create_developer_agent',
     'create_reviewer_agent',
     'create_data_strategist',
     'create_product_strategist',
+    # Dispatch tool factory
+    'make_dispatch_task_tool',
     # Crews & Flows
     'create_autonomous_startup_crew',
     'run_build_measure_learn_cycle',
