@@ -11,6 +11,7 @@ import py_compile
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
@@ -1184,6 +1185,29 @@ def make_dispatch_task_tool(
     _dispatch_count = [0]
     _dispatch_history: List[Dict[str, Any]] = []
 
+    _ROLE_INSTRUCTIONS = {
+        "developer": (
+            "TOOL INSTRUCTIONS (you MUST follow these):\n"
+            "- Call write_workspace_file to create/update files. Do NOT return raw HTML as text.\n"
+            "- After writing, call check_workspace_http to verify pages load.\n"
+            "- If the task involves feedback, call submit_test_feedback.\n"
+            "- If the spec covers multiple pages, build as many as you can.\n"
+        ),
+        "reviewer": (
+            "TOOL INSTRUCTIONS (you MUST follow these):\n"
+            "- Call review_workspace_files ONCE to list and read all workspace files.\n"
+            "- Call check_workspace_http ONCE to verify pages load over HTTP.\n"
+            "- Call run_quality_checks_tool ONCE for Python syntax checks.\n"
+            "- Report PASS or FAIL based on actual tool results, not assumptions.\n"
+        ),
+        "product_strategist": (
+            "TOOL INSTRUCTIONS (you MUST follow these):\n"
+            "- Call list_workspace_files to see what pages exist.\n"
+            "- Call read_workspace_file to inspect existing pages.\n"
+            "- Use share_insight to publish your build spec for the developer.\n"
+        ),
+    }
+
     @tool("Dispatch Task to Agent")
     def dispatch_task(agent_role: str, task_description: str) -> str:
         """Dispatch a task to a specialist agent and return its result.
@@ -1239,6 +1263,9 @@ def make_dispatch_task_tool(
             "IMPORTANT: Before starting, call get_team_insights to read shared context "
             "from prior dispatches and previous iterations.\n\n"
         )
+        role_instructions = _ROLE_INSTRUCTIONS.get(agent_role, "")
+        if role_instructions:
+            preamble += role_instructions + "\n"
         if extra_context:
             preamble += f"[Context from prior iterations]\n{extra_context}\n\n"
         task_description = preamble + task_description
@@ -1272,7 +1299,26 @@ def make_dispatch_task_tool(
             crew_output = mini_crew.kickoff()
             result_text = str(crew_output)
         except Exception as exc:
-            result_text = f"[dispatch error] {exc}"
+            logger.warning("Dispatch to %s failed: %s; retrying once", agent_role, exc)
+            time.sleep(2)
+            try:
+                retry_task = _Task(
+                    description=task_description,
+                    agent=agent,
+                    expected_output="Complete result of the assigned task.",
+                )
+                retry_crew = _Crew(
+                    agents=[agent],
+                    tasks=[retry_task],
+                    process=_Process.sequential,
+                    verbose=False,
+                    memory=False,
+                    cache=False,
+                )
+                crew_output = retry_crew.kickoff()
+                result_text = str(crew_output)
+            except Exception as retry_exc:
+                result_text = f"[dispatch error after retry] {retry_exc}"
 
         # Truncate
         truncated = len(result_text) > result_truncation
@@ -1327,13 +1373,17 @@ def make_dispatch_task_tool(
 
     dispatch_task.cache_function = _NO_CACHE
 
-    # Expose dispatch count so callers can detect zero-dispatch runs.
+    # Expose dispatch count and history so callers can detect zero-dispatch runs
+    # and check completeness (e.g. reviewer was dispatched after developer).
     # CrewAI tools are Pydantic models that reject arbitrary attributes,
-    # so we return a (tool, get_count) tuple instead.
+    # so we return a (tool, get_count, get_history) tuple instead.
     def _get_dispatch_count() -> int:
         return _dispatch_count[0]
 
-    return dispatch_task, _get_dispatch_count
+    def _get_dispatch_history() -> List[Dict[str, Any]]:
+        return list(_dispatch_history)
+
+    return dispatch_task, _get_dispatch_count, _get_dispatch_history
 
 
 # ---------------------------------------------------------------------------
