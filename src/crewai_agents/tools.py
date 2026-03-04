@@ -1191,7 +1191,7 @@ def make_dispatch_task_tool(
             "- Call write_workspace_file to create/update files. Do NOT return raw HTML as text.\n"
             "- After writing, call check_workspace_http to verify pages load.\n"
             "- If the task involves feedback, call submit_test_feedback.\n"
-            "- If the spec covers multiple pages, build as many as you can.\n"
+            "- If the request is large, prioritize one focused change first, then continue.\n"
         ),
         "reviewer": (
             "TOOL INSTRUCTIONS (you MUST follow these):\n"

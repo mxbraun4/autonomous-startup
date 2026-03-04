@@ -116,7 +116,7 @@ def create_build_phase_tasks(
         description=f'''[Iteration {iteration}] Build or improve a page in the workspace.
 
         Read the product spec from team insights and implement it.
-        Write complete HTML with proper structure — replace any placeholder content.
+        Write complete HTML with proper structure â€” replace any placeholder content.
         Verify your work loads over HTTP, then share_insight what you built.
         ''',
         agent=developer_agent,
@@ -133,7 +133,7 @@ def create_build_phase_tasks(
         reviewer_task = Task(
             description=f'''[Iteration {iteration}] Review the developer's workspace output for quality.
 
-        Independently verify the workspace — do NOT just summarize the developer's
+        Independently verify the workspace â€” do NOT just summarize the developer's
         context. Read files, run quality checks, and test HTTP loading yourself.
 
         PASS if: workspace has real HTML content AND Python syntax is clean
@@ -149,7 +149,7 @@ def create_build_phase_tasks(
         - QA gate status (PASS/FAIL)
         - Workspace files reviewed and their quality assessment
         - Python syntax check results
-        - HTTP check scores (landing, signup, navigation)
+        - HTTP check scores (landing, navigation)
         - Issues found (if any) with fix instructions
         '''
         )
@@ -209,8 +209,8 @@ def _parse_learn_text(raw: str) -> tuple:
     # Extract bullet-point lines (- or * prefixed) as insights
     for line in raw.splitlines():
         stripped = line.strip()
-        if stripped.startswith(("- ", "* ", "• ")):
-            text = stripped.lstrip("-*• ").strip()
+        if stripped.startswith(("- ", "* ", "â€¢ ")):
+            text = stripped.lstrip("-*â€¢ ").strip()
             if text:
                 insights.append(text)
 
@@ -222,7 +222,7 @@ def _parse_learn_text(raw: str) -> tuple:
     )
     known_roles = {"coordinator", "developer", "product", "reviewer", "data"}
     for line in raw.splitlines():
-        m = role_pattern.match(line.strip().lstrip("-*• "))
+        m = role_pattern.match(line.strip().lstrip("-*â€¢ "))
         if m:
             role = m.group(1).lower()
             if role in known_roles:
@@ -333,8 +333,9 @@ def _create_coordinator_build_task(
     Available agents: {", ".join(available_roles)}
 
     Dispatch agents in whatever order you think best. A typical flow is
-    product_strategist → developer → reviewer, but adapt as needed.
-    When dispatching developer, include the FULL spec text (agents don't share memory).
+    product_strategist -> developer -> reviewer, but adapt as needed.
+    Keep developer requests scoped to one focused challenge at a time.
+    Avoid full backend+frontend mega-requests in a single dispatch.
     Stop when reviewer reports PASS or you run out of budget.
     '''
 
@@ -392,8 +393,8 @@ class _FlowState(BaseModel):
     # Learning feedback: procedure hints injected into next BUILD
     procedure_hints: str = ""
 
-    # Simulation feedback collected during BUILD (before remediation)
-    simulation_feedback_summary: str = ""
+    # User feedback collected from workspace/feedback.db (before remediation)
+    user_feedback_summary: str = ""
 
     # Active policies from PolicyUpdater, persisted across iterations
     active_policies: Dict[str, Any] = Field(default_factory=dict)
@@ -473,8 +474,8 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
 
         Checks:
         1. Python syntax on src/ and scripts/ (fast, catches real bugs)
-        2. Workspace validation — at least one non-placeholder HTML file exists
-        Skips pytest entirely — integration tests belong in CI, not the agent loop.
+        2. Workspace validation â€” at least one non-placeholder HTML file exists
+        Skips pytest entirely â€” integration tests belong in CI, not the agent loop.
         """
         from src.crewai_agents.tools import run_quality_checks_tool
 
@@ -506,7 +507,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 "error": str(exc),
             }
 
-        # 2. Workspace validation — check for real HTML content
+        # 2. Workspace validation â€” check for real HTML content
         workspace_ok = False
         workspace_info: Dict[str, Any] = {}
         try:
@@ -539,7 +540,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         result["workspace"] = workspace_info
         result["workspace_ok"] = workspace_ok
 
-        # 3. HTTP checks — verify pages actually load via a temp server
+        # 3. HTTP checks â€” verify pages actually load via a temp server
         http_ok = True  # non-blocking: degrades gracefully if server can't start
         http_info: Dict[str, Any] = {}
         if workspace_ok:
@@ -570,6 +571,42 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             result.setdefault("status", "failed")
 
         return result
+
+    def _run_customer_testing(self) -> None:
+        """Run LLM-powered customer testing against the workspace.
+
+        Starts a temporary HTTP server, runs customer personas against
+        discovered pages, and writes feedback to feedback.db.  Failures
+        are logged but never block the pipeline.
+        """
+        try:
+            from src.workspace_tools.file_tools import _workspace_root
+            from src.workspace_tools.server import WorkspaceServer
+            from src.simulation.customer_testing import run_customer_testing
+            from src.utils.config import settings
+
+            if _workspace_root is None:
+                return
+
+            server = WorkspaceServer(str(_workspace_root), port=0)
+            try:
+                base_url = server.start()
+                result = run_customer_testing(
+                    base_url=base_url,
+                    workspace_root=str(_workspace_root),
+                    emit_fn=self._emit,
+                    cycle_id=self.state.iteration,
+                    mock=settings.mock_mode,
+                )
+                logger.info(
+                    "Customer testing: %d feedback entries from %d personas",
+                    result.get("feedback_count", 0),
+                    result.get("personas_tested", 0),
+                )
+            finally:
+                server.stop()
+        except Exception as exc:
+            logger.warning("Customer testing skipped: %s", exc)
 
     def _collect_user_feedback(self) -> str:
         """Collect real user feedback from workspace/feedback.db (SQLite).
@@ -665,14 +702,14 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             failure_num += 1
             http = qa_result.get("http_checks") or {}
             lines = [f"{failure_num}. HTTP CHECK FAILURES"]
-            for key in ("http_landing_score", "http_signup_score", "http_nav_score"):
+            for key in ("http_landing_score", "http_navigation_score"):
                 if key in http:
                     lines.append(f"   - {key}: {http[key]}")
             lines.append("   Fix: ensure the landing page loads correctly over HTTP (score >= 1.0).")
             sections.append("\n".join(lines))
 
         if not sections:
-            return "QA gate passed — no failures detected."
+            return "QA gate passed â€” no failures detected."
 
         return f"QA FAILURE REPORT ({failure_num} issue(s)):\n\n" + "\n\n".join(sections)
 
@@ -715,7 +752,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                         parts.append("What failed: " + "; ".join(str(x) for x in wf["failures"]))
                     if parts:
                         extra_context += (
-                            f"\n\n[Procedural Memory — best workflow v{_latest.version}, "
+                            f"\n\n[Procedural Memory â€” best workflow v{_latest.version}, "
                             f"score {_latest.score:.0%}]\n"
                             + "\n".join(parts)
                             + "\n"
@@ -746,7 +783,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                             f"failures={m.get('failure_count', '?')}"
                         )
                     extra_context += (
-                        "\n\n[Episodic Memory — recent cycle history]\n"
+                        "\n\n[Episodic Memory â€” recent cycle history]\n"
                         + "\n".join(ep_lines)
                         + "\n"
                     )
@@ -817,7 +854,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         ws_ro_tools: list,
         extra_context: str,
     ):
-        """Fallback: run the legacy sequential Product→Developer→Reviewer pipeline.
+        """Fallback: run the legacy sequential Productâ†’Developerâ†’Reviewer pipeline.
 
         Used when the coordinator dispatch loop throws an exception.
         Returns (crew_output, task_count, success_count, failure_count).
@@ -919,15 +956,15 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
 
             Steps:
             1. Analyze the QA failures above
-            2. Dispatch to developer with specific fix instructions
+            2. Dispatch to developer with one scoped fix instruction
             3. Dispatch to reviewer to re-run QA checks
-            4. If still failing, dispatch to developer again with refined instructions
+            4. If still failing, dispatch another scoped developer fix
 
             Do not start new feature work. Fix only the blocking defects.
             '''
 
-        if self.state.simulation_feedback_summary:
-            description += f"\n\n[CUSTOMER FRICTION POINTS]\n{self.state.simulation_feedback_summary}"
+        if self.state.user_feedback_summary:
+            description += f"\n\n[USER FEEDBACK]\n{self.state.user_feedback_summary}"
 
         remediation_task = Task(
             description=description,
@@ -959,7 +996,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                     description=(
                         "You returned without making any dispatch_task_to_agent calls. "
                         "You MUST call dispatch_task_to_agent at least once to fix the QA failures. "
-                        "Do NOT describe what you would do — actually call the tool NOW.\n\n"
+                        "Do NOT describe what you would do â€” actually call the tool NOW.\n\n"
                         f"Available agents: {sorted(registry.keys())}\n\n"
                         "Dispatch to developer with fix instructions from the QA report."
                     ),
@@ -1019,7 +1056,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         product_llm = shared_llm or get_llm("product")
         self.state.qa_passed = True
         self.state.qa_result = {}
-        self.state.simulation_feedback_summary = ""
+        self.state.user_feedback_summary = ""
         self.state.build_result_text = ""
         self.state.user_feedback = {}
 
@@ -1110,7 +1147,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                     description=(
                         "You returned a plan without making any dispatch_task_to_agent calls. "
                         "You MUST call dispatch_task_to_agent at least once. Do NOT describe "
-                        "what you would do — actually call the tool NOW.\n\n"
+                        "what you would do â€” actually call the tool NOW.\n\n"
                         f"Available agents: {sorted(agent_registry.keys())}\n\n"
                         "Recommended: dispatch to product_strategist first, then developer, then reviewer."
                     ),
@@ -1148,12 +1185,15 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         self.state.qa_result = self._run_quality_gate()
         self.state.qa_passed = self._qa_passed()
 
-        # Run simulation early so feedback is available for remediation
+        # LLM-powered customer testing (after QA passes, before feedback collection)
         if self.state.qa_passed and self.state.workspace_enabled:
-            self._write_simulation_feedback()
+            self._run_customer_testing()
+
+        # Collect real user feedback from workspace/feedback.db for remediation
+        if self.state.qa_passed and self.state.workspace_enabled:
             feedback_summary = self._collect_user_feedback()
             if feedback_summary and "No user feedback" not in feedback_summary:
-                self.state.simulation_feedback_summary = feedback_summary
+                self.state.user_feedback_summary = feedback_summary
 
         if not self.state.qa_passed:
             logger.warning("QA gate failed; running coordinator remediation")
@@ -1238,95 +1278,11 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         if not self.state.qa_passed:
             self.state.gate_recommendation = "pause"
 
-        # Bridge: run simulation only if not already run in build()
-        if self.state.workspace_enabled and self.state.qa_passed and not self.state.simulation_feedback_summary:
-            self._write_simulation_feedback()
+        # Collect user feedback if not already collected in build()
+        if self.state.workspace_enabled and self.state.qa_passed and not self.state.user_feedback_summary:
             feedback_summary = self._collect_user_feedback()
             if feedback_summary and "No user feedback" not in feedback_summary:
-                self.state.simulation_feedback_summary = feedback_summary
-
-    # -- Simulation feedback bridge ----------------------------------------
-
-    def _write_simulation_feedback(self) -> None:
-        """Run a lightweight customer simulation and write failure feedback to
-        ``workspace/feedback.db`` so the LEARN phase can read it."""
-        import sqlite3 as _sqlite3
-
-        try:
-            from src.simulation.customer_environment import (
-                build_customer_environment_input,
-                run_customer_environment,
-            )
-            from src.framework.adapters.startup_vc import (
-                _map_feedback_entry,
-                _stable_cycle_seed,
-            )
-            from src.workspace_tools.file_tools import _workspace_root
-
-            if _workspace_root is None:
-                return
-
-            iteration = self.state.iteration
-            success_rate = (
-                self.state.build_success_count / max(1, self.state.build_task_count)
-            )
-            score = max(0.0, min(1.0, success_rate))
-
-            env_input = build_customer_environment_input(
-                run_id=f"{self.state.id}_bml_feedback",
-                iteration=max(1, iteration),
-                seed=_stable_cycle_seed(42, self.state.id, iteration),
-                params={
-                    "founder_base_interest": min(1.0, 0.12 + 0.20 * score),
-                    "vc_base_interest": min(1.0, 0.10 + 0.18 * score),
-                    "meeting_rate_from_mutual_interest": min(
-                        1.0, 0.25 + 0.30 * score
-                    ),
-                    "derived_match_score_boost": min(1.0, 0.05 * score),
-                    "derived_explanation_quality_boost": min(1.0, 0.05 * score),
-                    "derived_personalization_score_boost": min(1.0, 0.05 * score),
-                    "derived_timing_score_boost": min(1.0, 0.04 * score),
-                },
-            )
-            env_output = run_customer_environment(env_input)
-            diagnostics = dict(env_output.get("diagnostics") or {})
-            failure_feedback = diagnostics.get("failure_feedback") or []
-            if not failure_feedback:
-                return
-
-            entries = failure_feedback[:20]
-            db_path = _workspace_root / "feedback.db"
-            with _sqlite3.connect(str(db_path)) as conn:
-                conn.execute(
-                    "CREATE TABLE IF NOT EXISTS feedback ("
-                    "  id TEXT PRIMARY KEY,"
-                    "  timestamp TEXT NOT NULL,"
-                    "  page TEXT NOT NULL,"
-                    "  feedback_type TEXT NOT NULL,"
-                    "  message TEXT NOT NULL"
-                    ")"
-                )
-                for raw in entries:
-                    mapped = _map_feedback_entry(raw)
-                    conn.execute(
-                        "INSERT OR IGNORE INTO feedback"
-                        " (id, timestamp, page, feedback_type, message)"
-                        " VALUES (?, ?, ?, ?, ?)",
-                        (
-                            mapped["id"],
-                            mapped["timestamp"],
-                            mapped["page"],
-                            mapped["feedback_type"],
-                            mapped["message"],
-                        ),
-                    )
-            logger.info(
-                "BML feedback bridge: wrote %d entries to %s",
-                len(entries),
-                db_path,
-            )
-        except Exception as exc:
-            logger.warning("BML feedback bridge failed: %s", exc)
+                self.state.user_feedback_summary = feedback_summary
 
     # -- LEARN phase ------------------------------------------------------
 
@@ -1611,10 +1567,10 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             # Respect gate recommendation: stop early if evaluation says to.
             rec = self.state.gate_recommendation
             if rec == "stop":
-                logger.info("  Gate recommended STOP — halting iterations.")
+                logger.info("  Gate recommended STOP â€” halting iterations.")
                 break
             if rec == "rollback":
-                logger.info("  Gate recommended ROLLBACK — halting iterations.")
+                logger.info("  Gate recommended ROLLBACK â€” halting iterations.")
                 break
 
         logger.info(f"\n{'='*60}")
@@ -1631,3 +1587,4 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             "metrics_evolution": self.state.metrics_evolution,
             "learnings": self.state.learnings,
         }
+

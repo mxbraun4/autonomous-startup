@@ -84,10 +84,7 @@ class TestAdapterWithWorkspaceCreatesCoordinatorTask:
 
     def test_adapter_with_workspace_creates_coordinator_task(self, tmp_path: Path) -> None:
         ws = _create_workspace(tmp_path)
-        adapter = StartupVCAdapter(
-            workspace_root=str(ws),
-            use_customer_simulation=False,
-        )
+        adapter = StartupVCAdapter(workspace_root=str(ws))
         ctx = _FakeContext(run_id="run_ws", cycle_id=3)
 
         tasks = adapter.build_cycle_tasks(ctx)
@@ -103,7 +100,7 @@ class TestAdapterWithoutWorkspaceNoCoordinatorTask:
     """Without workspace_root no coordinator task should appear."""
 
     def test_adapter_without_workspace_no_coordinator_task(self) -> None:
-        adapter = StartupVCAdapter(use_customer_simulation=False)
+        adapter = StartupVCAdapter()
         ctx = _FakeContext()
 
         tasks = adapter.build_cycle_tasks(ctx)
@@ -116,24 +113,16 @@ class TestAdapterWithoutWorkspaceNoCoordinatorTask:
         assert len(tasks) == 1, "Expected exactly one data_specialist task"
 
 
-class TestCoordinatorReceivesFeedbackInInputData:
-    """Coordinator input_data should contain HTTP checks and customer metrics."""
+class TestCoordinatorReceivesHTTPChecksInInputData:
+    """Coordinator input_data should contain HTTP checks from previous cycle."""
 
-    def test_coordinator_receives_http_checks_and_customer_metrics(self, tmp_path: Path) -> None:
+    def test_coordinator_receives_http_checks(self, tmp_path: Path) -> None:
         ws = _create_workspace(tmp_path)
-        adapter = StartupVCAdapter(
-            workspace_root=str(ws),
-            use_customer_simulation=False,
-        )
-        # Inject previous results to simulate a second cycle
+        adapter = StartupVCAdapter(workspace_root=str(ws))
+        # Inject previous HTTP check results
         adapter._http_check_results = {
             "http_landing_score": 0.8,
-            "http_signup_score": 0.6,
             "http_navigation_score": 0.7,
-        }
-        adapter._previous_simulation_results = {
-            "customer_metrics": {"founder_interested_rate": 0.3},
-            "success_rate": 1.0,
         }
         ctx = _FakeContext(run_id="run_fb", cycle_id=2)
 
@@ -142,8 +131,7 @@ class TestCoordinatorReceivesFeedbackInInputData:
 
         assert "previous_http_checks" in first.input_data
         assert first.input_data["previous_http_checks"]["http_landing_score"] == 0.8
-        assert "customer_metrics" in first.input_data
-        assert first.input_data["customer_metrics"]["founder_interested_rate"] == 0.3
+        assert first.input_data["previous_http_checks"]["http_navigation_score"] == 0.7
 
 
 class TestHTTPChecksMergeIntoSimulation:
@@ -151,10 +139,7 @@ class TestHTTPChecksMergeIntoSimulation:
 
     def test_http_checks_merge_into_simulation(self, tmp_path: Path) -> None:
         ws = _create_workspace(tmp_path)
-        adapter = StartupVCAdapter(
-            workspace_root=str(ws),
-            use_customer_simulation=False,
-        )
+        adapter = StartupVCAdapter(workspace_root=str(ws))
         ctx = _FakeContext(run_id="run_http", cycle_id=1)
         outputs = _FakeCycleOutputs(total=2, completed=2, failed=0, skipped=0)
 
@@ -169,7 +154,6 @@ class TestHTTPChecksMergeIntoSimulation:
         checks = result["http_checks"]
         # Verify derived score keys produced by WorkspaceHTTPChecker.run_all_checks
         assert "http_landing_score" in checks
-        assert "http_signup_score" in checks
         assert "http_navigation_score" in checks
 
 
@@ -178,10 +162,7 @@ class TestVersioningThroughAdapter:
 
     def test_versioning_through_adapter(self, tmp_path: Path) -> None:
         ws = _create_workspace(tmp_path)
-        adapter = StartupVCAdapter(
-            workspace_root=str(ws),
-            use_customer_simulation=False,
-        )
+        adapter = StartupVCAdapter(workspace_root=str(ws))
 
         snap = adapter.snapshot_workspace(1)
 
@@ -190,41 +171,5 @@ class TestVersioningThroughAdapter:
         snapshot_path = Path(snap["path"])
         assert snapshot_path.exists(), "Snapshot directory must exist on disk"
         assert snap["file_count"] >= 2, (
-            "Snapshot should contain at least index.html and signup.html"
-        )
-
-
-class TestCustomerParamsBoostedByHTTPChecks:
-    """With HTTP check results set, _customer_params should return higher values."""
-
-    def test_customer_params_boosted_by_http_checks(self, tmp_path: Path) -> None:
-        ws = _create_workspace(tmp_path)
-        adapter = StartupVCAdapter(
-            workspace_root=str(ws),
-            use_customer_simulation=False,
-        )
-
-        # Baseline params (no HTTP checks)
-        baseline = adapter._customer_params(success_rate=0.5)
-
-        # Inject known HTTP check scores
-        adapter._http_check_results = {
-            "http_signup_score": 1.0,
-            "http_navigation_score": 1.0,
-            "http_landing_score": 1.0,
-        }
-        boosted = adapter._customer_params(success_rate=0.5)
-
-        # The boost logic adds positive deltas for three specific keys:
-        #   derived_personalization_score_boost  += signup_score * 0.15
-        #   founder_base_interest               += nav_score   * 0.10
-        #   vc_base_interest                    += landing_score* 0.10
-        assert boosted["derived_personalization_score_boost"] > baseline["derived_personalization_score_boost"], (
-            "Personalization boost must increase with signup_score"
-        )
-        assert boosted["founder_base_interest"] > baseline["founder_base_interest"], (
-            "Founder interest must increase with nav_score"
-        )
-        assert boosted["vc_base_interest"] > baseline["vc_base_interest"], (
-            "VC interest must increase with landing_score"
+            "Snapshot should contain at least the workspace fixture files"
         )
