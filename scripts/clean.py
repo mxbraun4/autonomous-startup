@@ -51,15 +51,28 @@ def _workspace_generated_files() -> list[Path]:
     return items
 
 
-def _remove(path: Path) -> str:
-    """Remove a file or directory. Returns a status string."""
+def _remove(path: Path) -> tuple[str, bool]:
+    """Remove a file or directory.
+
+    Returns
+    -------
+    tuple[str, bool]
+        Status line and whether removal succeeded.
+    """
+    rel = path.relative_to(ROOT)
     if not path.exists():
-        return f"  skip  {path.relative_to(ROOT)}  (not found)"
-    if path.is_dir():
-        shutil.rmtree(path)
-    else:
-        path.unlink()
-    return f"  rm    {path.relative_to(ROOT)}"
+        return f"  skip  {rel}  (not found)", True
+
+    try:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        return f"  rm    {rel}", True
+    except PermissionError as exc:
+        return f"  busy  {rel}  ({exc})", False
+    except OSError as exc:
+        return f"  fail  {rel}  ({exc})", False
 
 
 def main() -> None:
@@ -86,8 +99,20 @@ def main() -> None:
             sys.exit(1)
 
     print()
+    failures = 0
     for p in all_paths:
-        print(_remove(p))
+        line, ok = _remove(p)
+        print(line)
+        if not ok:
+            failures += 1
+
+    if failures:
+        print(
+            "\nDone with warnings. "
+            f"{failures} path(s) could not be removed (likely in use by another process)."
+        )
+        print("Stop running simulations/servers and rerun clean.")
+        sys.exit(2)
 
     print("\nDone. Ready for a clean run.")
 

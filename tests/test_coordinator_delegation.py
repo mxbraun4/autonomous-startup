@@ -128,7 +128,7 @@ class TestFormatFeedbackWithHTTPChecks:
         data = {
             "previous_http_checks": {
                 "http_landing_score": 0.9,
-                "http_signup_score": 0.7,
+                "http_navigation_score": 0.7,
             }
         }
         result = _format_feedback_for_coordinator(data)

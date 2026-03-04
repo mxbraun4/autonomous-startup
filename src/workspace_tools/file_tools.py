@@ -216,7 +216,7 @@ def _check_http_impl(pages: str = "") -> dict:
     ----------
     pages:
         Comma-separated list of pages to check (e.g. ``"index.html,about.html"``).
-        If empty, runs the full standard check suite (landing, signup, navigation).
+        If empty, runs the full standard check suite (landing, navigation).
     """
     if _workspace_root is None:
         return {"status": "error", "reason": "Workspace root is not configured. Call configure_workspace_root first."}
@@ -421,12 +421,12 @@ def run_workspace_sql(db_name: str, query: str, params: str = "[]") -> str:
 def check_workspace_http(pages: str = "") -> str:
     """Serve the workspace over HTTP and run validation checks.
 
-    With no arguments, runs the full check suite: landing page load,
-    signup form validation, and navigation link verification.
+    With no arguments, runs the full check suite: landing page load
+    and navigation link verification.
     Pass a comma-separated list of pages (e.g. ``"index.html,about.html"``)
     to check only those specific pages.
 
-    Returns JSON with scores: ``http_landing_score``, ``http_signup_score``,
+    Returns JSON with scores: ``http_landing_score``,
     ``http_navigation_score`` (each 0.0–1.0).
     """
     return json.dumps(_check_http_impl(pages))

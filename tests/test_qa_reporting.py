@@ -131,56 +131,54 @@ class TestFormatQaFailures:
 
 
 # ===================================================================
-# 2. Simulation feedback timing
+# 2. User feedback timing
 # ===================================================================
 
-class TestSimulationFeedbackTiming:
-    """Simulation runs in BUILD (after QA pass) and is guarded in evaluate."""
+class TestUserFeedbackTiming:
+    """User feedback is collected in BUILD (after QA pass) and guarded in evaluate."""
 
-    def test_flow_state_has_simulation_field(self):
+    def test_flow_state_has_feedback_field(self):
         state = _FlowState()
-        assert hasattr(state, "simulation_feedback_summary")
-        assert state.simulation_feedback_summary == ""
+        assert hasattr(state, "user_feedback_summary")
+        assert state.user_feedback_summary == ""
 
-    def test_simulation_runs_in_build_when_qa_passes(self):
-        """When QA passes, _write_simulation_feedback is called in build()."""
+    def test_feedback_collected_in_build_before_remediation(self):
+        """_collect_user_feedback is called before remediation in build()."""
         import inspect
         from src.crewai_agents.crews import BuildMeasureLearnFlow
 
         source = inspect.getsource(BuildMeasureLearnFlow.build)
-        # Should call _write_simulation_feedback before remediation block
-        sim_idx = source.index("_write_simulation_feedback")
+        feedback_idx = source.index("_collect_user_feedback")
         remediation_idx = source.index("_run_coordinator_remediation")
-        assert sim_idx < remediation_idx, (
-            "Simulation feedback must run before remediation in build()"
+        assert feedback_idx < remediation_idx, (
+            "User feedback must be collected before remediation in build()"
         )
 
-    def test_evaluate_guards_double_simulation(self):
-        """Evaluate only runs simulation when summary is empty."""
+    def test_evaluate_guards_double_collection(self):
+        """Evaluate only collects feedback when summary is empty."""
         import inspect
         from src.crewai_agents.crews import BuildMeasureLearnFlow
 
         source = inspect.getsource(BuildMeasureLearnFlow.evaluate)
-        assert "not self.state.simulation_feedback_summary" in source
+        assert "not self.state.user_feedback_summary" in source
 
     def test_feedback_injected_into_remediation(self):
-        """Remediation description includes customer friction if available."""
+        """Remediation description includes user feedback if available."""
         import inspect
         from src.crewai_agents.crews import BuildMeasureLearnFlow
 
         source = inspect.getsource(BuildMeasureLearnFlow._run_coordinator_remediation)
-        assert "CUSTOMER FRICTION POINTS" in source
-        assert "simulation_feedback_summary" in source
+        assert "USER FEEDBACK" in source
+        assert "user_feedback_summary" in source
 
-    def test_evaluate_bridge_populates_summary(self):
-        """evaluate() bridge path stores feedback summary, not just writes to DB."""
+    def test_evaluate_collects_and_stores_feedback(self):
+        """evaluate() collects and stores user feedback summary."""
         import inspect
         from src.crewai_agents.crews import BuildMeasureLearnFlow
 
         source = inspect.getsource(BuildMeasureLearnFlow.evaluate)
-        # After _write_simulation_feedback, should also collect and store
         assert "_collect_user_feedback" in source
-        assert "simulation_feedback_summary" in source
+        assert "user_feedback_summary" in source
 
 
 # ===================================================================
@@ -215,7 +213,7 @@ class TestPerIterationStateReset:
         expected_resets = [
             "self.state.qa_passed",
             "self.state.qa_result",
-            "self.state.simulation_feedback_summary",
+            "self.state.user_feedback_summary",
             "self.state.build_result_text",
             "self.state.user_feedback",
         ]

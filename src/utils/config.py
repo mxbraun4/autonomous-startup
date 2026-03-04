@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     product_model: Optional[str] = None
     developer_model: Optional[str] = None
     reviewer_model: Optional[str] = None
+    customer_model: Optional[str] = None
     anthropic_model: str = "anthropic/claude-sonnet-4-20250514"
     openai_model: str = "gpt-4o-mini"
 
@@ -38,10 +39,6 @@ class Settings(BaseSettings):
     # Database path for collected data
     startup_db_path: str = "data/collected/startups.db"
 
-    # Memory system root directory
-    # Customer simulation seed data
-    customer_seed_path: str = "data/seed/customers.json"
-    customer_hypotheses_path: str = "data/seed/customer_hypotheses.json"
     # Memory system settings
     memory_data_dir: str = "data/memory"
     generated_tools_dir: str = "data/generated_tools"

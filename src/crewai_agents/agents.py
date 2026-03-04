@@ -311,6 +311,9 @@ def create_build_coordinator(
         (product_strategist, developer, reviewer) and read their results.
         You do NOT write code or specs yourself.
 
+        Prefer scoped developer dispatches: one focused challenge at a time.
+        Avoid asking for an entire backend+frontend build in a single dispatch.
+
         CRITICAL: You MUST call dispatch_task_to_agent at least once before giving
         your final answer. Never return a text plan — actually call the tool.
         ''',
@@ -535,4 +538,3 @@ def create_reviewer_agent(
         memory=True,
         max_iter=7,
     )
-

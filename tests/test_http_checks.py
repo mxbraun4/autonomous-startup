@@ -14,24 +14,16 @@ def workspace_dir(tmp_path):
         '<html><body>'
         '<nav>'
         '<a href="index.html">Home</a>'
-        '<a href="signup.html">Sign Up</a>'
+        '<a href="founders.html">Founders</a>'
         '<a href="about.html">About</a>'  # broken link
         '</nav>'
         '<h1>Welcome</h1>'
         '</body></html>',
         encoding="utf-8",
     )
-    # signup.html with valid form
-    (tmp_path / "signup.html").write_text(
-        '<html><body>'
-        '<form action="#" method="post">'
-        '<input name="email" required>'
-        '<input name="sector" required>'
-        '<input name="stage" required>'
-        '<input name="geography" required>'
-        '<button type="submit">Submit</button>'
-        '</form>'
-        '</body></html>',
+    # founders.html
+    (tmp_path / "founders.html").write_text(
+        '<html><body><h1>Founders</h1></body></html>',
         encoding="utf-8",
     )
     return tmp_path
@@ -60,26 +52,11 @@ class TestHTTPChecks:
         result = checker.check_page_loads("/nonexistent.html")
         assert result["loaded"] is False
 
-    def test_signup_form_valid(self, served_workspace):
-        checker, _ = served_workspace
-        result = checker.check_signup_form("/signup.html")
-        assert result["page_loads"] is True
-        assert result["has_form"] is True
-        assert result["has_submit"] is True
-        assert result["fields_missing"] == []
-        assert set(result["fields_present"]) == {"email", "sector", "stage", "geography"}
-
-    def test_signup_form_missing_page(self, served_workspace):
-        checker, _ = served_workspace
-        result = checker.check_signup_form("/missing.html")
-        assert result["page_loads"] is False
-        assert result["has_form"] is False
-
     def test_navigation_links(self, served_workspace):
         checker, _ = served_workspace
         result = checker.check_navigation_links("/index.html")
-        assert result["links_found"] == 3  # index.html, signup.html, about.html
-        assert result["links_ok"] == 2     # index and signup exist
+        assert result["links_found"] == 3  # index.html, founders.html, about.html
+        assert result["links_ok"] == 2     # index and founders exist
         assert result["links_broken"] == 1  # about.html is broken
         assert "about.html" in result["broken_links"]
 
@@ -87,20 +64,5 @@ class TestHTTPChecks:
         checker, _ = served_workspace
         result = checker.run_all_checks()
         assert result["http_landing_score"] == 1.0
-        assert result["http_signup_score"] == 1.0
+        assert "http_signup_score" not in result
         assert 0.0 < result["http_navigation_score"] < 1.0  # some links broken
-
-    def test_signup_score_partial(self, served_workspace):
-        """Signup page loads but form is broken -> score 0.3."""
-        checker, ws = served_workspace
-        # Overwrite signup with a page that loads but has no form
-        (ws / "signup.html").write_text(
-            "<html><body><p>No form here</p></body></html>",
-            encoding="utf-8",
-        )
-        result = checker.check_signup_form("/signup.html")
-        assert result["page_loads"] is True
-        assert result["has_form"] is False
-        # Check score derivation
-        all_results = checker.run_all_checks()
-        assert all_results["http_signup_score"] == 0.3

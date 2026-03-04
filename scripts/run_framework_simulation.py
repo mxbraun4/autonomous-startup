@@ -119,14 +119,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--budget-seconds", type=float, default=None)
     parser.add_argument("--budget-tokens", type=int, default=None)
     parser.add_argument("--max-targets-per-cycle", type=int, default=5)
-    parser.add_argument("--use-customer-simulation", action="store_true", default=True)
-    parser.add_argument("--no-customer-simulation", dest="use_customer_simulation", action="store_false")
-    parser.add_argument("--customer-seed-path", default=None)
-    parser.add_argument("--include-visitors", action="store_true", default=False)
-    parser.add_argument("--product-events-path", default=None)
-    parser.add_argument("--product-surface-only", action="store_true", default=False)
-    parser.add_argument("--match-calibration-path", default=None)
-    parser.add_argument("--match-calibration-min-samples", type=int, default=20)
     parser.add_argument("--workspace-root", default="workspace")
     parser.add_argument("--no-workspace", dest="workspace_enabled", action="store_false", default=True)
     parser.add_argument("--log-level", default="INFO")
@@ -160,14 +152,6 @@ def create_startup_vc_run_controller(
 
     adapter = StartupVCAdapter(
         max_targets_per_cycle=args.max_targets_per_cycle,
-        use_customer_simulation=args.use_customer_simulation,
-        customer_seed_path=args.customer_seed_path,
-        include_visitors=args.include_visitors,
-        product_events_path=args.product_events_path,
-        product_surface_only=args.product_surface_only,
-        simulation_seed=args.seed,
-        match_calibration_path=args.match_calibration_path,
-        match_calibration_min_samples=args.match_calibration_min_samples,
         workspace_root=workspace_root,
     )
     domain_policies = adapter.get_domain_policies()
@@ -239,7 +223,6 @@ def main() -> None:
     print("=" * 60)
     print(f"  Iterations: {args.iterations}")
     print(f"  Autonomy level: {args.autonomy_level}")
-    print(f"  Customer simulation: {args.use_customer_simulation}")
     print(f"  Workspace: {args.workspace_root if args.workspace_enabled else 'disabled'}")
     print(f"  Mock mode: {settings.mock_mode}")
     print("=" * 60 + "\n")
