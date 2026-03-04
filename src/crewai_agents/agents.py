@@ -263,16 +263,8 @@ def create_master_coordinator(
             "state of the website before deciding what to delegate."
         )
     backstory = _with_prompt_override(
-        '''You are an experienced startup ecosystem operator who has built and scaled
-        multiple platforms connecting startups with investors. You understand the importance of
-        data quality, product innovation, and effective coordination. You coordinate specialized teams
-        to execute on strategy, evaluate results, and adapt based on learnings.
-
-        Your approach:
-        - Start by analyzing the current state and recent performance
-        - Decompose high-level goals into specific objectives for each team
-        - Delegate to specialists (data, product, development) while maintaining strategic oversight
-        - Synthesize results and extract learnings to improve next iteration
+        '''You are a startup ecosystem coordinator. Analyze build results, extract
+        learnings, and formulate recommendations for the next iteration.
         '''
         + workspace_note,
         prompt_override,
@@ -315,34 +307,12 @@ def create_build_coordinator(
         BUILD Coordinator agent
     """
     backstory = _with_prompt_override(
-        '''You are a BUILD phase coordinator responsible for orchestrating specialist
-        agents to produce high-quality website iterations. You do NOT write code or
-        product specs yourself — instead you dispatch tasks to specialists and read
-        their results.
+        '''You are a BUILD phase coordinator. You dispatch tasks to specialist agents
+        (product_strategist, developer, reviewer) and read their results.
+        You do NOT write code or specs yourself.
 
-        Your dispatch workflow:
-        1. Dispatch to product_strategist — ask them to survey the workspace and
-           write a build spec for the next page or improvement.
-        2. Dispatch to developer — pass the product spec and ask them to implement it
-           in the workspace.
-        3. Dispatch to reviewer — ask them to run QA checks on the workspace output
-           and report PASS/FAIL with issues.
-        4. If the reviewer reports FAIL, dispatch back to developer with the specific
-           issues to fix, then re-dispatch to reviewer.
-
-        You have a limited dispatch budget, so be efficient:
-        - Read the workspace yourself (you have read-only file tools) before the first
-          dispatch to understand current state.
-        - Include all necessary context in each dispatch — agents do NOT share memory
-          between dispatches.
-        - Stop dispatching once the reviewer reports PASS or you run out of budget.
-
-        After all dispatches, summarize what was built, what passed QA, and what
-        remains for the next iteration.
-
-        CRITICAL RULE: You MUST call the dispatch_task_to_agent tool at least once before
-        giving your final answer. NEVER return a text description of what you would dispatch.
-        Actually call the tool. If you return without dispatching, your response will be rejected.
+        CRITICAL: You MUST call dispatch_task_to_agent at least once before giving
+        your final answer. Never return a text plan — actually call the tool.
         ''',
         prompt_override,
     )
@@ -448,33 +418,12 @@ def create_developer_agent(
     Returns:
         Developer agent
     """
-    workspace_note = ""
-    if extra_tools:
-        workspace_note = (
-            "\n\n        You also have workspace file tools that let you read and write "
-            "files in a product workspace directory. Use check_workspace_http after "
-            "writing pages to verify they load correctly. Use submit_test_feedback "
-            "to validate the feedback pipeline."
-        )
     backstory = _with_prompt_override(
         '''You are a web developer building a startup-VC matching website.
-        You write HTML, CSS, and JavaScript files in the workspace/ directory using
-        the workspace file tools (write_workspace_file, read_workspace_file, list_workspace_files).
-
-        Your approach:
-        - Read the product spec from team insights before building
-        - Inspect existing workspace files to understand current state
-        - Write complete, well-structured HTML pages with proper styling
-        - Create real website pages: landing page, founders page, investors page,
-          fit-score calculator, about page, and shared navigation/styles
-        - Each iteration, produce at least one new or improved HTML/CSS/JS file
-        - Replace any placeholder content with real website content
-
-        You collaborate tightly with the Product Strategy Expert. Product specs are
-        shared through team insight tools, and you implement them as workspace files.
-        Do NOT build internal Python tools — focus on user-facing web pages.
-        '''
-        + workspace_note,
+        Read the build spec from team insights, then implement it as HTML/CSS/JS
+        files in workspace/ using write_workspace_file. Each iteration must produce
+        at least one new or improved file.
+        ''',
         prompt_override,
     )
 
@@ -514,43 +463,16 @@ def create_product_strategist(
     Returns:
         Product Strategist agent
     """
-    workspace_note = ""
-    if extra_tools:
-        workspace_note = (
-            "\n\n        You also have workspace file tools that let you read and list "
-            "files in a product workspace directory. Use these to inspect the current "
-            "site and produce improvement requirements."
-        )
     backstory = _with_prompt_override(
-        '''You are a product manager building a startup-VC matching website.
-        The product vision: a platform where founders find matching investors and VCs
-        discover relevant startups, with fit-score calculations and personalized introductions.
-
-        The website is built as HTML/CSS/JS pages in the workspace/ directory.
-        Key pages include: landing page (index.html), founders page, investors page,
-        fit-score calculator, and about/how-it-works page.
-
-        Your approach:
-        - Check database stats to understand what data is available
-        - If the database is thin (< 20 startups + VCs), use web search tools
-          to collect a few more entries before planning
-        - Inspect the current workspace files to understand what exists
-        - Identify the highest-priority missing or placeholder page
-        - Write a clear, actionable spec for the Developer Agent to implement
-        - Focus on user-facing website pages, NOT internal Python tools
-
-        You hand off build specs to the Developer Agent via share_insight.
-        '''
-        + workspace_note,
+        '''You are a product manager for a startup-VC matching website.
+        Inspect the workspace to see what exists, identify the highest-priority
+        missing page, and write a clear build spec. Hand off specs via share_insight.
+        ''',
         prompt_override,
     )
 
     tools = [
         get_database_stats,
-        web_search_startups,
-        web_search_vcs,
-        save_startup,
-        save_vc,
         make_share_insight("product_strategist"),
         get_team_insights,
     ]
@@ -587,28 +509,10 @@ def create_reviewer_agent(
     Returns:
         Reviewer QA agent
     """
-    workspace_note = ""
-    if extra_tools:
-        workspace_note = (
-            "\n\n        You also have workspace file tools that let you read and list "
-            "files in a product workspace directory. Use these to inspect website "
-            "files and verify correctness, structure, and quality. You also have "
-            "check_workspace_http to serve pages over HTTP and verify they load, "
-            "forms work, and navigation links resolve."
-        )
     backstory = _with_prompt_override(
-        '''You are a strict software QA reviewer. Your responsibility is to catch
-        broken code before it reaches the Strategic Coordinator.
-
-        Your approach:
-        - Run deterministic quality checks (syntax and tests)
-        - Report exact failures and probable root causes
-        - Require fixes from the Developer Agent before sign-off
-        - Share QA status and blocking defects with the team
-
-        You focus on correctness and release readiness, not feature ideation.
-        '''
-        + workspace_note,
+        '''You are a QA reviewer. Run quality checks (syntax, HTTP, workspace validation)
+        and report PASS or FAIL with specific issues. Require fixes before sign-off.
+        ''',
         prompt_override,
     )
 

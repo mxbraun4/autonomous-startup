@@ -89,53 +89,19 @@ def create_build_phase_tasks(
     """
 
     product_task = Task(
-        description=f'''[Iteration {iteration}] Define the next website page or feature to build.
+        description=f'''[Iteration {iteration}] Define the next page or feature to build.
 
-        You are building a startup-VC matching website: a platform where founders
-        find matching investors and VCs discover relevant startups, with fit-score
-        calculations and personalized introductions.
-        The website lives in the workspace/ directory as HTML/CSS/JS frontend files
-        and Python backend code (FastAPI).
+        You are building a startup-VC matching website in workspace/.
+        Assess what exists, decide what's most needed, and write a build spec.
+        Publish the spec via share_insight when ready.
 
-        Steps:
-        1. Use get_database_stats to check data coverage. If total startups + VCs < 20,
-           search for more data and save it. Required call signatures:
-           - web_search_startups(query="your search terms") — query is REQUIRED
-           - web_search_vcs(query="your search terms") — query is REQUIRED
-           - save_startup(name="Startup Name") — name is REQUIRED
-           - save_vc(name="VC Name") — name is REQUIRED
-           If coverage is already >= 20, skip this step and move on.
-        2. Use list_workspace_files to see what pages exist already
-        3. Use read_workspace_file to inspect each existing page (especially index.html)
-        4. Identify which page or feature is missing or still a placeholder
-        5. Use get_team_insights to review any prior feedback or learnings
-        6. Write a clear build spec for the Developer Agent: what page to build,
-           what sections it needs, what content/functionality to include
-        7. Use share_insight to hand off the spec to the Developer Agent
+        Target pages (build what doesn't exist yet):
+        - index.html (landing), founders.html, investors.html,
+          fit-score.html, how-it-works.html
+        - feedback.py (FeedbackDB + /api/feedback endpoint)
+        - Backend: POST /api/fit-score, POST /api/founders/profile, GET /api/matches/{{founder_id}}
 
-        The website needs these pages (prioritize what does not exist yet):
-        - Landing page (index.html) — hero, value prop, CTA for founders and investors
-        - Founders page — form/tool for founders to describe their startup and find matching VCs
-        - Investors page — directory or search for investors by sector/stage/geography
-        - Fit Score Calculator — interactive tool that scores startup-VC fit
-        - About/How It Works page — explains the matching platform
-
-        Feedback System (required on every page):
-        - Create workspace/feedback.py with a FeedbackDB class that:
-          - Creates a SQLite database (workspace/feedback.db) with a feedback table
-            (columns: id TEXT, timestamp TEXT, page TEXT, feedback_type TEXT, message TEXT)
-          - Has add_feedback(page, feedback_type, message) and get_feedback() methods
-        - Build a feedback widget on every page (floating button or footer form)
-          that POSTs to /api/feedback with JSON body:
-          {{"page": "<page_name>", "feedback_type": "bug|friction|feature_request|praise", "message": "<user message>"}}
-        - The /api/feedback endpoint stores submissions in the SQLite database
-
-        Backend API endpoints (FastAPI, prioritize after at least one HTML page exists):
-        - POST /api/fit-score — compute and return startup-VC fit score
-        - POST /api/founders/profile — submit founder profile, persist, return matches
-        - GET /api/matches/{{founder_id}} — retrieve matching VCs for a founder
-
-        Spec both user-facing frontend pages AND backend API endpoints that power them.
+        If the database has fewer than 20 startups + VCs, prioritize data collection.
         ''',
         agent=product_strategist,
         expected_output='''Product specification including:
@@ -147,37 +113,11 @@ def create_build_phase_tasks(
     )
 
     developer_task = Task(
-        description=f'''[Iteration {iteration}] Build or improve a website page in the workspace.
+        description=f'''[Iteration {iteration}] Build or improve a page in the workspace.
 
-        You are a web developer building a startup-VC matching website.
-        All output goes into the workspace/ directory as HTML/CSS/JS frontend files
-        and Python backend code.
-
-        Steps:
-        1. Use get_team_insights to read the product spec from the Product Strategy Expert.
-           The spec tells you WHICH file to build — focus on that ONE file.
-        2. If the target file already exists, use read_workspace_file to read ONLY
-           that file. Do NOT read every workspace file — focus on the one page
-           from the spec.
-        3. Use write_workspace_file to create or update the target HTML/CSS/JS file.
-           - Write complete, well-structured HTML with proper doctype, head, body
-           - Include inline CSS or a shared styles.css for consistent styling
-           - Add interactivity with JavaScript where the spec requires it
-        4. Use read_workspace_file once to verify what you wrote looks correct.
-        5. Use share_insight to report what you built and what still needs work.
-
-        EFFICIENCY: You should need at most 1 read of the target file, 1-2
-        write_workspace_file calls, and 1 verification read. Aim for under
-        10 tool calls total. The product strategist already surveyed the workspace.
-
-        IMPORTANT:
-        - Every iteration must produce at least one new or improved workspace file
-        - Write real HTML/CSS/JS for frontend AND Python (FastAPI) for backend API endpoints
-        - Write workspace/feedback.py with the FeedbackDB class alongside HTML pages
-        - Replace any placeholder content (like "Waiting for agents to build...")
-        - Pages should link to each other with consistent navigation
-        - After writing pages, use check_workspace_http to verify they load correctly
-        - Use submit_test_feedback to validate the feedback pipeline end-to-end
+        Read the product spec from team insights and implement it.
+        Write complete HTML with proper structure — replace any placeholder content.
+        Verify your work loads over HTTP, then share_insight what you built.
         ''',
         agent=developer_agent,
         context=[product_task],
@@ -193,34 +133,15 @@ def create_build_phase_tasks(
         reviewer_task = Task(
             description=f'''[Iteration {iteration}] Review the developer's workspace output for quality.
 
-        IMPORTANT: You MUST call your tools to independently verify the workspace
-        before giving any final answer. Do NOT summarize the developer's context as
-        your review — you must independently verify by reading workspace files and
-        running quality checks. A review that skips tool calls is invalid.
-
-        Step 1: Call review_workspace_files ONCE — it lists all files AND reads every
-                HTML file in one shot. Use its output for all workspace checks.
-        Step 2: Verify workspace output quality (no tool call — use data from step 1):
-           - At least one HTML file exists beyond a bare placeholder
-           - HTML files have proper structure (<!DOCTYPE html>, <head>, <body>)
-           - Pages contain real content related to startup-VC matching, not filler
-           - Navigation links between pages work (href values are correct)
-        Step 3: Call run_quality_checks_tool ONCE to check Python syntax in src/scripts/workspace.
-                Pytest is OFF by default. Only pass run_pytest=True if you know
-                Python test files exist for the code being reviewed.
-        Step 4: Call check_workspace_http ONCE to verify pages load over HTTP.
-                This starts a temporary server and checks landing page, signup form,
-                and navigation links. Report the scores in your review.
-        Step 5: Call get_team_insights ONCE to see what the developer reported building.
-        Step 6: Call share_insight ONCE to publish your QA status and any issues found.
-        Step 7: Only AFTER completing steps 1-6, report a PASS/FAIL recommendation.
-
-        Do NOT repeat tool calls. Each tool must be called EXACTLY once.
+        Independently verify the workspace — do NOT just summarize the developer's
+        context. Read files, run quality checks, and test HTTP loading yourself.
 
         PASS if: workspace has real HTML content AND Python syntax is clean
               AND pages load over HTTP (http_landing_score >= 1.0).
         FAIL if: workspace is still placeholder-only OR HTML is malformed
               OR pages fail to load over HTTP.
+
+        Publish your findings via share_insight before reporting your verdict.
         ''',
             agent=reviewer_agent,
             context=[developer_task],
@@ -255,17 +176,9 @@ def create_learn_phase_task(coordinator, build_results: str) -> Task:
         BUILD Phase Results (including QA gate):
         {build_results}
 
-        Steps:
-        1. Review what was built/done in each area (developer implementation, product strategy)
-        2. Review the QA gate results and workspace quality
-        3. Identify what worked well (keep doing)
-        4. Identify what didn't work (stop or change)
-        5. Extract specific, actionable insights for next iteration
-        6. Formulate recommendations for each team
-        7. Review real user feedback (if present in USER_FEEDBACK section) —
-           usability issues, feature requests, friction points — and factor them into recommendations
-
-        Focus on concrete, measurable insights that can drive improvement.
+        Identify what worked, what failed, and why. Extract actionable insights
+        and formulate recommendations for each team. If USER_FEEDBACK is present,
+        factor usability issues and feature requests into your recommendations.
         ''',
         agent=coordinator,
         expected_output='''Learning report including:
@@ -414,43 +327,15 @@ def _create_coordinator_build_task(
     available agent roles, explains dispatch_task usage, and appends any
     learning context from previous iterations.
     """
-    role_descriptions = {
-        "product_strategist": "Surveys the workspace and database, identifies the next page/feature to build, writes a detailed build spec.",
-        "developer": "Implements HTML/CSS/JS pages and Python backend code in the workspace based on a build spec.",
-        "reviewer": "Runs QA checks (syntax, workspace validation, HTTP checks) and reports PASS/FAIL with specific issues.",
-    }
-    roles_block = "\n".join(
-        f"  - {role}: {role_descriptions.get(role, 'Specialist agent')}"
-        for role in available_roles
-    )
-
     description = f'''[Iteration {iteration}] Orchestrate the BUILD phase for a startup-VC matching website.
 
-    PRODUCT SCOPE: A platform where founders find matching investors and VCs
-    discover relevant startups, with fit-score calculations and personalized
-    introductions. The website lives in workspace/ as HTML/CSS/JS frontend files
-    and Python backend code (FastAPI).
+    The website lives in workspace/ (HTML/CSS/JS + Python FastAPI backend).
+    Available agents: {", ".join(available_roles)}
 
-    AVAILABLE AGENTS (use dispatch_task to call them):
-{roles_block}
-
-    RECOMMENDED WORKFLOW:
-    1. Read workspace files yourself to understand current state (you have read-only tools).
-    2. Dispatch to product_strategist: "Survey the workspace and database, then write
-       a build spec for the highest-priority missing or placeholder page."
-    3. Read the product_strategist result and extract the spec.
-    4. Dispatch to developer: Include the FULL build spec in the task description.
-       The developer does NOT have access to the product_strategist's result automatically.
-    5. Dispatch to reviewer: "Run QA checks on the workspace and report PASS/FAIL
-       with specific issues."
-    6. If reviewer reports FAIL: dispatch to developer with the exact issues, then
-       re-dispatch to reviewer.
-    7. Stop when reviewer reports PASS or you exhaust your dispatch budget.
-
-    IMPORTANT:
-    - Each dispatch creates a fresh agent — pass ALL context in the task_description.
-    - Be concise but complete in dispatch descriptions.
-    - After all dispatches, summarize what was built, QA status, and remaining work.
+    Dispatch agents in whatever order you think best. A typical flow is
+    product_strategist → developer → reviewer, but adapt as needed.
+    When dispatching developer, include the FULL spec text (agents don't share memory).
+    Stop when reviewer reports PASS or you run out of budget.
     '''
 
     if extra_context:
@@ -1014,7 +899,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             logger.warning("No agent registry for remediation; skipping coordinator remediation")
             return
 
-        remediation_dispatch, _get_remediation_count = make_dispatch_task_tool(
+        remediation_dispatch, _get_remediation_count, _get_remediation_history = make_dispatch_task_tool(
             registry, self._emit, max_dispatches=4, result_truncation=1500,
             extra_context="",
         )
@@ -1098,6 +983,19 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                     if self.state.build_result_text
                     else f"[QA_REMEDIATION]\n{extra}"
                 )
+
+            # Reviewer completeness check: if developer was dispatched but
+            # reviewer was not, force a reviewer dispatch so QA is re-run.
+            remediation_roles = [h["agent_role"] for h in _get_remediation_history()]
+            if "developer" in remediation_roles and "reviewer" not in remediation_roles:
+                logger.warning("Remediation skipped reviewer; forcing reviewer dispatch")
+                try:
+                    remediation_dispatch.run(
+                        agent_role="reviewer",
+                        task_description="Developer applied fixes. Run QA checks and report PASS/FAIL.",
+                    )
+                except Exception as rev_exc:
+                    logger.warning("Forced reviewer dispatch failed: %s", rev_exc)
         except Exception as exc:
             logger.warning(f"Coordinator remediation failed: {exc}")
 
@@ -1161,7 +1059,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
 
         # Create dispatch tool and coordinator
         max_dispatches = int(self.state.active_policies.get("max_total_delegated_tasks", 8))
-        dispatch_tool, _get_dispatch_count = make_dispatch_task_tool(
+        dispatch_tool, _get_dispatch_count, _get_dispatch_history = make_dispatch_task_tool(
             agent_registry, self._emit, max_dispatches=max_dispatches, result_truncation=1500,
             extra_context=extra_context,
         )

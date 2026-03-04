@@ -61,7 +61,7 @@ def test_unknown_role_rejected():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count = make_dispatch_task_tool(registry, emit)
+    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit)
 
     result = json.loads(dispatch.run(agent_role="nonexistent", task_description="do something"))
     assert result["status"] == "rejected"
@@ -90,7 +90,7 @@ def test_max_dispatches_enforced():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count = make_dispatch_task_tool(registry, emit, max_dispatches=2)
+    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=2)
 
     crew_p, task_p, proc_p, mock_output = _crew_patches()
 
@@ -120,7 +120,7 @@ def test_events_emitted_for_dispatch_and_result():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count = make_dispatch_task_tool(registry, emit, max_dispatches=3)
+    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3)
 
     mock_crew_output = MagicMock()
     mock_crew_output.__str__ = lambda self: "agent result text"
@@ -153,7 +153,7 @@ def test_result_truncation():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count = make_dispatch_task_tool(registry, emit, max_dispatches=3, result_truncation=50)
+    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3, result_truncation=50)
 
     long_output = "x" * 200
     mock_crew_output = MagicMock()
@@ -176,7 +176,7 @@ def test_dispatch_history_accumulates():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count = make_dispatch_task_tool(registry, emit, max_dispatches=5)
+    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=5)
 
     mock_crew_output = MagicMock()
     mock_crew_output.__str__ = lambda self: "result"
@@ -200,21 +200,22 @@ def test_dispatch_history_accumulates():
 
 
 def test_crew_exception_returns_error():
-    """When the inner crew raises, the dispatch returns an error message."""
+    """When the inner crew raises, the dispatch returns an error message (after retry)."""
     _require_crewai()
     from src.crewai_agents.tools import make_dispatch_task_tool
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count = make_dispatch_task_tool(registry, emit, max_dispatches=3)
+    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3)
 
     crew_p, task_p, proc_p, _ = _crew_patches()
-    with crew_p as MockCrew, task_p, proc_p:
+    with crew_p as MockCrew, task_p, proc_p, \
+         patch("src.crewai_agents.tools.time"):
         MockCrew.return_value.kickoff.side_effect = RuntimeError("LLM timeout")
         result = json.loads(dispatch.run(agent_role="developer", task_description="task"))
 
     assert result["status"] == "success"  # dispatch itself succeeded
-    assert "[dispatch error]" in result["result"]
+    assert "[dispatch error after retry]" in result["result"]
     assert "LLM timeout" in result["result"]
 
 
@@ -225,8 +226,8 @@ def test_separate_factory_calls_have_independent_state():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch_a, _get_count_a = make_dispatch_task_tool(registry, emit, max_dispatches=2)
-    dispatch_b, _get_count_b = make_dispatch_task_tool(registry, emit, max_dispatches=2)
+    dispatch_a, _get_count_a, _get_history_a = make_dispatch_task_tool(registry, emit, max_dispatches=2)
+    dispatch_b, _get_count_b, _get_history_b = make_dispatch_task_tool(registry, emit, max_dispatches=2)
 
     mock_crew_output = MagicMock()
     mock_crew_output.__str__ = lambda self: "result"
@@ -251,7 +252,7 @@ def test_dispatch_result_written_to_consensus_memory():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count = make_dispatch_task_tool(registry, emit, max_dispatches=3)
+    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3)
 
     mock_crew_output = MagicMock()
     mock_crew_output.__str__ = lambda self: "developer built the page"
@@ -277,7 +278,7 @@ def test_extra_context_prepended_to_dispatch():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count = make_dispatch_task_tool(
+    dispatch, _get_count, _get_history = make_dispatch_task_tool(
         registry, emit, max_dispatches=3,
         extra_context="[learning hint] fix navigation links",
     )
@@ -297,3 +298,124 @@ def test_extra_context_prepended_to_dispatch():
     assert "get_team_insights" in description
     assert "[learning hint] fix navigation links" in description
     assert "build page" in description
+
+
+# ---------------------------------------------------------------------------
+# New tests: retry, role instructions, history accessor
+# ---------------------------------------------------------------------------
+
+
+def test_retry_success_on_first_failure():
+    """When kickoff raises once, retry succeeds and result is returned."""
+    _require_crewai()
+    from src.crewai_agents.tools import make_dispatch_task_tool
+
+    registry = _make_registry()
+    emit = MagicMock()
+    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3)
+
+    mock_retry_output = MagicMock()
+    mock_retry_output.__str__ = lambda self: "retry succeeded"
+
+    crew_p, task_p, proc_p, _ = _crew_patches()
+    with crew_p as MockCrew, task_p, proc_p, \
+         patch("src.crewai_agents.tools._share_insight_impl"), \
+         patch("src.crewai_agents.tools.time") as mock_time:
+        # First kickoff raises, second (retry) succeeds
+        MockCrew.return_value.kickoff.side_effect = [
+            RuntimeError("BadRequestError"),
+            mock_retry_output,
+        ]
+        result = json.loads(dispatch.run(agent_role="developer", task_description="build"))
+
+    assert result["status"] == "success"
+    assert "retry succeeded" in result["result"]
+    # Budget slot consumed only once
+    assert _get_count() == 1
+    mock_time.sleep.assert_called_once_with(2)
+
+
+def test_retry_both_fail():
+    """When both kickoff and retry fail, error message includes 'after retry'."""
+    _require_crewai()
+    from src.crewai_agents.tools import make_dispatch_task_tool
+
+    registry = _make_registry()
+    emit = MagicMock()
+    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3)
+
+    crew_p, task_p, proc_p, _ = _crew_patches()
+    with crew_p as MockCrew, task_p, proc_p, \
+         patch("src.crewai_agents.tools._share_insight_impl"), \
+         patch("src.crewai_agents.tools.time"):
+        MockCrew.return_value.kickoff.side_effect = RuntimeError("persistent error")
+        result = json.loads(dispatch.run(agent_role="developer", task_description="build"))
+
+    assert result["status"] == "success"
+    assert "[dispatch error after retry]" in result["result"]
+    assert "persistent error" in result["result"]
+    assert _get_count() == 1
+
+
+def test_role_instructions_injected():
+    """Developer and reviewer dispatches include TOOL INSTRUCTIONS in the task description."""
+    _require_crewai()
+    from src.crewai_agents.tools import make_dispatch_task_tool
+
+    registry = _make_registry()
+    emit = MagicMock()
+    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=5)
+
+    mock_crew_output = MagicMock()
+    mock_crew_output.__str__ = lambda self: "done"
+
+    crew_p, task_p, proc_p, _ = _crew_patches()
+    with crew_p as MockCrew, task_p as MockTask, proc_p, \
+         patch("src.crewai_agents.tools._share_insight_impl"):
+        MockCrew.return_value.kickoff.return_value = mock_crew_output
+
+        # Dispatch to developer
+        dispatch.run(agent_role="developer", task_description="build page")
+        dev_call = MockTask.call_args
+        dev_desc = dev_call[1].get("description", dev_call[0][0] if dev_call[0] else "")
+        assert "TOOL INSTRUCTIONS" in dev_desc
+        assert "write_workspace_file" in dev_desc
+
+        # Dispatch to reviewer
+        dispatch.run(agent_role="reviewer", task_description="review page")
+        rev_call = MockTask.call_args
+        rev_desc = rev_call[1].get("description", rev_call[0][0] if rev_call[0] else "")
+        assert "TOOL INSTRUCTIONS" in rev_desc
+        assert "review_workspace_files" in rev_desc
+
+
+def test_history_accessor_returns_dispatch_history():
+    """The _get_dispatch_history accessor returns independent copy of history list."""
+    _require_crewai()
+    from src.crewai_agents.tools import make_dispatch_task_tool
+
+    registry = _make_registry()
+    emit = MagicMock()
+    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=5)
+
+    # Before any dispatch, history is empty
+    assert _get_history() == []
+
+    mock_crew_output = MagicMock()
+    mock_crew_output.__str__ = lambda self: "result"
+
+    crew_p, task_p, proc_p, _ = _crew_patches()
+    with crew_p as MockCrew, task_p, proc_p, \
+         patch("src.crewai_agents.tools._share_insight_impl"):
+        MockCrew.return_value.kickoff.return_value = mock_crew_output
+
+        dispatch.run(agent_role="developer", task_description="task 1")
+        dispatch.run(agent_role="reviewer", task_description="task 2")
+
+    history = _get_history()
+    assert len(history) == 2
+    assert history[0]["agent_role"] == "developer"
+    assert history[1]["agent_role"] == "reviewer"
+    # Verify it's a copy (mutating doesn't affect internal state)
+    history.clear()
+    assert len(_get_history()) == 2
