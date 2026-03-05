@@ -1168,7 +1168,7 @@ def make_dispatch_task_tool(
     result_truncation: int = 1500,
     extra_context: str = "",
 ):
-    """Factory that returns a ``dispatch_task`` @tool for the BUILD coordinator.
+    """Factory that returns dispatch tools for the BUILD coordinator.
 
     Args:
         agent_registry: Maps ``role_name`` to
@@ -1180,7 +1180,7 @@ def make_dispatch_task_tool(
             episodic memory, consensus board) to inject into every dispatch.
 
     Returns:
-        A CrewAI ``@tool`` function the coordinator can invoke.
+        Tuple of (dispatch_task tool, dispatch_parallel tool, get_count, get_history).
     """
     _dispatch_count = [0]
     _dispatch_history: List[Dict[str, Any]] = []
@@ -1208,41 +1208,20 @@ def make_dispatch_task_tool(
         ),
     }
 
-    @tool("Dispatch Task to Agent")
-    def dispatch_task(agent_role: str, task_description: str) -> str:
-        """Dispatch a task to a specialist agent and return its result.
+    # ------------------------------------------------------------------
+    # Core single-dispatch helper (shared by sequential and parallel tools)
+    # ------------------------------------------------------------------
+    def _execute_single_dispatch(agent_role: str, task_description: str, dispatch_number: int) -> Dict[str, Any]:
+        """Run one agent dispatch and return a result dict.
 
-        Args:
-            agent_role: Role key of the target agent (e.g. "product_strategist", "developer", "reviewer")
-            task_description: Full description of the task to execute
+        This is the extracted core logic used by both ``dispatch_task`` and
+        ``dispatch_parallel``.  It creates the agent, builds a mini-crew,
+        executes with retry, shares to consensus memory, and emits events.
 
         Returns:
-            JSON with status, result text, truncation flag, remaining budget, and dispatch history
+            Dict with keys: status, agent_role, result, truncated, dispatch_number.
         """
-        # Lazy imports to avoid circular dependency
         from crewai import Crew as _Crew, Task as _Task, Process as _Process
-
-        available_roles = sorted(agent_registry.keys())
-
-        # Guard: unknown role
-        if agent_role not in agent_registry:
-            return json.dumps({
-                "status": "rejected",
-                "reason": f"Unknown agent_role '{agent_role}'",
-                "available_roles": available_roles,
-            }, indent=2)
-
-        # Guard: budget exhausted
-        if _dispatch_count[0] >= max_dispatches:
-            return json.dumps({
-                "status": "rejected",
-                "reason": f"Max dispatches reached ({max_dispatches})",
-                "dispatches_used": _dispatch_count[0],
-                "dispatch_history": _dispatch_history,
-            }, indent=2)
-
-        _dispatch_count[0] += 1
-        remaining = max_dispatches - _dispatch_count[0]
 
         # Emit dispatch event
         try:
@@ -1251,13 +1230,12 @@ def make_dispatch_task_tool(
                 "from_agent": "BUILD Coordinator",
                 "to_agent": agent_role,
                 "task_summary": task_description[:200],
-                "dispatch_number": _dispatch_count[0],
+                "dispatch_number": dispatch_number,
             })
         except Exception:
             pass
 
-        # Prepend standing instructions + extra_context so dispatched agents
-        # discover prior results via consensus memory and see learning feedback.
+        # Prepend standing instructions + extra_context
         original_task_description = task_description
         preamble = (
             "IMPORTANT: Before starting, call get_team_insights to read shared context "
@@ -1324,15 +1302,13 @@ def make_dispatch_task_tool(
         truncated = len(result_text) > result_truncation
         result_text = result_text[:result_truncation]
 
-        # Auto-share dispatch result to consensus memory so subsequent
-        # agents can discover it via get_team_insights(topic="dispatch").
-        # Truncate to 500 chars for consensus to avoid prompt bloat.
+        # Auto-share dispatch result to consensus memory
         try:
             consensus_value = result_text[:500]
             if len(result_text) > 500:
                 consensus_value += "\n\n[Full result available in workspace files]"
             _share_insight_impl(
-                key=f"dispatch.{agent_role}.{_dispatch_count[0]}",
+                key=f"dispatch.{agent_role}.{dispatch_number}",
                 value=consensus_value,
                 evidence=original_task_description[:300],
                 source_agent=agent_role,
@@ -1340,9 +1316,9 @@ def make_dispatch_task_tool(
         except Exception:
             pass  # non-blocking; memory store may not be initialised
 
-        # Record in history (use original description so summaries are useful)
+        # Record in history
         _dispatch_history.append({
-            "dispatch_number": _dispatch_count[0],
+            "dispatch_number": dispatch_number,
             "agent_role": agent_role,
             "task_summary": original_task_description[:120],
             "result_snippet": result_text[:200],
@@ -1356,34 +1332,186 @@ def make_dispatch_task_tool(
                 "from_agent": agent_role,
                 "to_agent": "BUILD Coordinator",
                 "result_snippet": result_text[:200],
-                "dispatch_number": _dispatch_count[0],
+                "dispatch_number": dispatch_number,
                 "truncated": truncated,
             })
         except Exception:
             pass
 
-        return json.dumps({
+        return {
             "status": "success",
             "agent_role": agent_role,
             "result": result_text,
             "truncated": truncated,
+            "dispatch_number": dispatch_number,
+        }
+
+    # ------------------------------------------------------------------
+    # Sequential dispatch tool (existing behaviour, refactored)
+    # ------------------------------------------------------------------
+    @tool("Dispatch Task to Agent")
+    def dispatch_task(agent_role: str, task_description: str) -> str:
+        """Dispatch a task to a specialist agent and return its result.
+
+        Args:
+            agent_role: Role key of the target agent (e.g. "product_strategist", "developer", "reviewer")
+            task_description: Full description of the task to execute
+
+        Returns:
+            JSON with status, result text, truncation flag, remaining budget, and dispatch history
+        """
+        available_roles = sorted(agent_registry.keys())
+
+        # Guard: unknown role
+        if agent_role not in agent_registry:
+            return json.dumps({
+                "status": "rejected",
+                "reason": f"Unknown agent_role '{agent_role}'",
+                "available_roles": available_roles,
+            }, indent=2)
+
+        # Guard: budget exhausted
+        if _dispatch_count[0] >= max_dispatches:
+            return json.dumps({
+                "status": "rejected",
+                "reason": f"Max dispatches reached ({max_dispatches})",
+                "dispatches_used": _dispatch_count[0],
+                "dispatch_history": _dispatch_history,
+            }, indent=2)
+
+        _dispatch_count[0] += 1
+        remaining = max_dispatches - _dispatch_count[0]
+
+        result = _execute_single_dispatch(agent_role, task_description, _dispatch_count[0])
+
+        result["dispatches_remaining"] = remaining
+        result["dispatch_history"] = _dispatch_history
+        return json.dumps(result, indent=2)
+
+    dispatch_task.cache_function = _NO_CACHE
+
+    # ------------------------------------------------------------------
+    # Parallel dispatch tool (new)
+    # ------------------------------------------------------------------
+    @tool("Dispatch Parallel Tasks")
+    def dispatch_parallel(
+        agent_role_1: str,
+        task_description_1: str,
+        agent_role_2: str,
+        task_description_2: str,
+        agent_role_3: str = "",
+        task_description_3: str = "",
+    ) -> str:
+        """Dispatch 2 or 3 tasks to agents in parallel. All run concurrently.
+
+        Use this when you have independent tasks that can run simultaneously,
+        e.g. two developers building separate pages. For dependent work
+        (reviewer after developer), use dispatch_task_to_agent sequentially.
+        IMPORTANT: assign non-overlapping files to each parallel developer.
+
+        Args:
+            agent_role_1: Role for first task (e.g. "developer")
+            task_description_1: Description for first task
+            agent_role_2: Role for second task (e.g. "developer")
+            task_description_2: Description for second task
+            agent_role_3: Role for optional third task (leave empty to skip)
+            task_description_3: Description for optional third task
+
+        Returns:
+            JSON with status and results array from all dispatched agents.
+        """
+        import concurrent.futures
+
+        # Build task list from positional parameters
+        tasks = [
+            {"agent_role": agent_role_1, "task_description": task_description_1},
+            {"agent_role": agent_role_2, "task_description": task_description_2},
+        ]
+        if agent_role_3 and task_description_3:
+            tasks.append({"agent_role": agent_role_3, "task_description": task_description_3})
+
+        available_roles = sorted(agent_registry.keys())
+
+        # Validate all roles upfront
+        for t in tasks:
+            role = t["agent_role"]
+            if role not in agent_registry:
+                return json.dumps({
+                    "status": "rejected",
+                    "reason": f"Unknown agent_role '{role}'",
+                    "available_roles": available_roles,
+                }, indent=2)
+
+        # Guard: budget check for entire batch
+        needed = len(tasks)
+        if _dispatch_count[0] + needed > max_dispatches:
+            return json.dumps({
+                "status": "rejected",
+                "reason": f"Not enough budget: need {needed} dispatches but only {max_dispatches - _dispatch_count[0]} remaining",
+                "dispatches_used": _dispatch_count[0],
+                "max_dispatches": max_dispatches,
+            }, indent=2)
+
+        # Reserve dispatch numbers upfront
+        dispatch_numbers = []
+        for _ in tasks:
+            _dispatch_count[0] += 1
+            dispatch_numbers.append(_dispatch_count[0])
+
+        remaining = max_dispatches - _dispatch_count[0]
+
+        # Run all dispatches in parallel
+        results = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+            future_to_idx = {}
+            for idx, t in enumerate(tasks):
+                future = executor.submit(
+                    _execute_single_dispatch,
+                    t["agent_role"],
+                    t["task_description"],
+                    dispatch_numbers[idx],
+                )
+                future_to_idx[future] = idx
+
+            for future in concurrent.futures.as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    result = {
+                        "status": "error",
+                        "agent_role": tasks[idx]["agent_role"],
+                        "result": f"[parallel dispatch error] {exc}",
+                        "truncated": False,
+                        "dispatch_number": dispatch_numbers[idx],
+                    }
+                results.append((idx, result))
+
+        # Sort by original order
+        results.sort(key=lambda x: x[0])
+        ordered_results = [r for _, r in results]
+
+        return json.dumps({
+            "status": "success",
+            "parallel_count": len(tasks),
+            "results": ordered_results,
             "dispatches_remaining": remaining,
             "dispatch_history": _dispatch_history,
         }, indent=2)
 
-    dispatch_task.cache_function = _NO_CACHE
+    dispatch_parallel.cache_function = _NO_CACHE
 
     # Expose dispatch count and history so callers can detect zero-dispatch runs
     # and check completeness (e.g. reviewer was dispatched after developer).
     # CrewAI tools are Pydantic models that reject arbitrary attributes,
-    # so we return a (tool, get_count, get_history) tuple instead.
+    # so we return a (tool, parallel_tool, get_count, get_history) tuple instead.
     def _get_dispatch_count() -> int:
         return _dispatch_count[0]
 
     def _get_dispatch_history() -> List[Dict[str, Any]]:
         return list(_dispatch_history)
 
-    return dispatch_task, _get_dispatch_count, _get_dispatch_history
+    return dispatch_task, dispatch_parallel, _get_dispatch_count, _get_dispatch_history
 
 
 # ---------------------------------------------------------------------------
