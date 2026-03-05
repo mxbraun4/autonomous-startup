@@ -196,7 +196,50 @@ def _openrouter_model_for_role(role: Optional[str]) -> str:
     return ""
 
 
+_registered_models: set = set()
+
+
+def _ensure_litellm_model_info(model: str) -> None:
+    """Register model capabilities with LiteLLM if not already known.
+
+    LiteLLM's model registry may not include every OpenRouter variant (e.g.
+    ``openrouter/qwen/qwen3-coder-next``).  When a model is unknown, CrewAI
+    falls back to ReAct text parsing instead of native function calling,
+    which causes frequent JSON formatting errors from smaller LLMs.
+
+    This registers the model as supporting function calling so CrewAI uses
+    the native tool-call API path.
+    """
+    if model in _registered_models:
+        return
+    _registered_models.add(model)
+
+    try:
+        import litellm
+        litellm.get_model_info(model)
+        return  # Already known
+    except Exception:
+        pass
+
+    try:
+        import litellm
+        # Infer provider from model string (e.g. "openrouter/qwen/..." -> "openrouter")
+        provider = model.split("/")[0] if "/" in model else ""
+        litellm.register_model({
+            model: {
+                "mode": "chat",
+                "supports_function_calling": True,
+                "supports_tool_choice": True,
+                "litellm_provider": provider,
+            },
+        })
+        logger.info("Registered %s with litellm (function calling enabled)", model)
+    except Exception:
+        pass  # non-critical; will fall back to ReAct
+
+
 def _build_openrouter_llm(model: str) -> LLM:
+    _ensure_litellm_model_info(model)
     return LLM(
         model=model,
         api_key=settings.openrouter_api_key,
@@ -311,11 +354,10 @@ def create_build_coordinator(
         (product_strategist, developer, reviewer) and read their results.
         You do NOT write code or specs yourself.
 
-        Prefer scoped developer dispatches: one focused challenge at a time.
-        Avoid asking for an entire backend+frontend build in a single dispatch.
-
-        CRITICAL: You MUST call dispatch_task_to_agent at least once before giving
-        your final answer. Never return a text plan — actually call the tool.
+        You have two dispatch tools:
+        - dispatch_task_to_agent: dispatch one task at a time (sequential)
+        - dispatch_parallel_tasks: dispatch multiple independent tasks concurrently
+        Use whichever approach best fits the situation.
         ''',
         prompt_override,
     )

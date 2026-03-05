@@ -61,7 +61,7 @@ def test_unknown_role_rejected():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit)
+    dispatch, _parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit)
 
     result = json.loads(dispatch.run(agent_role="nonexistent", task_description="do something"))
     assert result["status"] == "rejected"
@@ -90,7 +90,7 @@ def test_max_dispatches_enforced():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=2)
+    dispatch, _parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=2)
 
     crew_p, task_p, proc_p, mock_output = _crew_patches()
 
@@ -120,7 +120,7 @@ def test_events_emitted_for_dispatch_and_result():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3)
+    dispatch, _parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3)
 
     mock_crew_output = MagicMock()
     mock_crew_output.__str__ = lambda self: "agent result text"
@@ -153,7 +153,7 @@ def test_result_truncation():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3, result_truncation=50)
+    dispatch, _parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3, result_truncation=50)
 
     long_output = "x" * 200
     mock_crew_output = MagicMock()
@@ -176,7 +176,7 @@ def test_dispatch_history_accumulates():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=5)
+    dispatch, _parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=5)
 
     mock_crew_output = MagicMock()
     mock_crew_output.__str__ = lambda self: "result"
@@ -206,7 +206,7 @@ def test_crew_exception_returns_error():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3)
+    dispatch, _parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3)
 
     crew_p, task_p, proc_p, _ = _crew_patches()
     with crew_p as MockCrew, task_p, proc_p, \
@@ -226,8 +226,8 @@ def test_separate_factory_calls_have_independent_state():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch_a, _get_count_a, _get_history_a = make_dispatch_task_tool(registry, emit, max_dispatches=2)
-    dispatch_b, _get_count_b, _get_history_b = make_dispatch_task_tool(registry, emit, max_dispatches=2)
+    dispatch_a, _pa, _get_count_a, _get_history_a = make_dispatch_task_tool(registry, emit, max_dispatches=2)
+    dispatch_b, _pb, _get_count_b, _get_history_b = make_dispatch_task_tool(registry, emit, max_dispatches=2)
 
     mock_crew_output = MagicMock()
     mock_crew_output.__str__ = lambda self: "result"
@@ -252,7 +252,7 @@ def test_dispatch_result_written_to_consensus_memory():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3)
+    dispatch, _parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3)
 
     mock_crew_output = MagicMock()
     mock_crew_output.__str__ = lambda self: "developer built the page"
@@ -278,7 +278,7 @@ def test_extra_context_prepended_to_dispatch():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count, _get_history = make_dispatch_task_tool(
+    dispatch, _parallel, _get_count, _get_history = make_dispatch_task_tool(
         registry, emit, max_dispatches=3,
         extra_context="[learning hint] fix navigation links",
     )
@@ -312,7 +312,7 @@ def test_retry_success_on_first_failure():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3)
+    dispatch, _parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3)
 
     mock_retry_output = MagicMock()
     mock_retry_output.__str__ = lambda self: "retry succeeded"
@@ -342,7 +342,7 @@ def test_retry_both_fail():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3)
+    dispatch, _parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3)
 
     crew_p, task_p, proc_p, _ = _crew_patches()
     with crew_p as MockCrew, task_p, proc_p, \
@@ -364,7 +364,7 @@ def test_role_instructions_injected():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=5)
+    dispatch, _parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=5)
 
     mock_crew_output = MagicMock()
     mock_crew_output.__str__ = lambda self: "done"
@@ -396,7 +396,7 @@ def test_history_accessor_returns_dispatch_history():
 
     registry = _make_registry()
     emit = MagicMock()
-    dispatch, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=5)
+    dispatch, _parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=5)
 
     # Before any dispatch, history is empty
     assert _get_history() == []
@@ -419,3 +419,213 @@ def test_history_accessor_returns_dispatch_history():
     # Verify it's a copy (mutating doesn't affect internal state)
     history.clear()
     assert len(_get_history()) == 2
+
+
+# ---------------------------------------------------------------------------
+# Parallel dispatch tests
+# ---------------------------------------------------------------------------
+
+
+def test_parallel_dispatch_two_developers():
+    """dispatch_parallel runs two developer tasks concurrently and returns aggregated results."""
+    _require_crewai()
+    from src.crewai_agents.tools import make_dispatch_task_tool
+
+    registry = _make_registry()
+    emit = MagicMock()
+    _dispatch, parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=5)
+
+    mock_crew_output = MagicMock()
+    mock_crew_output.__str__ = lambda self: "page built"
+
+    crew_p, task_p, proc_p, _ = _crew_patches()
+    with crew_p as MockCrew, task_p, proc_p, \
+         patch("src.crewai_agents.tools._share_insight_impl"):
+        MockCrew.return_value.kickoff.return_value = mock_crew_output
+
+        result = json.loads(parallel.run(
+            agent_role_1="developer", task_description_1="Build page A",
+            agent_role_2="developer", task_description_2="Build page B",
+        ))
+
+    assert result["status"] == "success"
+    assert result["parallel_count"] == 2
+    assert len(result["results"]) == 2
+    assert all(r["status"] == "success" for r in result["results"])
+    assert all(r["agent_role"] == "developer" for r in result["results"])
+    assert result["dispatches_remaining"] == 3
+    assert _get_count() == 2
+    assert len(_get_history()) == 2
+
+
+def test_parallel_dispatch_three_tasks():
+    """dispatch_parallel runs three tasks when the optional third slot is used."""
+    _require_crewai()
+    from src.crewai_agents.tools import make_dispatch_task_tool
+
+    registry = _make_registry()
+    emit = MagicMock()
+    _dispatch, parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=5)
+
+    mock_crew_output = MagicMock()
+    mock_crew_output.__str__ = lambda self: "done"
+
+    crew_p, task_p, proc_p, _ = _crew_patches()
+    with crew_p as MockCrew, task_p, proc_p, \
+         patch("src.crewai_agents.tools._share_insight_impl"):
+        MockCrew.return_value.kickoff.return_value = mock_crew_output
+
+        result = json.loads(parallel.run(
+            agent_role_1="developer", task_description_1="Build page A",
+            agent_role_2="developer", task_description_2="Build page B",
+            agent_role_3="developer", task_description_3="Build page C",
+        ))
+
+    assert result["status"] == "success"
+    assert result["parallel_count"] == 3
+    assert len(result["results"]) == 3
+    assert result["dispatches_remaining"] == 2
+    assert _get_count() == 3
+
+
+def test_parallel_dispatch_third_slot_skipped():
+    """When agent_role_3 is empty, only two tasks are dispatched."""
+    _require_crewai()
+    from src.crewai_agents.tools import make_dispatch_task_tool
+
+    registry = _make_registry()
+    emit = MagicMock()
+    _dispatch, parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=5)
+
+    mock_crew_output = MagicMock()
+    mock_crew_output.__str__ = lambda self: "done"
+
+    crew_p, task_p, proc_p, _ = _crew_patches()
+    with crew_p as MockCrew, task_p, proc_p, \
+         patch("src.crewai_agents.tools._share_insight_impl"):
+        MockCrew.return_value.kickoff.return_value = mock_crew_output
+
+        result = json.loads(parallel.run(
+            agent_role_1="developer", task_description_1="Build page A",
+            agent_role_2="developer", task_description_2="Build page B",
+            agent_role_3="", task_description_3="",
+        ))
+
+    assert result["parallel_count"] == 2
+    assert _get_count() == 2
+
+
+def test_parallel_dispatch_budget_enforcement():
+    """dispatch_parallel rejects batch when budget is insufficient."""
+    _require_crewai()
+    from src.crewai_agents.tools import make_dispatch_task_tool
+
+    registry = _make_registry()
+    emit = MagicMock()
+    _dispatch, parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=1)
+
+    result = json.loads(parallel.run(
+        agent_role_1="developer", task_description_1="Build page A",
+        agent_role_2="developer", task_description_2="Build page B",
+    ))
+
+    assert result["status"] == "rejected"
+    assert "Not enough budget" in result["reason"]
+    # No dispatches should have been consumed
+    assert _get_count() == 0
+
+
+def test_parallel_dispatch_invalid_role_rejected():
+    """dispatch_parallel rejects entire batch if any role is unknown."""
+    _require_crewai()
+    from src.crewai_agents.tools import make_dispatch_task_tool
+
+    registry = _make_registry()
+    emit = MagicMock()
+    _dispatch, parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=5)
+
+    result = json.loads(parallel.run(
+        agent_role_1="developer", task_description_1="Build page A",
+        agent_role_2="nonexistent", task_description_2="Do something",
+    ))
+
+    assert result["status"] == "rejected"
+    assert "nonexistent" in result["reason"]
+    assert _get_count() == 0
+
+
+def test_parallel_dispatch_one_task_fails():
+    """When one parallel task fails, others still succeed and results are aggregated."""
+    _require_crewai()
+    from src.crewai_agents.tools import make_dispatch_task_tool
+
+    registry = _make_registry()
+    emit = MagicMock()
+    _dispatch, parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=5)
+
+    call_count = [0]
+    mock_success = MagicMock()
+    mock_success.__str__ = lambda self: "built page"
+
+    def _kickoff_side_effect():
+        call_count[0] += 1
+        if call_count[0] <= 2:
+            # First crew kickoff fails, retry also fails (for first task)
+            raise RuntimeError("LLM timeout")
+        return mock_success
+
+    crew_p, task_p, proc_p, _ = _crew_patches()
+    with crew_p as MockCrew, task_p, proc_p, \
+         patch("src.crewai_agents.tools._share_insight_impl"), \
+         patch("src.crewai_agents.tools.time"):
+        MockCrew.return_value.kickoff.side_effect = _kickoff_side_effect
+
+        result = json.loads(parallel.run(
+            agent_role_1="developer", task_description_1="Build page A",
+            agent_role_2="developer", task_description_2="Build page B",
+        ))
+
+    assert result["status"] == "success"
+    assert result["parallel_count"] == 2
+    # Both complete (one with error text, one with success)
+    assert len(result["results"]) == 2
+    assert _get_count() == 2
+
+
+def test_parallel_and_sequential_share_budget():
+    """Sequential and parallel dispatches share the same budget counter."""
+    _require_crewai()
+    from src.crewai_agents.tools import make_dispatch_task_tool
+
+    registry = _make_registry()
+    emit = MagicMock()
+    dispatch, parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=4)
+
+    mock_crew_output = MagicMock()
+    mock_crew_output.__str__ = lambda self: "done"
+
+    crew_p, task_p, proc_p, _ = _crew_patches()
+    with crew_p as MockCrew, task_p, proc_p, \
+         patch("src.crewai_agents.tools._share_insight_impl"):
+        MockCrew.return_value.kickoff.return_value = mock_crew_output
+
+        # Use 1 sequential dispatch
+        r1 = json.loads(dispatch.run(agent_role="product_strategist", task_description="spec"))
+        assert r1["dispatches_remaining"] == 3
+
+        # Use 2 parallel dispatches
+        r2 = json.loads(parallel.run(
+            agent_role_1="developer", task_description_1="Build A",
+            agent_role_2="developer", task_description_2="Build B",
+        ))
+        assert r2["dispatches_remaining"] == 1
+
+    assert _get_count() == 3
+
+    # Only 1 remaining — trying to parallel dispatch 2 should fail
+    r3 = json.loads(parallel.run(
+        agent_role_1="reviewer", task_description_1="Review A",
+        agent_role_2="reviewer", task_description_2="Review B",
+    ))
+    assert r3["status"] == "rejected"
+    assert "Not enough budget" in r3["reason"]

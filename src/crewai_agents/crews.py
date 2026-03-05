@@ -116,7 +116,7 @@ def create_build_phase_tasks(
         description=f'''[Iteration {iteration}] Build or improve a page in the workspace.
 
         Read the product spec from team insights and implement it.
-        Write complete HTML with proper structure â€” replace any placeholder content.
+        Write complete HTML with proper structure — replace any placeholder content.
         Verify your work loads over HTTP, then share_insight what you built.
         ''',
         agent=developer_agent,
@@ -133,7 +133,7 @@ def create_build_phase_tasks(
         reviewer_task = Task(
             description=f'''[Iteration {iteration}] Review the developer's workspace output for quality.
 
-        Independently verify the workspace â€” do NOT just summarize the developer's
+        Independently verify the workspace — do NOT just summarize the developer's
         context. Read files, run quality checks, and test HTTP loading yourself.
 
         PASS if: workspace has real HTML content AND Python syntax is clean
@@ -332,11 +332,12 @@ def _create_coordinator_build_task(
     The website lives in workspace/ (HTML/CSS/JS + Python FastAPI backend).
     Available agents: {", ".join(available_roles)}
 
-    Dispatch agents in whatever order you think best. A typical flow is
-    product_strategist -> developer -> reviewer, but adapt as needed.
-    Keep developer requests scoped to one focused challenge at a time.
-    Avoid full backend+frontend mega-requests in a single dispatch.
-    Stop when reviewer reports PASS or you run out of budget.
+    You have two dispatch tools:
+    - dispatch_task_to_agent: dispatch one task at a time
+    - dispatch_parallel_tasks: dispatch multiple independent tasks concurrently
+
+    Decide the best strategy: which agents to dispatch, in what order, and
+    whether to run tasks in parallel or sequentially.
     '''
 
     if extra_context:
@@ -474,8 +475,8 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
 
         Checks:
         1. Python syntax on src/ and scripts/ (fast, catches real bugs)
-        2. Workspace validation â€” at least one non-placeholder HTML file exists
-        Skips pytest entirely â€” integration tests belong in CI, not the agent loop.
+        2. Workspace validation — at least one non-placeholder HTML file exists
+        Skips pytest entirely — integration tests belong in CI, not the agent loop.
         """
         from src.crewai_agents.tools import run_quality_checks_tool
 
@@ -507,7 +508,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 "error": str(exc),
             }
 
-        # 2. Workspace validation â€” check for real HTML content
+        # 2. Workspace validation — check for real HTML content
         workspace_ok = False
         workspace_info: Dict[str, Any] = {}
         try:
@@ -540,7 +541,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         result["workspace"] = workspace_info
         result["workspace_ok"] = workspace_ok
 
-        # 3. HTTP checks â€” verify pages actually load via a temp server
+        # 3. HTTP checks — verify pages actually load via a temp server
         http_ok = True  # non-blocking: degrades gracefully if server can't start
         http_info: Dict[str, Any] = {}
         if workspace_ok:
@@ -709,7 +710,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             sections.append("\n".join(lines))
 
         if not sections:
-            return "QA gate passed â€” no failures detected."
+            return "QA gate passed - no failures detected."
 
         return f"QA FAILURE REPORT ({failure_num} issue(s)):\n\n" + "\n\n".join(sections)
 
@@ -752,7 +753,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                         parts.append("What failed: " + "; ".join(str(x) for x in wf["failures"]))
                     if parts:
                         extra_context += (
-                            f"\n\n[Procedural Memory â€” best workflow v{_latest.version}, "
+                            f"\n\n[Procedural Memory — best workflow v{_latest.version}, "
                             f"score {_latest.score:.0%}]\n"
                             + "\n".join(parts)
                             + "\n"
@@ -783,7 +784,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                             f"failures={m.get('failure_count', '?')}"
                         )
                     extra_context += (
-                        "\n\n[Episodic Memory â€” recent cycle history]\n"
+                        "\n\n[Episodic Memory — recent cycle history]\n"
                         + "\n".join(ep_lines)
                         + "\n"
                     )
@@ -936,15 +937,15 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             logger.warning("No agent registry for remediation; skipping coordinator remediation")
             return
 
-        remediation_dispatch, _get_remediation_count, _get_remediation_history = make_dispatch_task_tool(
-            registry, self._emit, max_dispatches=4, result_truncation=1500,
+        remediation_dispatch, remediation_parallel, _get_remediation_count, _get_remediation_history = make_dispatch_task_tool(
+            registry, self._emit, max_dispatches=4, result_truncation=4000,
             extra_context="",
         )
 
         remediation_coordinator = create_build_coordinator(
             coordinator_llm,
             prompt_override=self._prompt_override("coordinator"),
-            extra_tools=[remediation_dispatch] + (ws_product_tools or []),
+            extra_tools=[remediation_dispatch, remediation_parallel] + (ws_product_tools or []),
         )
 
         description = f'''[Iteration {i}] QA remediation required before coordinator review.
@@ -996,7 +997,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                     description=(
                         "You returned without making any dispatch_task_to_agent calls. "
                         "You MUST call dispatch_task_to_agent at least once to fix the QA failures. "
-                        "Do NOT describe what you would do â€” actually call the tool NOW.\n\n"
+                        "Do NOT describe what you would do — actually call the tool NOW.\n\n"
                         f"Available agents: {sorted(registry.keys())}\n\n"
                         "Dispatch to developer with fix instructions from the QA report."
                     ),
@@ -1096,14 +1097,14 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
 
         # Create dispatch tool and coordinator
         max_dispatches = int(self.state.active_policies.get("max_total_delegated_tasks", 8))
-        dispatch_tool, _get_dispatch_count, _get_dispatch_history = make_dispatch_task_tool(
-            agent_registry, self._emit, max_dispatches=max_dispatches, result_truncation=1500,
+        dispatch_tool, dispatch_parallel_tool, _get_dispatch_count, _get_dispatch_history = make_dispatch_task_tool(
+            agent_registry, self._emit, max_dispatches=max_dispatches, result_truncation=4000,
             extra_context=extra_context,
         )
         build_coordinator = create_build_coordinator(
             coordinator_llm,
             prompt_override=self._prompt_override("coordinator"),
-            extra_tools=[dispatch_tool] + (ws_product_tools or []),
+            extra_tools=[dispatch_tool, dispatch_parallel_tool] + (ws_product_tools or []),
         )
 
         # Create coordinator task
@@ -1139,30 +1140,8 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             crew_output = build_crew.kickoff()
             success_count = 1
 
-            # Zero-dispatch guardrail: if coordinator returned text without
-            # actually calling dispatch_task, retry with a forceful prompt.
             if _get_dispatch_count() == 0:
-                logger.warning("Coordinator returned without dispatching; retrying with forceful prompt")
-                retry_task = Task(
-                    description=(
-                        "You returned a plan without making any dispatch_task_to_agent calls. "
-                        "You MUST call dispatch_task_to_agent at least once. Do NOT describe "
-                        "what you would do â€” actually call the tool NOW.\n\n"
-                        f"Available agents: {sorted(agent_registry.keys())}\n\n"
-                        "Recommended: dispatch to product_strategist first, then developer, then reviewer."
-                    ),
-                    agent=build_coordinator,
-                    expected_output="Summary of dispatched tasks and their results.",
-                )
-                retry_crew = Crew(
-                    agents=[build_coordinator],
-                    tasks=[retry_task],
-                    process=Process.sequential,
-                    verbose=_verbose_flag(self.state.verbose),
-                    memory=False,
-                    cache=False,
-                )
-                crew_output = retry_crew.kickoff()
+                logger.info("Coordinator completed without dispatching any agents")
 
         except Exception as exc:
             logger.warning(f"BUILD coordinator failed: {exc}; falling back to sequential")
@@ -1567,10 +1546,10 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             # Respect gate recommendation: stop early if evaluation says to.
             rec = self.state.gate_recommendation
             if rec == "stop":
-                logger.info("  Gate recommended STOP â€” halting iterations.")
+                logger.info("  Gate recommended STOP — halting iterations.")
                 break
             if rec == "rollback":
-                logger.info("  Gate recommended ROLLBACK â€” halting iterations.")
+                logger.info("  Gate recommended ROLLBACK — halting iterations.")
                 break
 
         logger.info(f"\n{'='*60}")
