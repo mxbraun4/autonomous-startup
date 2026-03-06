@@ -91,7 +91,7 @@ def test_path_escape_rejected(workspace: Path):
     result = _read_impl("../etc/passwd")
 
     assert result["status"] == "denied"
-    assert result["reason"] == "path_escape"
+    assert "Path escapes workspace" in result["reason"]
 
 
 def test_read_missing_file(workspace: Path):
@@ -173,7 +173,7 @@ def test_sql_rejects_path_escape(workspace: Path):
     """Path traversal should be denied."""
     result = _run_sql_impl("../../evil.db", "SELECT 1")
     assert result["status"] == "denied"
-    assert result["reason"] == "path_escape"
+    assert "Path escapes workspace" in result["reason"]
 
 
 def test_sql_blocks_attach(workspace: Path):

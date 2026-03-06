@@ -59,7 +59,7 @@ def _read_impl(file_path: str) -> dict:
     try:
         resolved = _resolve_safe_path(file_path)
     except ValueError:
-        return {"status": "denied", "reason": "path_escape"}
+        return {"status": "denied", "reason": "Path escapes workspace. Use relative paths like 'index.html' or 'backend/main.py', not absolute or '../' paths."}
     except RuntimeError as exc:
         return {"status": "error", "reason": str(exc)}
 
@@ -75,7 +75,7 @@ def _write_impl(file_path: str, content: str) -> dict:
     try:
         resolved = _resolve_safe_path(file_path)
     except ValueError:
-        return {"status": "denied", "reason": "path_escape"}
+        return {"status": "denied", "reason": "Path escapes workspace. Use relative paths like 'index.html' or 'backend/main.py', not absolute or '../' paths."}
     except RuntimeError as exc:
         return {"status": "error", "reason": str(exc)}
 
@@ -92,7 +92,7 @@ def _list_impl(subdirectory: str = "") -> dict:
     try:
         resolved = _resolve_safe_path(subdirectory) if subdirectory else _resolve_safe_path(".")
     except ValueError:
-        return {"status": "denied", "reason": "path_escape"}
+        return {"status": "denied", "reason": "Path escapes workspace. Use relative paths like 'index.html' or 'backend/main.py', not absolute or '../' paths."}
     except RuntimeError as exc:
         return {"status": "error", "reason": str(exc)}
 
@@ -159,7 +159,7 @@ def _run_sql_impl(db_name: str, query: str, params: str = "[]") -> dict:
     try:
         resolved = _resolve_safe_path(db_name)
     except ValueError:
-        return {"status": "denied", "reason": "path_escape"}
+        return {"status": "denied", "reason": "Path escapes workspace. Use relative paths like 'index.html' or 'backend/main.py', not absolute or '../' paths."}
     except RuntimeError as exc:
         return {"status": "error", "reason": str(exc)}
 

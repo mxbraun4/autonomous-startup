@@ -1187,24 +1187,19 @@ def make_dispatch_task_tool(
 
     _ROLE_INSTRUCTIONS = {
         "developer": (
-            "TOOL INSTRUCTIONS (you MUST follow these):\n"
-            "- Call write_workspace_file to create/update files. Do NOT return raw HTML as text.\n"
-            "- After writing, call check_workspace_http to verify pages load.\n"
-            "- If the task involves feedback, call submit_test_feedback.\n"
-            "- If the request is large, prioritize one focused change first, then continue.\n"
+            "Available tools: write_workspace_file, read_workspace_file, "
+            "check_workspace_http, submit_test_feedback, list_workspace_files.\n"
+            "Write files using write_workspace_file and verify with check_workspace_http.\n"
         ),
         "reviewer": (
-            "TOOL INSTRUCTIONS (you MUST follow these):\n"
-            "- Call review_workspace_files ONCE to list and read all workspace files.\n"
-            "- Call check_workspace_http ONCE to verify pages load over HTTP.\n"
-            "- Call run_quality_checks_tool ONCE for Python syntax checks.\n"
-            "- Report PASS or FAIL based on actual tool results, not assumptions.\n"
+            "Available tools: review_workspace_files, check_workspace_http, "
+            "run_quality_checks_tool.\n"
+            "Review the workspace, verify pages load, and report PASS or FAIL.\n"
         ),
         "product_strategist": (
-            "TOOL INSTRUCTIONS (you MUST follow these):\n"
-            "- Call list_workspace_files to see what pages exist.\n"
-            "- Call read_workspace_file to inspect existing pages.\n"
-            "- Use share_insight to publish your build spec for the developer.\n"
+            "Available tools: list_workspace_files, read_workspace_file, share_insight.\n"
+            "Inspect the workspace, then call share_insight to publish your spec.\n"
+            "The developer cannot see your raw output — only shared insights.\n"
         ),
     }
 
@@ -1238,7 +1233,7 @@ def make_dispatch_task_tool(
         # Prepend standing instructions + extra_context
         original_task_description = task_description
         preamble = (
-            "IMPORTANT: Before starting, call get_team_insights to read shared context "
+            "You can call get_team_insights to read shared context "
             "from prior dispatches and previous iterations.\n\n"
         )
         role_instructions = _ROLE_INSTRUCTIONS.get(agent_role, "")
@@ -1301,20 +1296,6 @@ def make_dispatch_task_tool(
         # Truncate
         truncated = len(result_text) > result_truncation
         result_text = result_text[:result_truncation]
-
-        # Auto-share dispatch result to consensus memory
-        try:
-            consensus_value = result_text[:500]
-            if len(result_text) > 500:
-                consensus_value += "\n\n[Full result available in workspace files]"
-            _share_insight_impl(
-                key=f"dispatch.{agent_role}.{dispatch_number}",
-                value=consensus_value,
-                evidence=original_task_description[:300],
-                source_agent=agent_role,
-            )
-        except Exception:
-            pass  # non-blocking; memory store may not be initialised
 
         # Record in history
         _dispatch_history.append({
@@ -1395,27 +1376,26 @@ def make_dispatch_task_tool(
     # ------------------------------------------------------------------
     @tool("Dispatch Parallel Tasks")
     def dispatch_parallel(
-        agent_role_1: str,
-        task_description_1: str,
-        agent_role_2: str,
-        task_description_2: str,
-        agent_role_3: str = "",
-        task_description_3: str = "",
+        role_1: str,
+        task_1: str,
+        role_2: str,
+        task_2: str,
+        role_3: str = "",
+        task_3: str = "",
     ) -> str:
         """Dispatch 2 or 3 tasks to agents in parallel. All run concurrently.
 
         Use this when you have independent tasks that can run simultaneously,
         e.g. two developers building separate pages. For dependent work
         (reviewer after developer), use dispatch_task_to_agent sequentially.
-        IMPORTANT: assign non-overlapping files to each parallel developer.
 
         Args:
-            agent_role_1: Role for first task (e.g. "developer")
-            task_description_1: Description for first task
-            agent_role_2: Role for second task (e.g. "developer")
-            task_description_2: Description for second task
-            agent_role_3: Role for optional third task (leave empty to skip)
-            task_description_3: Description for optional third task
+            role_1: Agent role for first task (e.g. "developer")
+            task_1: Description for first task
+            role_2: Agent role for second task (e.g. "developer")
+            task_2: Description for second task
+            role_3: Agent role for optional third task (leave empty to skip)
+            task_3: Description for optional third task
 
         Returns:
             JSON with status and results array from all dispatched agents.
@@ -1424,11 +1404,11 @@ def make_dispatch_task_tool(
 
         # Build task list from positional parameters
         tasks = [
-            {"agent_role": agent_role_1, "task_description": task_description_1},
-            {"agent_role": agent_role_2, "task_description": task_description_2},
+            {"agent_role": role_1, "task_description": task_1},
+            {"agent_role": role_2, "task_description": task_2},
         ]
-        if agent_role_3 and task_description_3:
-            tasks.append({"agent_role": agent_role_3, "task_description": task_description_3})
+        if role_3 and task_3:
+            tasks.append({"agent_role": role_3, "task_description": task_3})
 
         available_roles = sorted(agent_registry.keys())
 

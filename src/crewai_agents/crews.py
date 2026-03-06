@@ -70,96 +70,6 @@ class LearnPhaseOutput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def create_build_phase_tasks(
-    developer_agent,
-    product_strategist,
-    iteration: int = 1,
-    reviewer_agent: Any = None,
-) -> List[Task]:
-    """Create tasks for the BUILD phase.
-
-    Args:
-        developer_agent: Developer/implementation agent
-        product_strategist: Product strategy agent
-        iteration: Current iteration number
-        reviewer_agent: Optional QA reviewer agent
-
-    Returns:
-        List of BUILD phase tasks
-    """
-
-    product_task = Task(
-        description=f'''[Iteration {iteration}] Define the next page or feature to build.
-
-        You are building a startup-VC matching website in workspace/.
-        Assess what exists, decide what's most needed, and write a build spec.
-        Publish the spec via share_insight when ready.
-
-        Target pages (build what doesn't exist yet):
-        - index.html (landing), founders.html, investors.html,
-          fit-score.html, how-it-works.html
-        - feedback.py (FeedbackDB + /api/feedback endpoint)
-        - Backend: POST /api/fit-score, POST /api/founders/profile, GET /api/matches/{{founder_id}}
-
-        If the database has fewer than 20 startups + VCs, prioritize data collection.
-        ''',
-        agent=product_strategist,
-        expected_output='''Product specification including:
-        - Page name and filename (e.g. founders.html)
-        - Page sections and content requirements
-        - Key UI elements and interactions
-        - How it connects to other pages
-        '''
-    )
-
-    developer_task = Task(
-        description=f'''[Iteration {iteration}] Build or improve a page in the workspace.
-
-        Read the product spec from team insights and implement it.
-        Write complete HTML with proper structure — replace any placeholder content.
-        Verify your work loads over HTTP, then share_insight what you built.
-        ''',
-        agent=developer_agent,
-        context=[product_task],
-        expected_output='''Developer implementation report including:
-        - Files created or modified (with filenames)
-        - What content and features were added
-        - What still needs to be built next iteration
-        '''
-    )
-
-    reviewer_task: Optional[Task] = None
-    if reviewer_agent is not None:
-        reviewer_task = Task(
-            description=f'''[Iteration {iteration}] Review the developer's workspace output for quality.
-
-        Independently verify the workspace — do NOT just summarize the developer's
-        context. Read files, run quality checks, and test HTTP loading yourself.
-
-        PASS if: workspace has real HTML content AND Python syntax is clean
-              AND pages load over HTTP (http_landing_score >= 1.0).
-        FAIL if: workspace is still placeholder-only OR HTML is malformed
-              OR pages fail to load over HTTP.
-
-        Publish your findings via share_insight before reporting your verdict.
-        ''',
-            agent=reviewer_agent,
-            context=[developer_task],
-            expected_output='''QA review report including:
-        - QA gate status (PASS/FAIL)
-        - Workspace files reviewed and their quality assessment
-        - Python syntax check results
-        - HTTP check scores (landing, navigation)
-        - Issues found (if any) with fix instructions
-        '''
-        )
-
-    tasks = [product_task, developer_task]
-    if reviewer_task is not None:
-        tasks.append(reviewer_task)
-    return tasks
-
-
 def create_learn_phase_task(coordinator, build_results: str) -> Task:
     """Create task for the LEARN phase.
 
@@ -184,7 +94,7 @@ def create_learn_phase_task(coordinator, build_results: str) -> Task:
         expected_output='''Learning report including:
         - Key successes (what worked and why)
         - Areas for improvement (what didn't work and why)
-        - Specific insights (3-5 concrete learnings)
+        - Specific insights (up to 5 concrete learnings — focus on the most actionable)
         - Recommendations for next iteration (coordinator, product, developer as applicable)
         - Predicted improvement in key metrics
         ''',
@@ -266,12 +176,10 @@ def create_autonomous_startup_crew(
     reviewer_agent = create_reviewer_agent(reviewer_llm)
     product_strategist = create_product_strategist(product_llm)
 
-    # Create initial tasks (will be updated per iteration)
-    tasks = create_build_phase_tasks(
-        developer_agent,
-        product_strategist,
-        iteration=1,
-        reviewer_agent=reviewer_agent,
+    build_task = Task(
+        description="Build and improve the startup-VC matching website.",
+        agent=coordinator,
+        expected_output="Summary of what was built or improved.",
     )
 
     # NOTE: memory=False because we use our own five-tier UnifiedStore rather
@@ -279,7 +187,7 @@ def create_autonomous_startup_crew(
     # embeddings). Our memory is injected into tools via set_memory_store().
     crew = Crew(
         agents=[coordinator, product_strategist, developer_agent, reviewer_agent],
-        tasks=tasks,
+        tasks=[build_task],
         process=Process.hierarchical,
         manager_llm=coordinator_llm,
         verbose=_verbose_flag(verbose),
@@ -329,15 +237,15 @@ def _create_coordinator_build_task(
     """
     description = f'''[Iteration {iteration}] Orchestrate the BUILD phase for a startup-VC matching website.
 
-    The website lives in workspace/ (HTML/CSS/JS + Python FastAPI backend).
+    The website is HTML/CSS/JS + Python FastAPI backend.
     Available agents: {", ".join(available_roles)}
 
     You have two dispatch tools:
     - dispatch_task_to_agent: dispatch one task at a time
     - dispatch_parallel_tasks: dispatch multiple independent tasks concurrently
 
-    Decide the best strategy: which agents to dispatch, in what order, and
-    whether to run tasks in parallel or sequentially.
+    Start by calling your dispatch tools now to assign work to agents.
+    Do not just describe a plan — use the tools to execute it.
     '''
 
     if extra_context:
@@ -844,80 +752,6 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 logger.warning("Workspace tools unavailable: %s", _ws_exc)
         return ws_dev_tools, ws_product_tools, ws_ro_tools
 
-    def _run_sequential_fallback(
-        self,
-        i: int,
-        developer_llm,
-        reviewer_llm,
-        product_llm,
-        ws_dev_tools: list,
-        ws_product_tools: list,
-        ws_ro_tools: list,
-        extra_context: str,
-    ):
-        """Fallback: run the legacy sequential Productâ†’Developerâ†’Reviewer pipeline.
-
-        Used when the coordinator dispatch loop throws an exception.
-        Returns (crew_output, task_count, success_count, failure_count).
-        """
-        logger.info("BUILD PHASE: Falling back to sequential pipeline...")
-        developer_agent = create_developer_agent(
-            developer_llm,
-            prompt_override=self._prompt_override("developer"),
-            extra_tools=ws_dev_tools or None,
-        )
-        reviewer_agent = create_reviewer_agent(
-            reviewer_llm,
-            prompt_override=self._prompt_override("reviewer"),
-            extra_tools=ws_ro_tools or None,
-        )
-        product_strategist = create_product_strategist(
-            product_llm,
-            prompt_override=self._prompt_override("product"),
-            extra_tools=ws_product_tools or None,
-        )
-
-        build_tasks = create_build_phase_tasks(
-            developer_agent,
-            product_strategist,
-            iteration=i,
-            reviewer_agent=reviewer_agent,
-        )
-        if extra_context:
-            for task in build_tasks:
-                task.description += extra_context
-
-        build_crew = Crew(
-            agents=[product_strategist, developer_agent, reviewer_agent],
-            tasks=build_tasks,
-            process=Process.sequential,
-            verbose=_verbose_flag(self.state.verbose),
-            memory=False,
-            cache=False,
-        )
-
-        task_count = len(build_tasks)
-        success_count = 0
-        failure_count = 0
-        try:
-            ensure_litellm_tracing()
-            crew_output = build_crew.kickoff()
-            if hasattr(crew_output, "tasks_output"):
-                for to in crew_output.tasks_output:
-                    status = getattr(to, "status", "success")
-                    if status == "success" or status is None:
-                        success_count += 1
-                    else:
-                        failure_count += 1
-            else:
-                success_count = task_count
-        except Exception as exc:
-            logger.warning(f"Sequential fallback also failed: {exc}")
-            crew_output = None
-            failure_count = task_count
-
-        return crew_output, task_count, success_count, failure_count
-
     def _run_coordinator_remediation(
         self,
         i: int,
@@ -948,20 +782,12 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             extra_tools=[remediation_dispatch, remediation_parallel] + (ws_product_tools or []),
         )
 
-        description = f'''[Iteration {i}] QA remediation required before coordinator review.
+        description = f'''[Iteration {i}] QA failed. Fix the issues below.
 
             {qa_report}
 
             You have a dispatch_task tool with a budget of 4 dispatches.
             Available agents: {sorted(registry.keys())}
-
-            Steps:
-            1. Analyze the QA failures above
-            2. Dispatch to developer with one scoped fix instruction
-            3. Dispatch to reviewer to re-run QA checks
-            4. If still failing, dispatch another scoped developer fix
-
-            Do not start new feature work. Fix only the blocking defects.
             '''
 
         if self.state.user_feedback_summary:
@@ -990,29 +816,8 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             ensure_litellm_tracing()
             remediation_output = remediation_crew.kickoff()
 
-            # Zero-dispatch guardrail for remediation
             if _get_remediation_count() == 0:
-                logger.warning("Remediation coordinator returned without dispatching; retrying with forceful prompt")
-                retry_task = Task(
-                    description=(
-                        "You returned without making any dispatch_task_to_agent calls. "
-                        "You MUST call dispatch_task_to_agent at least once to fix the QA failures. "
-                        "Do NOT describe what you would do — actually call the tool NOW.\n\n"
-                        f"Available agents: {sorted(registry.keys())}\n\n"
-                        "Dispatch to developer with fix instructions from the QA report."
-                    ),
-                    agent=remediation_coordinator,
-                    expected_output="Summary of dispatched fix tasks and their results.",
-                )
-                retry_crew = Crew(
-                    agents=[remediation_coordinator],
-                    tasks=[retry_task],
-                    process=Process.sequential,
-                    verbose=_verbose_flag(self.state.verbose),
-                    memory=False,
-                    cache=False,
-                )
-                remediation_output = retry_crew.kickoff()
+                logger.info("Remediation coordinator completed without dispatching any agents")
 
             if remediation_output:
                 extra = str(remediation_output)
@@ -1144,14 +949,8 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 logger.info("Coordinator completed without dispatching any agents")
 
         except Exception as exc:
-            logger.warning(f"BUILD coordinator failed: {exc}; falling back to sequential")
-            crew_output, task_count, success_count, failure_count = (
-                self._run_sequential_fallback(
-                    i, developer_llm, reviewer_llm, product_llm,
-                    ws_dev_tools, ws_product_tools, ws_ro_tools,
-                    extra_context,
-                )
-            )
+            logger.error(f"BUILD coordinator failed: {exc}")
+            failure_count = 1
 
         self._emit("task_completed", {
             "task_id": f"build_coordinator_iter_{i}",
@@ -1164,12 +963,12 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         self.state.qa_result = self._run_quality_gate()
         self.state.qa_passed = self._qa_passed()
 
-        # LLM-powered customer testing (after QA passes, before feedback collection)
-        if self.state.qa_passed and self.state.workspace_enabled:
+        # LLM-powered customer testing
+        if self.state.workspace_enabled:
             self._run_customer_testing()
 
-        # Collect real user feedback from workspace/feedback.db for remediation
-        if self.state.qa_passed and self.state.workspace_enabled:
+        # Collect real user feedback from feedback.db
+        if self.state.workspace_enabled:
             feedback_summary = self._collect_user_feedback()
             if feedback_summary and "No user feedback" not in feedback_summary:
                 self.state.user_feedback_summary = feedback_summary
@@ -1182,8 +981,6 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
 
         self.state.build_task_count = task_count
         self.state.build_success_count = success_count
-        if not self.state.qa_passed:
-            failure_count = max(1, failure_count)
         self.state.build_failure_count = failure_count
         if not self.state.build_result_text:
             self.state.build_result_text = str(crew_output) if crew_output else ""
@@ -1206,8 +1003,6 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         logger.info("EVALUATE: Checking gates...")
 
         self.state.gate_recommendation = "continue"
-        if not self.state.qa_passed:
-            self.state.gate_recommendation = "pause"
 
         try:
             from src.framework.contracts import CycleMetrics
@@ -1254,11 +1049,8 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         except Exception as exc:
             logger.warning(f"  Evaluation skipped: {exc}")
 
-        if not self.state.qa_passed:
-            self.state.gate_recommendation = "pause"
-
         # Collect user feedback if not already collected in build()
-        if self.state.workspace_enabled and self.state.qa_passed and not self.state.user_feedback_summary:
+        if self.state.workspace_enabled and not self.state.user_feedback_summary:
             feedback_summary = self._collect_user_feedback()
             if feedback_summary and "No user feedback" not in feedback_summary:
                 self.state.user_feedback_summary = feedback_summary
@@ -1270,43 +1062,16 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         """Execute the LEARN phase and feed results back into next iteration."""
         logger.info("LEARN PHASE: Extracting insights...")
 
+        # Append QA status to build results so the LEARN coordinator can reflect on it
         if not self.state.qa_passed:
-            logger.warning("LEARN PHASE blocked: QA gate did not pass; skipping coordinator")
-            qa = dict(self.state.qa_result or {})
-            syntax = dict(qa.get("syntax") or {})
-            pytest_result = dict(qa.get("pytest") or {})
-            failures: List[str] = []
-            if not bool(qa.get("qa_gate_passed")):
-                failures.append("QA gate failed")
-            if not bool(syntax.get("syntax_ok", True)):
-                failures.append(
-                    f"Syntax errors: {int(syntax.get('syntax_error_count', 0))}"
-                )
-            pytest_status = str(pytest_result.get("pytest_status", "unknown"))
-            if pytest_status not in {"passed", "disabled", "no_targets", "skipped_nested_pytest"}:
-                failures.append(f"Pytest status: {pytest_status}")
-
-            self.state.learn_output = LearnPhaseOutput(
-                successes=[],
-                failures=failures or ["QA gate failed"],
-                insights=[
-                    "Coordinator review skipped because QA did not pass",
-                    "Developer remediation is required before strategic learning/decision steps",
-                ],
-                recommendations={
-                    "developer": "Fix blocking QA defects reported in QA_GATE and rerun checks before continuing.",
-                    "reviewer": "Re-run syntax/test checks after developer fixes and publish PASS/FAIL evidence.",
-                },
-                predicted_improvement=0.0,
-                summary="Coordinator skipped due to QA gate failure. QA must pass before strategic review.",
+            qa_report = self._format_qa_failures(self.state.qa_result)
+            self.state.build_result_text = (
+                f"{self.state.build_result_text}\n\n[QA_STATUS: FAILED]\n{qa_report}"
             )
-            self._apply_learning_feedback()
-            self._record_iteration()
-            return
 
         # Collect real user feedback (simulation feedback available from cycle 1)
-        if self.state.qa_passed:
-            feedback_summary = self._collect_user_feedback()
+        feedback_summary = self._collect_user_feedback()
+        if feedback_summary and "No user feedback" not in feedback_summary:
             self.state.build_result_text = (
                 f"{self.state.build_result_text}\n\n"
                 f"[USER_FEEDBACK]\n{feedback_summary}"
@@ -1446,7 +1211,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             _learn_store = get_memory_store()
             if _learn_store is not None:
                 iteration = self.state.iteration
-                for idx, insight in enumerate(lo.insights):
+                for idx, insight in enumerate(lo.insights[:5]):
                     _learn_store.cons_set(ConsensusEntry(
                         key=f"learn.insight.iter{iteration}.{idx}",
                         value=str(insight)[:500],
