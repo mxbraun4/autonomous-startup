@@ -245,32 +245,6 @@ def test_separate_factory_calls_have_independent_state():
         assert len(r_b["dispatch_history"]) == 1  # independent history
 
 
-def test_dispatch_result_written_to_consensus_memory():
-    """Successful dispatch auto-shares result to consensus memory."""
-    _require_crewai()
-    from src.crewai_agents.tools import make_dispatch_task_tool
-
-    registry = _make_registry()
-    emit = MagicMock()
-    dispatch, _parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=3)
-
-    mock_crew_output = MagicMock()
-    mock_crew_output.__str__ = lambda self: "developer built the page"
-
-    crew_p, task_p, proc_p, _ = _crew_patches()
-    with crew_p as MockCrew, task_p, proc_p, \
-         patch("src.crewai_agents.tools._share_insight_impl") as mock_share:
-        MockCrew.return_value.kickoff.return_value = mock_crew_output
-        result = json.loads(dispatch.run(agent_role="developer", task_description="build landing"))
-
-    assert result["status"] == "success"
-    mock_share.assert_called_once()
-    call_kw = mock_share.call_args.kwargs
-    assert call_kw["key"] == "dispatch.developer.1"
-    assert "developer built the page" in call_kw["value"]
-    assert call_kw["source_agent"] == "developer"
-
-
 def test_extra_context_prepended_to_dispatch():
     """extra_context from prior iterations is injected into every dispatch description."""
     _require_crewai()
@@ -358,7 +332,7 @@ def test_retry_both_fail():
 
 
 def test_role_instructions_injected():
-    """Developer and reviewer dispatches include TOOL INSTRUCTIONS in the task description."""
+    """Developer and reviewer dispatches include available tools in the task description."""
     _require_crewai()
     from src.crewai_agents.tools import make_dispatch_task_tool
 
@@ -378,14 +352,12 @@ def test_role_instructions_injected():
         dispatch.run(agent_role="developer", task_description="build page")
         dev_call = MockTask.call_args
         dev_desc = dev_call[1].get("description", dev_call[0][0] if dev_call[0] else "")
-        assert "TOOL INSTRUCTIONS" in dev_desc
         assert "write_workspace_file" in dev_desc
 
         # Dispatch to reviewer
         dispatch.run(agent_role="reviewer", task_description="review page")
         rev_call = MockTask.call_args
         rev_desc = rev_call[1].get("description", rev_call[0][0] if rev_call[0] else "")
-        assert "TOOL INSTRUCTIONS" in rev_desc
         assert "review_workspace_files" in rev_desc
 
 
@@ -444,8 +416,8 @@ def test_parallel_dispatch_two_developers():
         MockCrew.return_value.kickoff.return_value = mock_crew_output
 
         result = json.loads(parallel.run(
-            agent_role_1="developer", task_description_1="Build page A",
-            agent_role_2="developer", task_description_2="Build page B",
+            role_1="developer", task_1="Build page A",
+            role_2="developer", task_2="Build page B",
         ))
 
     assert result["status"] == "success"
@@ -476,9 +448,9 @@ def test_parallel_dispatch_three_tasks():
         MockCrew.return_value.kickoff.return_value = mock_crew_output
 
         result = json.loads(parallel.run(
-            agent_role_1="developer", task_description_1="Build page A",
-            agent_role_2="developer", task_description_2="Build page B",
-            agent_role_3="developer", task_description_3="Build page C",
+            role_1="developer", task_1="Build page A",
+            role_2="developer", task_2="Build page B",
+            role_3="developer", task_3="Build page C",
         ))
 
     assert result["status"] == "success"
@@ -489,7 +461,7 @@ def test_parallel_dispatch_three_tasks():
 
 
 def test_parallel_dispatch_third_slot_skipped():
-    """When agent_role_3 is empty, only two tasks are dispatched."""
+    """When role_3 is empty, only two tasks are dispatched."""
     _require_crewai()
     from src.crewai_agents.tools import make_dispatch_task_tool
 
@@ -506,9 +478,9 @@ def test_parallel_dispatch_third_slot_skipped():
         MockCrew.return_value.kickoff.return_value = mock_crew_output
 
         result = json.loads(parallel.run(
-            agent_role_1="developer", task_description_1="Build page A",
-            agent_role_2="developer", task_description_2="Build page B",
-            agent_role_3="", task_description_3="",
+            role_1="developer", task_1="Build page A",
+            role_2="developer", task_2="Build page B",
+            role_3="", task_3="",
         ))
 
     assert result["parallel_count"] == 2
@@ -525,8 +497,8 @@ def test_parallel_dispatch_budget_enforcement():
     _dispatch, parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=1)
 
     result = json.loads(parallel.run(
-        agent_role_1="developer", task_description_1="Build page A",
-        agent_role_2="developer", task_description_2="Build page B",
+        role_1="developer", task_1="Build page A",
+        role_2="developer", task_2="Build page B",
     ))
 
     assert result["status"] == "rejected"
@@ -545,8 +517,8 @@ def test_parallel_dispatch_invalid_role_rejected():
     _dispatch, parallel, _get_count, _get_history = make_dispatch_task_tool(registry, emit, max_dispatches=5)
 
     result = json.loads(parallel.run(
-        agent_role_1="developer", task_description_1="Build page A",
-        agent_role_2="nonexistent", task_description_2="Do something",
+        role_1="developer", task_1="Build page A",
+        role_2="nonexistent", task_2="Do something",
     ))
 
     assert result["status"] == "rejected"
@@ -581,8 +553,8 @@ def test_parallel_dispatch_one_task_fails():
         MockCrew.return_value.kickoff.side_effect = _kickoff_side_effect
 
         result = json.loads(parallel.run(
-            agent_role_1="developer", task_description_1="Build page A",
-            agent_role_2="developer", task_description_2="Build page B",
+            role_1="developer", task_1="Build page A",
+            role_2="developer", task_2="Build page B",
         ))
 
     assert result["status"] == "success"
@@ -615,8 +587,8 @@ def test_parallel_and_sequential_share_budget():
 
         # Use 2 parallel dispatches
         r2 = json.loads(parallel.run(
-            agent_role_1="developer", task_description_1="Build A",
-            agent_role_2="developer", task_description_2="Build B",
+            role_1="developer", task_1="Build A",
+            role_2="developer", task_2="Build B",
         ))
         assert r2["dispatches_remaining"] == 1
 
@@ -624,8 +596,8 @@ def test_parallel_and_sequential_share_budget():
 
     # Only 1 remaining — trying to parallel dispatch 2 should fail
     r3 = json.loads(parallel.run(
-        agent_role_1="reviewer", task_description_1="Review A",
-        agent_role_2="reviewer", task_description_2="Review B",
+        role_1="reviewer", task_1="Review A",
+        role_2="reviewer", task_2="Review B",
     ))
     assert r3["status"] == "rejected"
     assert "Not enough budget" in r3["reason"]

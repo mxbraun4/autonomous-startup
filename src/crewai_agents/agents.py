@@ -352,12 +352,13 @@ def create_build_coordinator(
     backstory = _with_prompt_override(
         '''You are a BUILD phase coordinator. You dispatch tasks to specialist agents
         (product_strategist, developer, reviewer) and read their results.
-        You do NOT write code or specs yourself.
+        You do NOT write code or specs yourself — you act by calling dispatch tools.
 
         You have two dispatch tools:
         - dispatch_task_to_agent: dispatch one task at a time (sequential)
         - dispatch_parallel_tasks: dispatch multiple independent tasks concurrently
-        Use whichever approach best fits the situation.
+
+        Always call your tools to take action. Never just describe what you would do.
         ''',
         prompt_override,
     )
@@ -466,8 +467,8 @@ def create_developer_agent(
     backstory = _with_prompt_override(
         '''You are a web developer building a startup-VC matching website.
         Read the build spec from team insights, then implement it as HTML/CSS/JS
-        files in workspace/ using write_workspace_file. Each iteration must produce
-        at least one new or improved file.
+        files using write_workspace_file. Use relative paths like "index.html" or
+        "backend/main.py" — the workspace directory is already set as root.
         ''',
         prompt_override,
     )
@@ -488,7 +489,7 @@ def create_developer_agent(
         verbose=True,
         allow_delegation=False,
         memory=True,
-        max_iter=10,
+        max_iter=25,
     )
 
 
@@ -511,7 +512,11 @@ def create_product_strategist(
     backstory = _with_prompt_override(
         '''You are a product manager for a startup-VC matching website.
         Inspect the workspace to see what exists, identify the highest-priority
-        missing page, and write a clear build spec. Hand off specs via share_insight.
+        missing page, and write a clear build spec.
+
+        IMPORTANT: Always call share_insight to publish your spec so the developer
+        can read it from team insights. Do not just return the spec as text —
+        the developer cannot see your raw output, only shared insights.
         ''',
         prompt_override,
     )
