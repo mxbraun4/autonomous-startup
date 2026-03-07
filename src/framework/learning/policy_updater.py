@@ -49,72 +49,13 @@ class PolicyUpdater:
         evaluation_result: EvaluationResult,
         current_policies: Dict[str, Any],
     ) -> List[PolicyPatch]:
-        """Generate policy patches from gate outcomes."""
-        patches: Dict[str, PolicyPatch] = {}
-        current = dict(current_policies or {})
+        """Generate policy patches from gate outcomes.
 
-        for gate in evaluation_result.gates:
-            gate_name = gate.gate_name
-            gate_status = gate.gate_status
-            if gate_status == "pass":
-                continue
-
-            if gate_name == "safety":
-                max_identical = int(current.get("max_identical_tool_calls", 5))
-                self._set_patch(
-                    patches=patches,
-                    key="max_identical_tool_calls",
-                    old_value=max_identical,
-                    new_value=max(1, max_identical - 1),
-                    reason=f"Tighten loop guard due to safety gate={gate_status}",
-                    evidence=gate.evidence,
-                )
-
-                loop_window = int(current.get("loop_window_size", 20))
-                self._set_patch(
-                    patches=patches,
-                    key="loop_window_size",
-                    old_value=loop_window,
-                    new_value=max(5, loop_window - 5),
-                    reason=f"Reduce loop window due to safety gate={gate_status}",
-                    evidence=gate.evidence,
-                )
-
-            if gate_name == "reliability":
-                max_children = int(current.get("max_children_per_parent", 10))
-                self._set_patch(
-                    patches=patches,
-                    key="max_children_per_parent",
-                    old_value=max_children,
-                    new_value=max(1, max_children - 1),
-                    reason=f"Reduce delegation fan-out due to reliability gate={gate_status}",
-                    evidence=gate.evidence,
-                )
-                self._set_patch(
-                    patches=patches,
-                    key="dedupe_delegated_objectives",
-                    old_value=bool(current.get("dedupe_delegated_objectives", False)),
-                    new_value=True,
-                    reason="Enable delegated objective dedupe for reliability recovery",
-                    evidence=gate.evidence,
-                )
-
-            if gate_name == "efficiency":
-                max_total = current.get("max_total_delegated_tasks")
-                if max_total is None:
-                    new_value = 30
-                else:
-                    new_value = max(5, int(max_total) - 5)
-                self._set_patch(
-                    patches=patches,
-                    key="max_total_delegated_tasks",
-                    old_value=max_total,
-                    new_value=new_value,
-                    reason=f"Constrain delegated workload due to efficiency gate={gate_status}",
-                    evidence=gate.evidence,
-                )
-
-        return list(patches.values())
+        Currently returns no patches — policy adjustments are left to the
+        LEARN phase and agent-driven insights rather than deterministic
+        tightening rules.
+        """
+        return []
 
     def apply_patches(
         self,

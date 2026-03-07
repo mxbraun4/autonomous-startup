@@ -1165,7 +1165,7 @@ def make_dispatch_task_tool(
     emit_fn,
     *,
     max_dispatches: int = 8,
-    result_truncation: int = 1500,
+    result_truncation: int = 3000,
     extra_context: str = "",
 ):
     """Factory that returns dispatch tools for the BUILD coordinator.
@@ -1187,19 +1187,16 @@ def make_dispatch_task_tool(
 
     _ROLE_INSTRUCTIONS = {
         "developer": (
-            "Available tools: write_workspace_file, read_workspace_file, "
-            "check_workspace_http, submit_test_feedback, list_workspace_files.\n"
-            "Write files using write_workspace_file and verify with check_workspace_http.\n"
+            "Tools: write_workspace_file, read_workspace_file, "
+            "check_workspace_http, list_workspace_files.\n"
         ),
         "reviewer": (
-            "Available tools: review_workspace_files, check_workspace_http, "
+            "Tools: review_workspace_files, check_workspace_http, "
             "run_quality_checks_tool.\n"
-            "Review the workspace, verify pages load, and report PASS or FAIL.\n"
         ),
         "product_strategist": (
-            "Available tools: list_workspace_files, read_workspace_file, share_insight.\n"
-            "Inspect the workspace, then call share_insight to publish your spec.\n"
-            "The developer cannot see your raw output — only shared insights.\n"
+            "Tools: list_workspace_files, read_workspace_file, share_insight.\n"
+            "Note: other agents can only see insights you share, not your raw output.\n"
         ),
     }
 
@@ -1383,22 +1380,21 @@ def make_dispatch_task_tool(
         role_3: str = "",
         task_3: str = "",
     ) -> str:
-        """Dispatch 2 or 3 tasks to agents in parallel. All run concurrently.
+        """Dispatch 2 or 3 tasks to agents in parallel. Maximum 3 slots.
 
-        Use this when you have independent tasks that can run simultaneously,
-        e.g. two developers building separate pages. For dependent work
-        (reviewer after developer), use dispatch_task_to_agent sequentially.
+        Use for independent tasks only. For dependent work (e.g. reviewer
+        AFTER developer), use dispatch_task_to_agent sequentially instead.
 
         Args:
             role_1: Agent role for first task (e.g. "developer")
-            task_1: Description for first task
-            role_2: Agent role for second task (e.g. "developer")
-            task_2: Description for second task
-            role_3: Agent role for optional third task (leave empty to skip)
-            task_3: Description for optional third task
+            task_1: Task description for first agent
+            role_2: Agent role for second task
+            task_2: Task description for second agent
+            role_3: Optional third agent role (leave empty to skip)
+            task_3: Optional third task description
 
         Returns:
-            JSON with status and results array from all dispatched agents.
+            JSON with results from all dispatched agents.
         """
         import concurrent.futures
 

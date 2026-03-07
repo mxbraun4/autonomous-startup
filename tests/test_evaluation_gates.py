@@ -80,7 +80,8 @@ def test_evaluator_returns_pass_when_all_gates_pass():
     assert all(g.gate_status == "pass" for g in result.gates)
 
 
-def test_evaluator_safety_failure_produces_stop_action():
+def test_evaluator_safety_failure_is_advisory():
+    """Gates report fail status but always recommend continue (advisory only)."""
     current = _cycle_metrics(
         domain_metrics={
             "determinism_variance": 0.01,
@@ -95,12 +96,13 @@ def test_evaluator_safety_failure_produces_stop_action():
     result = Evaluator().evaluate(current_metrics=current, previous_metrics=previous)
     safety_gate = next(g for g in result.gates if g.gate_name == "safety")
     assert safety_gate.gate_status == "fail"
-    assert safety_gate.recommended_action == "stop"
+    assert safety_gate.recommended_action == "continue"
     assert result.overall_status == "fail"
-    assert result.recommended_action == "stop"
+    assert result.recommended_action == "continue"
 
 
-def test_evaluator_learning_failure_prefers_rollback_action():
+def test_evaluator_learning_failure_is_advisory():
+    """Learning gate failure is informational — no forced rollback."""
     previous = _cycle_metrics(
         cycle_id=1,
         domain_metrics={"procedure_score": 0.80},
@@ -119,12 +121,13 @@ def test_evaluator_learning_failure_prefers_rollback_action():
     result = Evaluator().evaluate(current_metrics=current, previous_metrics=previous)
     learning_gate = next(g for g in result.gates if g.gate_name == "learning")
     assert learning_gate.gate_status == "fail"
-    assert learning_gate.recommended_action == "rollback"
+    assert learning_gate.recommended_action == "continue"
     assert result.overall_status == "fail"
-    assert result.recommended_action == "rollback"
+    assert result.recommended_action == "continue"
 
 
-def test_evaluator_efficiency_thresholds_are_respected():
+def test_evaluator_efficiency_failure_is_advisory():
+    """Efficiency gate failure is informational — no forced pause."""
     thresholds = GateThresholds(
         efficiency_fail_duration_seconds=10.0,
         efficiency_warn_duration_seconds=8.0,
@@ -151,6 +154,6 @@ def test_evaluator_efficiency_thresholds_are_respected():
     )
     efficiency_gate = next(g for g in result.gates if g.gate_name == "efficiency")
     assert efficiency_gate.gate_status == "fail"
-    assert efficiency_gate.recommended_action == "pause"
+    assert efficiency_gate.recommended_action == "continue"
     assert result.overall_status == "fail"
-    assert result.recommended_action == "pause"
+    assert result.recommended_action == "continue"

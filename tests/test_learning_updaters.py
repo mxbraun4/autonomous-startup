@@ -19,19 +19,20 @@ def _evaluation_with_gates(gates: list[GateDecision]) -> EvaluationResult:
     )
 
 
-def test_policy_updater_proposes_expected_patches():
+def test_policy_updater_returns_no_deterministic_patches():
+    """Policy updater no longer applies deterministic tightening rules."""
     evaluation = _evaluation_with_gates(
         [
             GateDecision(
                 gate_name="safety",
                 gate_status="warn",
-                recommended_action="pause",
+                recommended_action="continue",
                 evidence={"policy_violations": 1},
             ),
             GateDecision(
                 gate_name="reliability",
                 gate_status="fail",
-                recommended_action="stop",
+                recommended_action="continue",
                 evidence={"completion_rate": 0.5},
             ),
         ]
@@ -45,12 +46,7 @@ def test_policy_updater_proposes_expected_patches():
 
     updater = PolicyUpdater()
     patches = updater.propose_patches(evaluation, policies)
-    patch_map = {p.key: p for p in patches}
-
-    assert patch_map["max_identical_tool_calls"].new_value == 4
-    assert patch_map["loop_window_size"].new_value == 15
-    assert patch_map["max_children_per_parent"].new_value == 9
-    assert patch_map["dedupe_delegated_objectives"].new_value is True
+    assert patches == []
 
 
 def test_policy_updater_apply_and_rollback_versioning():
