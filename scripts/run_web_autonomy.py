@@ -65,10 +65,8 @@ def build_web_arg_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     parser.add_argument("--budget-seconds", type=float, default=None)
     parser.add_argument("--budget-tokens", type=int, default=None)
     parser.add_argument("--autonomy-level", type=int, default=1)
-    parser.add_argument("--max-self-heal-attempts", type=int, default=None)
     parser.add_argument("--auto-resume-on-pause", action="store_true")
     parser.add_argument("--pause-cooldown-seconds", type=float, default=None)
-    parser.add_argument("--disable-rollback-self-heal", action="store_true")
     parser.add_argument("--disable-adaptive-policy", action="store_true")
     parser.add_argument("--disable-diagnostics", action="store_true")
     parser.add_argument("--adaptive-policy-reliability-streak", type=int, default=None)
@@ -207,14 +205,10 @@ def _load_schedules_file(path: Path) -> list[dict]:
 def _policy_overrides_from_args(args: argparse.Namespace) -> dict:
     policies: dict = {}
 
-    if args.max_self_heal_attempts is not None:
-        policies["max_self_heal_attempts"] = max(0, int(args.max_self_heal_attempts))
     if args.auto_resume_on_pause:
         policies["auto_resume_on_pause"] = True
     if args.pause_cooldown_seconds is not None:
         policies["pause_cooldown_seconds"] = max(0.0, float(args.pause_cooldown_seconds))
-    if args.disable_rollback_self_heal:
-        policies["enable_rollback_self_heal"] = False
     if args.disable_adaptive_policy:
         policies["adaptive_policy_enabled"] = False
     if args.disable_diagnostics:

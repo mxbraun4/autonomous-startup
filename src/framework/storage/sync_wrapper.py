@@ -207,9 +207,6 @@ class SyncUnifiedStore:
     def proc_get_history(self, task_type: str) -> List[Procedure]:
         return _run(self._store.proc_get_history(task_type))
 
-    def proc_rollback(self, task_type: str, target_version: int) -> Optional[Procedure]:
-        return _run(self._store.proc_rollback(task_type, target_version))
-
     def proc_list_types(self) -> List[str]:
         return _run(self._store.proc_list_types())
 

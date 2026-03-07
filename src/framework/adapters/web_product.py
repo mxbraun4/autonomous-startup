@@ -260,23 +260,6 @@ class WebProductAdapter(BaseDomainAdapter):
                 )
             ]
 
-        if action == "rollback":
-            return [
-                ProcedureUpdateProposal(
-                    task_type="web_improvement",
-                    workflow={
-                        "steps": [
-                            "revert_recent_edit",
-                            "re-run_tests",
-                            "capture_regression_notes",
-                        ]
-                    },
-                    score=0.45,
-                    provenance="web_adapter:rollback",
-                    source_evidence={"evaluation_result_id": evaluation_result.entity_id},
-                )
-            ]
-
         return []
 
     def get_domain_policies(self) -> Dict[str, Any]:

@@ -59,7 +59,6 @@ from src.framework.eval import Evaluator, GateThresholds, Scorecard, build_score
 from src.framework.learning import (
     PolicyPatch,
     PolicyUpdater,
-    PolicyVersion,
     ProcedureUpdateProposal,
     ProcedureUpdater,
 )
@@ -145,7 +144,6 @@ __all__ = [
     "build_scorecard",
     "PolicyPatch",
     "PolicyUpdater",
-    "PolicyVersion",
     "ProcedureUpdateProposal",
     "ProcedureUpdater",
     # Layer H

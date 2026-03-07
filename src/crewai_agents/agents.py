@@ -26,6 +26,7 @@ from src.crewai_agents.tools import (
     # Consensus memory tools
     share_insight,
     get_team_insights,
+    get_cycle_history,
     # Role-aware share_insight factory
     make_share_insight,
 )
@@ -363,13 +364,13 @@ def create_build_coordinator(
         prompt_override,
     )
 
-    tools = [make_share_insight("coordinator"), get_team_insights]
+    tools = [make_share_insight("coordinator"), get_team_insights, get_cycle_history]
     if extra_tools:
         tools.extend(extra_tools)
 
     return Agent(
         role='BUILD Coordinator',
-        goal='Orchestrate product_strategist, developer, and reviewer to produce a QA-passing website iteration',
+        goal='Orchestrate agents to build a startup-VC matching platform that connects startups with investors',
         backstory=backstory,
         llm=llm or get_llm("coordinator"),
         tools=tools,
@@ -397,22 +398,8 @@ def create_data_strategist(
     """
     backstory = _with_prompt_override(
         '''You are an expert in data quality, coverage analysis, and gap identification.
-        You can quickly spot where data is missing or outdated by comparing current coverage
-        against VC investment preferences and market trends.
-
-        Your expertise:
-        - Identifying data gaps by analyzing VC interests vs. startup coverage
-        - Searching the web to find and collect startup and VC data
-        - Prioritizing collection efforts based on business impact
-        - Ensuring data quality through validation
-        - Tracking data freshness and completeness metrics
-
-        You use web search tools to find startups and VCs, save them to the database,
-        and validate data quality. Your workflow:
-        1. Check database stats to understand current coverage
-        2. Search web for startups/VCs in underrepresented sectors
-        3. Save found data to database
-        4. Validate data quality
+        You find and collect startup and VC data, identify gaps in coverage,
+        and ensure data quality through validation.
         ''',
         prompt_override,
     )
@@ -476,6 +463,7 @@ def create_developer_agent(
     tools = [
         make_share_insight("developer"),
         get_team_insights,
+        get_cycle_history,
     ]
     if extra_tools:
         tools.extend(extra_tools)
@@ -525,6 +513,7 @@ def create_product_strategist(
         get_database_stats,
         make_share_insight("product_strategist"),
         get_team_insights,
+        get_cycle_history,
     ]
     if extra_tools:
         tools.extend(extra_tools)
@@ -570,6 +559,7 @@ def create_reviewer_agent(
         run_quality_checks_tool,
         make_share_insight("reviewer"),
         get_team_insights,
+        get_cycle_history,
     ]
     if extra_tools:
         tools.extend(extra_tools)

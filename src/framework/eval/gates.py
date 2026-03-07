@@ -1,4 +1,9 @@
-"""Gate evaluation rules."""
+"""Gate evaluation rules.
+
+Gates collect signals and report status (pass/warn/fail) as informational
+evidence.  All gates recommend "continue" — the evaluator and agents decide
+what action to take based on the evidence, not hardcoded rules.
+"""
 
 from __future__ import annotations
 
@@ -39,7 +44,6 @@ def _new_gate(
     gate_name: str,
     gate_status: str,
     evidence: dict,
-    recommended_action: str,
     run_id: Optional[str],
     cycle_id: Optional[int],
 ) -> GateDecision:
@@ -47,7 +51,7 @@ def _new_gate(
         gate_name=gate_name,
         gate_status=gate_status,
         evidence=evidence,
-        recommended_action=recommended_action,
+        recommended_action="continue",
         run_id=run_id,
         cycle_id=cycle_id,
     )
@@ -60,20 +64,17 @@ def evaluate_reliability(
     cycle_id: Optional[int] = None,
 ) -> GateDecision:
     status = "pass"
-    action = "continue"
 
     if (
         scorecard.completion_rate < thresholds.reliability_fail_completion_rate
         or scorecard.unhandled_exceptions > thresholds.reliability_fail_unhandled_exceptions
     ):
         status = "fail"
-        action = "stop"
     elif (
         scorecard.completion_rate < thresholds.reliability_warn_completion_rate
         or scorecard.unhandled_exceptions > thresholds.reliability_warn_unhandled_exceptions
     ):
         status = "warn"
-        action = "pause"
 
     return _new_gate(
         gate_name="reliability",
@@ -86,7 +87,6 @@ def evaluate_reliability(
             "warn_unhandled_exceptions": thresholds.reliability_warn_unhandled_exceptions,
             "fail_unhandled_exceptions": thresholds.reliability_fail_unhandled_exceptions,
         },
-        recommended_action=action,
         run_id=run_id,
         cycle_id=cycle_id,
     )
@@ -105,19 +105,15 @@ def evaluate_stability(
             gate_name="stability",
             gate_status="warn",
             evidence={"determinism_variance": None, "reason": "missing_determinism_signal"},
-            recommended_action="pause",
             run_id=run_id,
             cycle_id=cycle_id,
         )
 
     status = "pass"
-    action = "continue"
     if variance > thresholds.stability_fail_determinism_variance:
         status = "fail"
-        action = "pause"
     elif variance > thresholds.stability_warn_determinism_variance:
         status = "warn"
-        action = "continue"
 
     return _new_gate(
         gate_name="stability",
@@ -127,7 +123,6 @@ def evaluate_stability(
             "warn_threshold": thresholds.stability_warn_determinism_variance,
             "fail_threshold": thresholds.stability_fail_determinism_variance,
         },
-        recommended_action=action,
         run_id=run_id,
         cycle_id=cycle_id,
     )
@@ -145,19 +140,15 @@ def evaluate_learning(
             gate_name="learning",
             gate_status="warn",
             evidence={"procedure_score_delta": None, "reason": "missing_procedure_baseline"},
-            recommended_action="continue",
             run_id=run_id,
             cycle_id=cycle_id,
         )
 
     status = "pass"
-    action = "continue"
     if delta < thresholds.learning_fail_min_procedure_delta:
         status = "fail"
-        action = "rollback"
     elif delta < thresholds.learning_warn_min_procedure_delta:
         status = "warn"
-        action = "continue"
 
     return _new_gate(
         gate_name="learning",
@@ -167,7 +158,6 @@ def evaluate_learning(
             "warn_min_delta": thresholds.learning_warn_min_procedure_delta,
             "fail_min_delta": thresholds.learning_fail_min_procedure_delta,
         },
-        recommended_action=action,
         run_id=run_id,
         cycle_id=cycle_id,
     )
@@ -180,20 +170,17 @@ def evaluate_safety(
     cycle_id: Optional[int] = None,
 ) -> GateDecision:
     status = "pass"
-    action = "continue"
 
     if (
         scorecard.policy_violations > thresholds.safety_fail_policy_violations
         or scorecard.loop_denials > thresholds.safety_fail_loop_denials
     ):
         status = "fail"
-        action = "stop"
     elif (
         scorecard.policy_violations > thresholds.safety_warn_policy_violations
         or scorecard.loop_denials > thresholds.safety_warn_loop_denials
     ):
         status = "warn"
-        action = "pause"
 
     return _new_gate(
         gate_name="safety",
@@ -206,7 +193,6 @@ def evaluate_safety(
             "warn_loop_denials": thresholds.safety_warn_loop_denials,
             "fail_loop_denials": thresholds.safety_fail_loop_denials,
         },
-        recommended_action=action,
         run_id=run_id,
         cycle_id=cycle_id,
     )
@@ -219,7 +205,6 @@ def evaluate_efficiency(
     cycle_id: Optional[int] = None,
 ) -> GateDecision:
     status = "pass"
-    action = "continue"
 
     fail_duration = (
         thresholds.efficiency_fail_duration_seconds is not None
@@ -240,10 +225,8 @@ def evaluate_efficiency(
 
     if fail_duration or fail_tokens:
         status = "fail"
-        action = "pause"
     elif warn_duration or warn_tokens:
         status = "warn"
-        action = "continue"
 
     return _new_gate(
         gate_name="efficiency",
@@ -256,7 +239,6 @@ def evaluate_efficiency(
             "warn_tokens_used": thresholds.efficiency_warn_tokens_used,
             "fail_tokens_used": thresholds.efficiency_fail_tokens_used,
         },
-        recommended_action=action,
         run_id=run_id,
         cycle_id=cycle_id,
     )
@@ -277,4 +259,3 @@ def evaluate_all_gates(
         evaluate_safety(scorecard, t, run_id=run_id, cycle_id=cycle_id),
         evaluate_efficiency(scorecard, t, run_id=run_id, cycle_id=cycle_id),
     ]
-

@@ -58,18 +58,15 @@ class StartupVCAdapter(BaseDomainAdapter):
         )
         self._workspace_server_port = int(workspace_server_port)
         self._workspace_server: Any = None
-        self._workspace_versioning: Any = None
         self._http_check_results: Optional[Dict[str, Any]] = None
 
         if self._workspace_root:
             from src.workspace_tools.server import WorkspaceServer
-            from src.workspace_tools.versioning import WorkspaceVersioning
 
             self._workspace_server = WorkspaceServer(
                 self._workspace_root,
                 port=self._workspace_server_port,
             )
-            self._workspace_versioning = WorkspaceVersioning(self._workspace_root)
 
     def build_cycle_tasks(self, run_context: Any) -> List[TaskSpec]:
         cycle_id = int(getattr(run_context, "cycle_id", 0))
@@ -223,34 +220,7 @@ class StartupVCAdapter(BaseDomainAdapter):
                 )
             )
 
-        if action == "rollback":
-            updates.append(
-                ProcedureUpdateProposal(
-                    task_type="startup_vc_matching",
-                    workflow={
-                        "steps": [
-                            "use_previous_scoring_weights",
-                            "freeze_new_features",
-                            "collect_additional_evidence",
-                        ]
-                    },
-                    score=0.40,
-                    provenance="adapter:rollback",
-                    source_evidence={"evaluation_result_id": evaluation_result.entity_id},
-                )
-            )
-
         return updates
-
-    def snapshot_workspace(self, cycle_id: int) -> Optional[Dict[str, Any]]:
-        """Take a versioned snapshot of the workspace at the start of a cycle."""
-        if self._workspace_versioning is None:
-            return None
-        try:
-            return self._workspace_versioning.snapshot(cycle_id)
-        except Exception as exc:
-            logger.warning("Workspace snapshot failed for cycle %s: %s", cycle_id, exc)
-            return None
 
     def stop_workspace_server(self) -> None:
         """Stop the workspace HTTP server."""

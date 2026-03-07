@@ -91,13 +91,7 @@ def create_learn_phase_task(coordinator, build_results: str) -> Task:
         factor usability issues and feature requests into your recommendations.
         ''',
         agent=coordinator,
-        expected_output='''Learning report including:
-        - Key successes (what worked and why)
-        - Areas for improvement (what didn't work and why)
-        - Specific insights (up to 5 concrete learnings — focus on the most actionable)
-        - Recommendations for next iteration (coordinator, product, developer as applicable)
-        - Predicted improvement in key metrics
-        ''',
+        expected_output="Insights and recommendations for the next iteration.",
     )
 
 
@@ -235,17 +229,12 @@ def _create_coordinator_build_task(
     available agent roles, explains dispatch_task usage, and appends any
     learning context from previous iterations.
     """
-    description = f'''[Iteration {iteration}] Orchestrate the BUILD phase for a startup-VC matching website.
+    description = f'''[Iteration {iteration}] Build a startup-VC matching platform that connects startups with venture capital investors.
 
-    The website is HTML/CSS/JS + Python FastAPI backend.
     Available agents: {", ".join(available_roles)}
+    Dispatch tools: dispatch_task_to_agent (sequential), dispatch_parallel_tasks (concurrent).
 
-    You have two dispatch tools:
-    - dispatch_task_to_agent: dispatch one task at a time
-    - dispatch_parallel_tasks: dispatch multiple independent tasks concurrently
-
-    Start by calling your dispatch tools now to assign work to agents.
-    Do not just describe a plan — use the tools to execute it.
+    Call your dispatch tools now.
     '''
 
     if extra_context:
@@ -254,12 +243,7 @@ def _create_coordinator_build_task(
     return Task(
         description=description,
         agent=coordinator_agent,
-        expected_output='''BUILD phase summary including:
-        - What was dispatched and to whom
-        - What was built or improved (with filenames)
-        - QA status (PASS/FAIL) and any remaining issues
-        - Recommendations for next iteration
-        ''',
+        expected_output="Summary of what was built and current status.",
     )
 
 
@@ -379,18 +363,17 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         return str(overrides.get(key, "")).strip()
 
     def _run_quality_gate(self) -> Dict[str, Any]:
-        """Run deterministic QA checks and return parsed JSON output.
+        """Run informational QA checks and return parsed JSON output.
 
-        Checks:
-        1. Python syntax on src/ and scripts/ (fast, catches real bugs)
-        2. Workspace validation — at least one non-placeholder HTML file exists
-        Skips pytest entirely — integration tests belong in CI, not the agent loop.
+        Collects signals (syntax, workspace content, HTTP) but does NOT
+        make a blocking pass/fail decision — that is left to the evaluate
+        phase so agents retain control over iteration flow.
         """
         from src.crewai_agents.tools import run_quality_checks_tool
 
         result: Dict[str, Any] = {}
 
-        # 1. Python syntax check (skip pytest to avoid timeout)
+        # 1. Python syntax check
         try:
             raw = run_quality_checks_tool.run(
                 paths_csv="src,scripts,workspace",
@@ -402,22 +385,11 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             if isinstance(parsed, dict):
                 result = parsed
             else:
-                result = {
-                    "status": "failed",
-                    "qa_gate_passed": False,
-                    "reason": "qa_tool_non_object_response",
-                    "raw": raw,
-                }
+                result = {"status": "unknown", "raw": raw}
         except Exception as exc:
-            result = {
-                "status": "failed",
-                "qa_gate_passed": False,
-                "reason": "qa_tool_exception",
-                "error": str(exc),
-            }
+            result = {"status": "error", "error": str(exc)}
 
-        # 2. Workspace validation — check for real HTML content
-        workspace_ok = False
+        # 2. Workspace content inventory
         workspace_info: Dict[str, Any] = {}
         try:
             from src.workspace_tools.file_tools import _read_impl, _list_impl
@@ -428,56 +400,41 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             workspace_info["file_count"] = len(files)
             workspace_info["html_files"] = html_files
 
-            placeholder_markers = [
-                "waiting for agents to build",
-                "<p>placeholder</p>",
-            ]
             non_placeholder_count = 0
             for html_file in html_files:
                 content_result = _read_impl(html_file)
                 if content_result.get("status") == "ok":
                     content = (content_result.get("content") or "").lower()
-                    is_placeholder = any(m in content for m in placeholder_markers)
+                    is_placeholder = "waiting for agents to build" in content
                     if not is_placeholder and len(content.strip()) > 100:
                         non_placeholder_count += 1
 
             workspace_info["non_placeholder_html_count"] = non_placeholder_count
-            workspace_ok = non_placeholder_count > 0
         except Exception as ws_exc:
             workspace_info["error"] = str(ws_exc)
 
         result["workspace"] = workspace_info
-        result["workspace_ok"] = workspace_ok
 
-        # 3. HTTP checks — verify pages actually load via a temp server
-        http_ok = True  # non-blocking: degrades gracefully if server can't start
+        # 3. HTTP checks
         http_info: Dict[str, Any] = {}
-        if workspace_ok:
-            try:
-                from src.workspace_tools.file_tools import _check_http_impl
+        try:
+            from src.workspace_tools.file_tools import _check_http_impl
 
-                http_result = _check_http_impl()
-                if http_result.get("status") == "ok":
-                    http_info = http_result
-                    landing_score = float(http_result.get("http_landing_score", 0.0))
-                    # Fail gate if landing page doesn't load at all
-                    if landing_score < 1.0:
-                        http_ok = False
-                else:
-                    http_info = http_result
-            except Exception as http_exc:
-                http_info["error"] = str(http_exc)
+            http_result = _check_http_impl()
+            if http_result.get("status") == "ok":
+                http_info = http_result
+            else:
+                http_info = http_result
+        except Exception as http_exc:
+            http_info["error"] = str(http_exc)
 
         result["http_checks"] = http_info
-        result["http_ok"] = http_ok
 
-        # Gate passes if syntax is clean AND workspace has real content AND landing loads
+        # Informational flag — the evaluate phase decides what to do with it
         syntax_ok = bool((result.get("syntax") or {}).get("syntax_ok", True))
-        result["qa_gate_passed"] = syntax_ok and workspace_ok and http_ok
-        if not workspace_ok:
-            result.setdefault("status", "failed")
-        if not http_ok:
-            result.setdefault("status", "failed")
+        has_content = workspace_info.get("non_placeholder_html_count", 0) > 0
+        landing_score = float(http_info.get("http_landing_score", 0.0))
+        result["qa_gate_passed"] = syntax_ok and has_content and landing_score >= 1.0
 
         return result
 
@@ -516,6 +473,23 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 server.stop()
         except Exception as exc:
             logger.warning("Customer testing skipped: %s", exc)
+
+    def _clear_feedback_db(self) -> None:
+        """Delete all rows from feedback.db so each iteration starts fresh."""
+        import sqlite3 as _sqlite3
+        from src.workspace_tools.file_tools import _workspace_root
+
+        try:
+            if _workspace_root is None:
+                return
+            db_path = _workspace_root / "feedback.db"
+            if not db_path.exists():
+                return
+            with _sqlite3.connect(str(db_path)) as conn:
+                conn.execute("DELETE FROM feedback")
+            logger.debug("Cleared feedback.db for new iteration")
+        except Exception:
+            pass  # table may not exist yet
 
     def _collect_user_feedback(self) -> str:
         """Collect real user feedback from workspace/feedback.db (SQLite).
@@ -737,12 +711,11 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                     list_workspace_files,
                     review_workspace_files,
                     check_workspace_http,
-                    submit_test_feedback,
                 )
                 ws_dev_tools = [
                     read_workspace_file, write_workspace_file,
                     list_workspace_files,
-                    check_workspace_http, submit_test_feedback,
+                    check_workspace_http,
                 ]
                 ws_product_tools = [
                     read_workspace_file, list_workspace_files,
@@ -827,18 +800,6 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                     else f"[QA_REMEDIATION]\n{extra}"
                 )
 
-            # Reviewer completeness check: if developer was dispatched but
-            # reviewer was not, force a reviewer dispatch so QA is re-run.
-            remediation_roles = [h["agent_role"] for h in _get_remediation_history()]
-            if "developer" in remediation_roles and "reviewer" not in remediation_roles:
-                logger.warning("Remediation skipped reviewer; forcing reviewer dispatch")
-                try:
-                    remediation_dispatch.run(
-                        agent_role="reviewer",
-                        task_description="Developer applied fixes. Run QA checks and report PASS/FAIL.",
-                    )
-                except Exception as rev_exc:
-                    logger.warning("Forced reviewer dispatch failed: %s", rev_exc)
         except Exception as exc:
             logger.warning(f"Coordinator remediation failed: {exc}")
 
@@ -962,6 +923,10 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         # Deterministic QA gate
         self.state.qa_result = self._run_quality_gate()
         self.state.qa_passed = self._qa_passed()
+
+        # Clear stale feedback from prior iterations before running new tests
+        if self.state.workspace_enabled:
+            self._clear_feedback_db()
 
         # LLM-powered customer testing
         if self.state.workspace_enabled:
@@ -1283,8 +1248,8 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         # Keep overrides bounded for deterministic prompt size.
         for key, value in list(updated.items()):
             text = str(value).strip()
-            if len(text) > 1200:
-                updated[key] = text[-1200:]
+            if len(text) > 3000:
+                updated[key] = text[-3000:]
 
         self.state.prompt_overrides = updated
 

@@ -10,11 +10,8 @@ import pytest
 from src.workspace_tools.file_tools import (
     _check_http_impl,
     _list_impl,
-    _list_snapshots_impl,
     _read_impl,
-    _restore_impl,
     _run_sql_impl,
-    _snapshot_impl,
     _submit_feedback_impl,
     _write_impl,
     configure_workspace_root,
@@ -254,56 +251,6 @@ def test_http_check_unconfigured_root():
     result = _check_http_impl()
     assert result["status"] == "error"
     assert "not configured" in result["reason"].lower()
-
-
-# ---------------------------------------------------------------------------
-# Workspace versioning tests
-# ---------------------------------------------------------------------------
-
-
-def test_snapshot_and_restore(workspace: Path):
-    """Snapshot, modify, restore should recover original content."""
-    (workspace / "page.html").write_text("original", encoding="utf-8")
-
-    snap = _snapshot_impl(1)
-    assert snap["status"] == "ok"
-    assert snap["file_count"] >= 1
-
-    # Modify
-    (workspace / "page.html").write_text("modified", encoding="utf-8")
-    assert (workspace / "page.html").read_text(encoding="utf-8") == "modified"
-
-    # Restore
-    restore = _restore_impl(1)
-    assert restore["status"] == "ok"
-    assert (workspace / "page.html").read_text(encoding="utf-8") == "original"
-
-
-def test_list_snapshots(workspace: Path):
-    """list_snapshots should show taken snapshots."""
-    (workspace / "f.txt").write_text("x", encoding="utf-8")
-    _snapshot_impl(1)
-    _snapshot_impl(2)
-
-    result = _list_snapshots_impl()
-    assert result["status"] == "ok"
-    ids = [s["cycle_id"] for s in result["snapshots"]]
-    assert 1 in ids
-    assert 2 in ids
-
-
-def test_restore_missing_snapshot(workspace: Path):
-    """Restoring a non-existent snapshot should error."""
-    result = _restore_impl(999)
-    assert result["status"] == "error"
-
-
-def test_snapshot_unconfigured_root():
-    """Snapshot should error when workspace root is None."""
-    _ft._workspace_root = None
-    assert _snapshot_impl(1)["status"] == "error"
-    assert _restore_impl(1)["status"] == "error"
-    assert _list_snapshots_impl()["status"] == "error"
 
 
 # ---------------------------------------------------------------------------

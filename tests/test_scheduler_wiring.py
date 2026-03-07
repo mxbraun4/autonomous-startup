@@ -72,8 +72,6 @@ def test_create_web_run_controller_applies_policy_and_schedule_overrides(tmp_pat
             str(tmp_path / "checkpoints"),
             "--schedule-json",
             '{"trigger":"cron","expression":"*/15 * * * *"}',
-            "--max-self-heal-attempts",
-            "4",
             "--auto-resume-on-pause",
             "--pause-cooldown-seconds",
             "2",
@@ -88,7 +86,6 @@ def test_create_web_run_controller_applies_policy_and_schedule_overrides(tmp_pat
 
     run_config = controller._run_config
     assert run_config.schedules == [{"trigger": "cron", "expression": "*/15 * * * *"}]
-    assert run_config.policies["max_self_heal_attempts"] == 4
     assert run_config.policies["auto_resume_on_pause"] is True
     assert run_config.policies["pause_cooldown_seconds"] == 2.0
     assert run_config.policies["adaptive_policy_reliability_streak"] == 5

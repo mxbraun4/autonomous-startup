@@ -22,14 +22,6 @@ from src.framework.safety.budget_manager import BudgetManager
 from src.framework.safety.limits import BudgetLimits
 
 
-class LearningApplyResult(BaseModel):
-    """Learning updates applied during a cycle, needed for rollbacks."""
-
-    policy_version_before: Optional[int] = None
-    policy_version_after: Optional[int] = None
-    applied_procedure_versions: Dict[str, int] = Field(default_factory=dict)
-
-
 class CycleOutcome(BaseModel):
     """Execution summary for one completed autonomy cycle."""
 
@@ -128,10 +120,6 @@ class AutonomyLoop:
         result = LoopResult(run_id=self._run_id)
         term_state = TerminationState()
         prior_metrics = previous_metrics
-        last_known_good_checkpoint: Optional[str] = None
-        rollback_retry_active = False
-        self_heal_attempts = 0
-        pause_retry_counts: Dict[int, int] = {}
 
         cycle_id = start_cycle
         while True:
@@ -139,7 +127,6 @@ class AutonomyLoop:
                 self._context,
                 limits=_budget_limits_for_context(self._context),
             )
-            # Resume safety: if checkpoint already completed max cycle budget, stop immediately.
             if cycle_id > self._termination_policy.max_cycles:
                 result.final_action = "stop"
                 result.final_reason = "max_cycles_reached"
@@ -198,32 +185,18 @@ class AutonomyLoop:
                 previous_metrics=prior_metrics,
             )
 
-            learning_result = self._apply_learning(evaluation, metrics)
+            self._apply_learning(evaluation, metrics)
             adaptive_adjustments = []
             if self._adaptive_policy_controller is not None:
                 adaptive_adjustments = self._adaptive_policy_controller.apply(evaluation)
 
-            if rollback_retry_active and evaluation.overall_status == "fail":
-                decision = TerminationDecision(
-                    action="stop",
-                    reason="self_heal_rerun_failed",
-                )
-                self._emit(
-                    "run.self_heal_failed",
-                    {
-                        "run_id": self._run_id,
-                        "cycle_id": cycle_id,
-                        "reason": decision.reason,
-                    },
-                )
-            else:
-                decision = evaluate_termination(
-                    cycle_id=cycle_id,
-                    policy=self._termination_policy,
-                    state=term_state,
-                    budget_ok=budget_manager.check_budget(),
-                    evaluation_result=evaluation,
-                )
+            decision = evaluate_termination(
+                cycle_id=cycle_id,
+                policy=self._termination_policy,
+                state=term_state,
+                budget_ok=budget_manager.check_budget(),
+                evaluation_result=evaluation,
+            )
 
             completed_tasks = list(getattr(execution_result, "task_results", {}).keys())
             checkpoint_path = None
@@ -249,11 +222,6 @@ class AutonomyLoop:
                 checkpoint_path=checkpoint_path,
                 metadata={
                     "evaluation_result_id": evaluation.entity_id,
-                    "policy_version_before": learning_result.policy_version_before,
-                    "policy_version_after": learning_result.policy_version_after,
-                    "applied_procedure_versions": dict(
-                        learning_result.applied_procedure_versions
-                    ),
                     "adaptive_adjustments": [
                         item.model_dump(mode="json") for item in adaptive_adjustments
                     ],
@@ -269,73 +237,7 @@ class AutonomyLoop:
                     cycle_id=cycle_id,
                 )
 
-            if decision.action == "rollback":
-                if not self._termination_policy.enable_rollback_self_heal:
-                    result.final_action = "stop"
-                    result.final_reason = "gate_rollback_manual_review"
-                    result.final_status = _final_status("stop", result.final_reason)
-                    return result
-
-                if self_heal_attempts >= self._termination_policy.max_self_heal_attempts:
-                    result.final_action = "stop"
-                    result.final_reason = "self_heal_attempts_exhausted"
-                    result.final_status = _final_status("stop", result.final_reason)
-                    self._emit(
-                        "run.self_heal_failed",
-                        {
-                            "run_id": self._run_id,
-                            "cycle_id": cycle_id,
-                            "reason": result.final_reason,
-                        },
-                    )
-                    return result
-
-                restored = self._self_heal_with_rollback(
-                    checkpoint_path=last_known_good_checkpoint,
-                    learning_result=learning_result,
-                    cycle_id=cycle_id,
-                )
-                if not restored:
-                    result.final_action = "stop"
-                    result.final_reason = "self_heal_rollback_failed"
-                    result.final_status = _final_status("stop", result.final_reason)
-                    self._emit(
-                        "run.self_heal_failed",
-                        {
-                            "run_id": self._run_id,
-                            "cycle_id": cycle_id,
-                            "reason": result.final_reason,
-                        },
-                    )
-                    return result
-
-                self_heal_attempts += 1
-                rollback_retry_active = True
-                continue
-
             if decision.action == "pause" and self._termination_policy.auto_resume_on_pause:
-                retry_count = pause_retry_counts.get(cycle_id, 0)
-                if retry_count >= 1:
-                    result.final_action = "stop"
-                    result.final_reason = "repeated_gate_pause_after_resume"
-                    result.final_status = _final_status("stop", result.final_reason)
-                    self._emit(
-                        "run.self_heal_failed",
-                        {
-                            "run_id": self._run_id,
-                            "cycle_id": cycle_id,
-                            "reason": result.final_reason,
-                        },
-                    )
-                    return result
-                if self_heal_attempts >= self._termination_policy.max_self_heal_attempts:
-                    result.final_action = "stop"
-                    result.final_reason = "self_heal_attempts_exhausted"
-                    result.final_status = _final_status("stop", result.final_reason)
-                    return result
-
-                pause_retry_counts[cycle_id] = retry_count + 1
-                self_heal_attempts += 1
                 cooldown = max(0.0, self._termination_policy.pause_cooldown_seconds)
                 self._emit(
                     "run.pause_cooldown",
@@ -353,7 +255,6 @@ class AutonomyLoop:
                         run_config=self._context.run_config,
                     )
                     self._context = loaded.context
-                rollback_retry_active = False
                 continue
 
             prior_metrics = metrics
@@ -364,48 +265,29 @@ class AutonomyLoop:
                 result.final_status = _final_status(decision.action, decision.reason)
                 return result
 
-            if evaluation.overall_status != "fail":
-                last_known_good_checkpoint = checkpoint_path or last_known_good_checkpoint
-                self_heal_attempts = 0
-                rollback_retry_active = False
-                pause_retry_counts.pop(cycle_id, None)
-
             cycle_id += 1
 
     def _apply_learning(
         self,
         evaluation: EvaluationResult,
         metrics: CycleMetrics,
-    ) -> LearningApplyResult:
-        result = LearningApplyResult()
+    ) -> None:
         if self._policy_updater is not None:
             current_policies = dict(getattr(self._context.run_config, "policies", {}) or {})
-            history_before = self._policy_updater.history()
-            if history_before:
-                result.policy_version_before = history_before[-1].version
             patches = self._policy_updater.propose_patches(
                 evaluation_result=evaluation,
                 current_policies=current_policies,
             )
             if patches:
-                version = self._policy_updater.apply_patches(
-                    current_policies=current_policies,
-                    patches=patches,
-                    source_evidence={"evaluation_result_id": evaluation.entity_id},
-                )
                 self._emit(
                     "policy_patch_applied",
                     {
                         "run_id": self._run_id,
                         "cycle_id": metrics.cycle_id,
-                        "version_before": result.policy_version_before,
-                        "version_after": version.version,
                         "patches": [p.model_dump(mode="json") for p in patches],
                         "source_evidence": {"evaluation_result_id": evaluation.entity_id},
                     },
                 )
-                self._context.run_config.policies = dict(version.policies)
-                result.policy_version_after = version.version
 
         if (
             self._procedure_updater is not None
@@ -430,10 +312,6 @@ class AutonomyLoop:
                         "source_evidence": getattr(proposal, "source_evidence", None),
                     },
                 )
-                if task_type:
-                    result.applied_procedure_versions[task_type] = max(1, current_version - 1)
-
-        return result
 
     def _build_exploratory_tasks(self, tasks: List[TaskSpec]) -> List[TaskSpec]:
         policies = dict(getattr(self._context.run_config, "policies", {}) or {})
@@ -443,56 +321,6 @@ class AutonomyLoop:
         except (TypeError, ValueError):
             limit = 1
         return list(tasks[:limit])
-
-    def _self_heal_with_rollback(
-        self,
-        *,
-        checkpoint_path: Optional[str],
-        learning_result: LearningApplyResult,
-        cycle_id: int,
-    ) -> bool:
-        rolled_back_anything = False
-
-        if (
-            self._policy_updater is not None
-            and learning_result.policy_version_before is not None
-        ):
-            restored = self._policy_updater.rollback_to_version(
-                learning_result.policy_version_before
-            )
-            if restored is not None:
-                self._context.run_config.policies = dict(restored.policies)
-                rolled_back_anything = True
-
-        if self._procedure_updater is not None:
-            for task_type, target_version in learning_result.applied_procedure_versions.items():
-                self._procedure_updater.rollback(
-                    task_type=task_type,
-                    target_version=target_version,
-                )
-                rolled_back_anything = True
-
-        if checkpoint_path and self._checkpoint_manager is not None:
-            try:
-                loaded = self._checkpoint_manager.load(
-                    checkpoint_path=checkpoint_path,
-                    run_config=self._context.run_config,
-                )
-                self._context = loaded.context
-                rolled_back_anything = True
-            except Exception:
-                return False
-
-        self._emit(
-            "run.self_heal_rollback",
-            {
-                "run_id": self._run_id,
-                "cycle_id": cycle_id,
-                "checkpoint_path": checkpoint_path,
-                "rolled_back_anything": rolled_back_anything,
-            },
-        )
-        return rolled_back_anything
 
     def _emit(self, event_type: str, payload: Any) -> None:
         if self._event_emitter is not None:

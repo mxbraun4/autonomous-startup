@@ -157,19 +157,3 @@ class TestHTTPChecksMergeIntoSimulation:
         assert "http_navigation_score" in checks
 
 
-class TestVersioningThroughAdapter:
-    """snapshot_workspace should create a versioned copy."""
-
-    def test_versioning_through_adapter(self, tmp_path: Path) -> None:
-        ws = _create_workspace(tmp_path)
-        adapter = StartupVCAdapter(workspace_root=str(ws))
-
-        snap = adapter.snapshot_workspace(1)
-
-        assert snap is not None, "snapshot_workspace must return a dict"
-        assert snap["cycle_id"] == 1
-        snapshot_path = Path(snap["path"])
-        assert snapshot_path.exists(), "Snapshot directory must exist on disk"
-        assert snap["file_count"] >= 2, (
-            "Snapshot should contain at least the workspace fixture files"
-        )
