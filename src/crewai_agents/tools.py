@@ -1155,6 +1155,69 @@ def get_team_insights(topic: str = "") -> str:
     }, indent=2)
 
 
+@tool("Get Cycle History")
+def get_cycle_history(limit: int = 10) -> str:
+    """Retrieve results from previous Build-Measure-Learn cycles.
+
+    Returns a summary of past iterations including QA pass/fail status,
+    task counts, and success rates. Use this to understand what worked
+    and what failed in prior iterations so you can avoid repeating mistakes.
+
+    Args:
+        limit: Maximum number of past cycles to return (default 10)
+
+    Returns:
+        JSON with cycle history entries
+    """
+    store = get_memory_store()
+    if store is None:
+        return json.dumps({
+            "status": "skipped",
+            "reason": "Memory store not initialised",
+            "cycles": [],
+        })
+
+    from src.framework.types import EpisodeType as _EpType
+
+    try:
+        episodes = store.ep_search_structured(
+            episode_type=_EpType.LEARNING,
+            limit=max(1, min(limit, 50)),
+        )
+    except Exception as exc:
+        return json.dumps({"status": "error", "reason": str(exc), "cycles": []})
+
+    cycles = []
+    for ep in episodes:
+        m = ep.outcome or {}
+        cycles.append({
+            "iteration": ep.iteration,
+            "qa_passed": m.get("qa_passed", False),
+            "task_count": m.get("task_count", 0),
+            "success_count": m.get("success_count", 0),
+            "failure_count": m.get("failure_count", 0),
+            "summary": ep.summary_text or "",
+        })
+
+    el = get_event_logger()
+    if el is not None:
+        el.emit("agent_exchange", {
+            "exchange_type": "get_cycle_history",
+            "from_agent": "crewai_agent",
+            "count": len(cycles),
+            "cycle_id": _current_cycle_id,
+        })
+
+    return json.dumps({
+        "status": "success",
+        "count": len(cycles),
+        "cycles": cycles,
+    }, indent=2)
+
+
+get_cycle_history.cache_function = _NO_CACHE
+
+
 # =============================================================================
 # DISPATCH TASK TOOL — coordinator-driven dynamic agent orchestration
 # =============================================================================
@@ -1188,14 +1251,14 @@ def make_dispatch_task_tool(
     _ROLE_INSTRUCTIONS = {
         "developer": (
             "Tools: write_workspace_file, read_workspace_file, "
-            "check_workspace_http, list_workspace_files.\n"
+            "check_workspace_http, list_workspace_files, get_cycle_history.\n"
         ),
         "reviewer": (
             "Tools: review_workspace_files, check_workspace_http, "
-            "run_quality_checks_tool.\n"
+            "run_quality_checks_tool, get_cycle_history.\n"
         ),
         "product_strategist": (
-            "Tools: list_workspace_files, read_workspace_file, share_insight.\n"
+            "Tools: list_workspace_files, read_workspace_file, share_insight, get_cycle_history.\n"
             "Note: other agents can only see insights you share, not your raw output.\n"
         ),
     }

@@ -87,12 +87,8 @@ class RunController:
         policies = dict(getattr(run_config, "policies", {}) or {})
         self._termination_policy = termination_policy or TerminationPolicy(
             max_cycles=run_config.max_cycles,
-            max_self_heal_attempts=int(policies.get("max_self_heal_attempts", 2)),
             auto_resume_on_pause=bool(policies.get("auto_resume_on_pause", False)),
             pause_cooldown_seconds=float(policies.get("pause_cooldown_seconds", 0.0)),
-            enable_rollback_self_heal=bool(
-                policies.get("enable_rollback_self_heal", True)
-            ),
         )
         if measure_fn is not None:
             self._measure_fn = measure_fn

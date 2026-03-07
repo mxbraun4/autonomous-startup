@@ -1248,8 +1248,8 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         # Keep overrides bounded for deterministic prompt size.
         for key, value in list(updated.items()):
             text = str(value).strip()
-            if len(text) > 1200:
-                updated[key] = text[-1200:]
+            if len(text) > 3000:
+                updated[key] = text[-3000:]
 
         self.state.prompt_overrides = updated
 

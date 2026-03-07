@@ -247,55 +247,6 @@ def _check_http_impl(pages: str = "") -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Workspace versioning helpers
-# ---------------------------------------------------------------------------
-
-
-def _snapshot_impl(cycle_id: int) -> dict:
-    """Take a versioned snapshot of the workspace."""
-    if _workspace_root is None:
-        return {"status": "error", "reason": "Workspace root is not configured. Call configure_workspace_root first."}
-
-    from src.workspace_tools.versioning import WorkspaceVersioning
-
-    try:
-        v = WorkspaceVersioning(_workspace_root)
-        result = v.snapshot(cycle_id)
-        return {"status": "ok", **result}
-    except Exception as exc:
-        return {"status": "error", "reason": str(exc)}
-
-
-def _restore_impl(cycle_id: int) -> dict:
-    """Restore the workspace from a snapshot."""
-    if _workspace_root is None:
-        return {"status": "error", "reason": "Workspace root is not configured. Call configure_workspace_root first."}
-
-    from src.workspace_tools.versioning import WorkspaceVersioning
-
-    try:
-        v = WorkspaceVersioning(_workspace_root)
-        return v.restore(cycle_id)
-    except Exception as exc:
-        return {"status": "error", "reason": str(exc)}
-
-
-def _list_snapshots_impl() -> dict:
-    """List all workspace snapshots."""
-    if _workspace_root is None:
-        return {"status": "error", "reason": "Workspace root is not configured. Call configure_workspace_root first."}
-
-    from src.workspace_tools.versioning import WorkspaceVersioning
-
-    try:
-        v = WorkspaceVersioning(_workspace_root)
-        snapshots = v.list_snapshots()
-        return {"status": "ok", "snapshots": snapshots}
-    except Exception as exc:
-        return {"status": "error", "reason": str(exc)}
-
-
-# ---------------------------------------------------------------------------
 # Test feedback helper
 # ---------------------------------------------------------------------------
 
@@ -432,32 +383,6 @@ def check_workspace_http(pages: str = "") -> str:
     return json.dumps(_check_http_impl(pages))
 
 
-@tool("Snapshot Workspace")
-def snapshot_workspace(cycle_id: int) -> str:
-    """Save a versioned snapshot of the entire workspace.
-
-    Use this before making risky changes so you can restore later.
-    Pass the current iteration number as ``cycle_id``.
-    """
-    return json.dumps(_snapshot_impl(cycle_id))
-
-
-@tool("Restore Workspace")
-def restore_workspace(cycle_id: int) -> str:
-    """Restore the workspace from a previously saved snapshot.
-
-    Pass the ``cycle_id`` of the snapshot to restore.  This replaces all
-    current workspace files with the snapshot contents.
-    """
-    return json.dumps(_restore_impl(cycle_id))
-
-
-@tool("List Workspace Snapshots")
-def list_workspace_snapshots() -> str:
-    """List all available workspace snapshots with their cycle IDs and file counts."""
-    return json.dumps(_list_snapshots_impl())
-
-
 @tool("Submit Test Feedback")
 def submit_test_feedback(page: str, feedback_type: str, message: str) -> str:
     """Submit a test feedback entry to workspace/feedback.db.
@@ -474,7 +399,4 @@ list_workspace_files.cache_function = _NO_CACHE
 review_workspace_files.cache_function = _NO_CACHE
 run_workspace_sql.cache_function = _NO_CACHE
 check_workspace_http.cache_function = _NO_CACHE
-snapshot_workspace.cache_function = _NO_CACHE
-restore_workspace.cache_function = _NO_CACHE
-list_workspace_snapshots.cache_function = _NO_CACHE
 submit_test_feedback.cache_function = _NO_CACHE

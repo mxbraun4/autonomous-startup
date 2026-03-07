@@ -14,9 +14,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 TARGETS = [
-    # Workspace version snapshots
-    ROOT / "workspace" / ".versions",
-
     # Memory stores
     ROOT / "data" / "memory",
 
@@ -30,7 +27,7 @@ TARGETS = [
     ROOT / "data" / "crewai_local_runtime",
 ]
 
-# Workspace files to remove (everything except .gitkeep / .versions)
+# Workspace files to remove (everything except .gitkeep)
 WORKSPACE_DIR = ROOT / "workspace"
 
 # Files/dirs that should survive cleaning
@@ -45,8 +42,6 @@ def _workspace_generated_files() -> list[Path]:
     for p in WORKSPACE_DIR.iterdir():
         if p.name in WORKSPACE_KEEP:
             continue
-        if p.name == ".versions":
-            continue  # handled as a target above
         items.append(p)
     return items
 

@@ -26,6 +26,7 @@ from src.crewai_agents.tools import (
     # Consensus memory tools
     share_insight,
     get_team_insights,
+    get_cycle_history,
     # Role-aware share_insight factory
     make_share_insight,
 )
@@ -363,7 +364,7 @@ def create_build_coordinator(
         prompt_override,
     )
 
-    tools = [make_share_insight("coordinator"), get_team_insights]
+    tools = [make_share_insight("coordinator"), get_team_insights, get_cycle_history]
     if extra_tools:
         tools.extend(extra_tools)
 
@@ -462,6 +463,7 @@ def create_developer_agent(
     tools = [
         make_share_insight("developer"),
         get_team_insights,
+        get_cycle_history,
     ]
     if extra_tools:
         tools.extend(extra_tools)
@@ -511,6 +513,7 @@ def create_product_strategist(
         get_database_stats,
         make_share_insight("product_strategist"),
         get_team_insights,
+        get_cycle_history,
     ]
     if extra_tools:
         tools.extend(extra_tools)
@@ -556,6 +559,7 @@ def create_reviewer_agent(
         run_quality_checks_tool,
         make_share_insight("reviewer"),
         get_team_insights,
+        get_cycle_history,
     ]
     if extra_tools:
         tools.extend(extra_tools)

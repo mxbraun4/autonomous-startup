@@ -150,7 +150,7 @@ class TestStartupVCDomainPolicyHook:
 # ---------------------------------------------------------------------------
 
 from src.framework.contracts import CycleMetrics, EvaluationResult, TaskSpec
-from src.framework.learning.policy_updater import PolicyPatch, PolicyVersion
+from src.framework.learning.policy_updater import PolicyPatch
 from src.framework.learning.procedure_updater import ProcedureUpdateProposal
 from src.framework.observability.events import EVENT_TYPES_REQUIRED
 from src.framework.runtime.startup_vc_agents import _extract_crew_reasoning
@@ -194,16 +194,10 @@ class TestPolicyPatchAppliedEvent:
         spy = _SpyEmitter()
 
         class _FakePolicyUpdater:
-            def history(self):
-                return [type("V", (), {"version": 1})()]
-
             def propose_patches(self, evaluation_result, current_policies):
                 return [
                     PolicyPatch(key="k", old_value="a", new_value="b", reason="test"),
                 ]
-
-            def apply_patches(self, current_policies, patches, source_evidence):
-                return PolicyVersion(version=2, policies={"k": "b"})
 
         class _Ctx:
             class run_config:
@@ -226,8 +220,6 @@ class TestPolicyPatchAppliedEvent:
         payload = spy.payloads_for("policy_patch_applied")[0]
         assert payload["run_id"] == "r1"
         assert payload["cycle_id"] == 3
-        assert payload["version_before"] == 1
-        assert payload["version_after"] == 2
         assert len(payload["patches"]) == 1
         assert payload["patches"][0]["key"] == "k"
 
@@ -237,9 +229,6 @@ class TestPolicyPatchAppliedEvent:
         spy = _SpyEmitter()
 
         class _FakePolicyUpdater:
-            def history(self):
-                return []
-
             def propose_patches(self, evaluation_result, current_policies):
                 return []
 

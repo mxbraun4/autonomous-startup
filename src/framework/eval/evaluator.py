@@ -12,8 +12,7 @@ from src.framework.eval.scorecard import build_scorecard
 _ACTION_PRIORITY = {
     "continue": 0,
     "pause": 1,
-    "rollback": 2,
-    "stop": 3,
+    "stop": 2,
 }
 
 

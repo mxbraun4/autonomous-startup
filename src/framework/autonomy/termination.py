@@ -21,16 +21,14 @@ class TerminationPolicy(BaseModel):
     max_cycles: int = 10
     critical_failure_threshold: int = 3
     stop_on_policy_violation: bool = True
-    max_self_heal_attempts: int = 2
     auto_resume_on_pause: bool = False
     pause_cooldown_seconds: float = 0.0
-    enable_rollback_self_heal: bool = True
 
 
 class TerminationDecision(BaseModel):
     """Outcome of evaluating one termination checkpoint."""
 
-    action: str = "continue"  # continue | pause | rollback | stop
+    action: str = "continue"  # continue | pause | stop
     reason: str = ""
 
     @property
@@ -79,8 +77,6 @@ def evaluate_termination(
         # Gate-directed action (explicit stop/pause takes precedence over continue).
         if evaluation_result.recommended_action == "stop":
             return TerminationDecision(action="stop", reason="gate_stop")
-        if evaluation_result.recommended_action == "rollback":
-            return TerminationDecision(action="rollback", reason="gate_rollback")
         if evaluation_result.recommended_action == "pause":
             return TerminationDecision(action="pause", reason="gate_pause")
 
@@ -88,4 +84,3 @@ def evaluate_termination(
         return TerminationDecision(action="stop", reason="max_cycles_reached")
 
     return TerminationDecision(action="continue", reason="continue")
-
