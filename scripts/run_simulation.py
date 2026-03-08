@@ -214,8 +214,8 @@ def main():
     parser.add_argument(
         '--iterations',
         type=int,
-        default=3,
-        help='Number of Build-Measure-Learn iterations (default: 3)'
+        default=10,
+        help='Number of Build-Measure-Learn iterations (default: 10)'
     )
     parser.add_argument(
         '--verbose',

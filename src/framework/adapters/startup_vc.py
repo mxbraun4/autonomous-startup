@@ -119,7 +119,9 @@ class StartupVCAdapter(BaseDomainAdapter):
                 from src.simulation.http_checks import WorkspaceHTTPChecker
 
                 checker = WorkspaceHTTPChecker(base_url)
-                self._http_check_results = checker.run_all_checks()
+                self._http_check_results = checker.run_all_checks(
+                    workspace_root=str(self._workspace_root)
+                )
                 base_metrics["http_checks"] = self._http_check_results
             except Exception as exc:
                 logger.warning("Workspace HTTP checks failed: %s", exc)

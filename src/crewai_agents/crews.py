@@ -195,7 +195,7 @@ def create_autonomous_startup_crew(
 
 
 def run_build_measure_learn_cycle(
-    iterations: int = 3,
+    iterations: int = 10,
     verbose: int = 2,
 ) -> Dict[str, Any]:
     """Run multiple Build-Measure-Learn iterations.
@@ -231,10 +231,31 @@ def _create_coordinator_build_task(
     """
     description = f'''[Iteration {iteration}] Build a startup-VC matching platform that connects startups with venture capital investors.
 
-    Available agents: {", ".join(available_roles)}
-    Dispatch tools: dispatch_task_to_agent (sequential), dispatch_parallel_tasks (concurrent).
+    YOUR GOAL: Produce the highest-quality product possible within your dispatch budget.
+    You decide the strategy. Think about what the product needs most right now and act.
+    There is ALWAYS something to improve — new pages, better design, bug fixes, refactoring,
+    accessibility, user flow gaps. A passing QA gate means the minimum bar is met, not that
+    the product is finished.
 
-    Call your dispatch tools now.
+    Available agents: {", ".join(available_roles)}
+    - product_strategist: inspects workspace, designs architecture/roadmap, identifies quality issues
+    - developer: builds HTML pages, shared CSS/JS files, JSON data files
+    - reviewer: deep audit — DRY violations, broken links, accessibility, functional completeness
+
+    Dispatch tools:
+    - dispatch_task_to_agent(agent_role, task_description): run one task sequentially
+    - dispatch_parallel_tasks(role_1, task_1, role_2, task_2, role_3="", task_3=""):
+      run 2-3 independent tasks concurrently. Prefer this for independent developer tasks.
+
+    GUIDELINES:
+    - Understand current state before building (use get_team_insights, list files).
+    - Give each agent a clear, specific brief — not a vague instruction.
+    - Use parallel dispatch for independent work to maximize throughput.
+    - React to review findings — dispatch fixes if the reviewer flags issues.
+    - Each developer dispatch should have a focused scope (one page or one shared asset).
+
+    YOUR FIRST ACTION MUST BE A TOOL CALL — either dispatch_task_to_agent or get_team_insights.
+    Do not respond with text only. Call a tool now.
     '''
 
     if extra_context:
@@ -257,7 +278,7 @@ class _FlowState(BaseModel):
     id: str = Field(default_factory=lambda: __import__("uuid").uuid4().hex[:16])
 
     iteration: int = 0
-    max_iterations: int = 3
+    max_iterations: int = 10
     verbose: int = 2
     llm: Any = None
     enable_dynamic_agent_factory: bool = True
@@ -308,7 +329,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
 
     def __init__(
         self,
-        max_iterations: int = 3,
+        max_iterations: int = 10,
         verbose: int = 2,
         enable_dynamic_agent_factory: bool = True,
         max_agents_per_cycle: int = 6,
@@ -430,6 +451,47 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
 
         result["http_checks"] = http_info
 
+        # 4. Architecture quality checks (DRY, broken links, shared assets)
+        arch_info: Dict[str, Any] = {}
+        try:
+            from src.workspace_tools.file_tools import _read_impl, _list_impl
+            import re as _re
+
+            listing_arch = _list_impl()
+            html_files_arch = [f for f in listing_arch.get("files", []) if f.endswith(".html")]
+            has_shared_css = any(f.endswith(".css") for f in listing_arch.get("files", []))
+            arch_info["has_shared_css"] = has_shared_css
+
+            # Detect inline CSS duplication
+            style_block_sizes = {}
+            placeholder_links = []
+            for html_file in html_files_arch:
+                content_result = _read_impl(html_file)
+                if content_result.get("status") != "ok":
+                    continue
+                content = content_result.get("content", "")
+                # Measure inline <style> block size
+                style_matches = _re.findall(r"<style[^>]*>(.*?)</style>", content, _re.DOTALL)
+                total_style_chars = sum(len(s) for s in style_matches)
+                if total_style_chars > 500:
+                    style_block_sizes[html_file] = total_style_chars
+                # Detect placeholder href="#" links (excluding anchor-only links)
+                href_hash = _re.findall(r'href=["\']#["\']', content)
+                if href_hash:
+                    placeholder_links.append({"file": html_file, "count": len(href_hash)})
+
+            # Flag DRY violation if 2+ files have large inline style blocks
+            # and no shared CSS file exists
+            duplicated_css = len(style_block_sizes) >= 2 and not has_shared_css
+            arch_info["inline_css_files"] = style_block_sizes
+            arch_info["duplicated_css"] = duplicated_css
+            arch_info["placeholder_links"] = placeholder_links
+            arch_info["placeholder_link_count"] = sum(p["count"] for p in placeholder_links)
+        except Exception as arch_exc:
+            arch_info["error"] = str(arch_exc)
+
+        result["architecture"] = arch_info
+
         # Informational flag — the evaluate phase decides what to do with it
         syntax_ok = bool((result.get("syntax") or {}).get("syntax_ok", True))
         has_content = workspace_info.get("non_placeholder_html_count", 0) > 0
@@ -531,11 +593,19 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 page = entry.get("page", "unknown")
                 grouped.setdefault(ftype, []).append(f"[{page}] {msg}")
 
+            # Cap to top 6 entries to keep coordinator context focused
+            _MAX_FEEDBACK_ENTRIES = 6
             lines = [f"  Total feedback entries: {len(entries)}"]
+            shown = 0
             for ftype, messages in grouped.items():
+                if shown >= _MAX_FEEDBACK_ENTRIES:
+                    break
+                remaining = _MAX_FEEDBACK_ENTRIES - shown
+                display = messages[:remaining]
                 lines.append(f"  {ftype} ({len(messages)}):")
-                for msg in messages:
+                for msg in display:
                     lines.append(f"    - {msg}")
+                shown += len(display)
 
             summary = "\n".join(lines)
             logger.info("USER FEEDBACK: Collected %d entries.", len(entries))
@@ -696,6 +766,34 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         except Exception as _cons_exc:
             logger.debug(f"Consensus injection skipped: {_cons_exc}")
 
+        # Inject customer feedback from previous iteration
+        if self.state.user_feedback_summary:
+            extra_context += (
+                f"\n\n[Customer Feedback from Previous Iteration]\n"
+                f"{self.state.user_feedback_summary}\n"
+            )
+
+        # Inject architecture issues from previous QA gate
+        arch = (self.state.qa_result or {}).get("architecture", {})
+        if arch:
+            arch_issues = []
+            if arch.get("duplicated_css"):
+                files = list(arch.get("inline_css_files", {}).keys())
+                arch_issues.append(
+                    f"DRY: {len(files)} files have large inline CSS with no shared stylesheet"
+                )
+            pl_count = arch.get("placeholder_link_count", 0)
+            if pl_count > 0:
+                arch_issues.append(
+                    f"BROKEN LINKS: {pl_count} href=\"#\" placeholder links found"
+                )
+            if arch_issues:
+                extra_context += (
+                    "\n\n[Architecture Issues to Fix]\n"
+                    + "\n".join(f"- {i}" for i in arch_issues)
+                    + "\n"
+                )
+
         return extra_context
 
     def _build_workspace_tools(self):
@@ -745,7 +843,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             return
 
         remediation_dispatch, remediation_parallel, _get_remediation_count, _get_remediation_history = make_dispatch_task_tool(
-            registry, self._emit, max_dispatches=4, result_truncation=4000,
+            registry, self._emit, max_dispatches=6, result_truncation=4000,
             extra_context="",
         )
 
@@ -823,9 +921,11 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         product_llm = shared_llm or get_llm("product")
         self.state.qa_passed = True
         self.state.qa_result = {}
-        self.state.user_feedback_summary = ""
+        # NOTE: user_feedback_summary is NOT cleared here — it carries
+        # forward from the previous iteration so _build_extra_context can
+        # inject it into the next build task.  It gets replaced when new
+        # feedback is collected later in this iteration.
         self.state.build_result_text = ""
-        self.state.user_feedback = {}
 
         logger.info(f"\n{'='*60}")
         logger.info(f"ITERATION {i}/{self.state.max_iterations}")
@@ -862,7 +962,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         self._agent_registry = agent_registry
 
         # Create dispatch tool and coordinator
-        max_dispatches = int(self.state.active_policies.get("max_total_delegated_tasks", 8))
+        max_dispatches = int(self.state.active_policies.get("max_total_delegated_tasks", 12))
         dispatch_tool, dispatch_parallel_tool, _get_dispatch_count, _get_dispatch_history = make_dispatch_task_tool(
             agent_registry, self._emit, max_dispatches=max_dispatches, result_truncation=4000,
             extra_context=extra_context,
@@ -923,6 +1023,28 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         # Deterministic QA gate
         self.state.qa_result = self._run_quality_gate()
         self.state.qa_passed = self._qa_passed()
+
+        # Surface architecture findings in build result so learn phase sees them
+        arch = self.state.qa_result.get("architecture", {})
+        if arch:
+            arch_lines = []
+            if arch.get("duplicated_css"):
+                files = list(arch.get("inline_css_files", {}).keys())
+                arch_lines.append(
+                    f"DRY VIOLATION: {len(files)} files have large inline <style> blocks "
+                    f"with no shared CSS file. Files: {', '.join(files)}. "
+                    f"Extract common styles into styles.css."
+                )
+            if arch.get("placeholder_link_count", 0) > 0:
+                for p in arch.get("placeholder_links", []):
+                    arch_lines.append(
+                        f"BROKEN LINKS: {p['file']} has {p['count']} href=\"#\" placeholder links."
+                    )
+            if arch_lines:
+                self.state.build_result_text = (
+                    f"{self.state.build_result_text}\n\n"
+                    f"[ARCHITECTURE ISSUES]\n" + "\n".join(arch_lines)
+                )
 
         # Clear stale feedback from prior iterations before running new tests
         if self.state.workspace_enabled:

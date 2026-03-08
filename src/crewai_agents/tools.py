@@ -1061,12 +1061,11 @@ def _share_insight_impl(key: str, value: str, evidence: str, *, source_agent: st
 
     el = get_event_logger()
     if el is not None:
-        val_summary = value[:200] + "..." if len(value) > 200 else value
         el.emit("agent_exchange", {
             "exchange_type": "share_insight",
             "from_agent": source_agent,
             "key": key,
-            "value_summary": val_summary,
+            "value_summary": value,
             "cycle_id": _current_cycle_id,
         })
 
@@ -1139,11 +1138,14 @@ def get_team_insights(topic: str = "") -> str:
 
     el = get_event_logger()
     if el is not None:
+        # Include actual insight keys so the dashboard shows meaningful content
+        insight_keys = [i["key"] for i in insights]
         el.emit("agent_exchange", {
             "exchange_type": "get_insights",
             "from_agent": "crewai_agent",
             "topic": topic or "all",
             "count": len(insights),
+            "value_summary": f"Retrieved {len(insights)} insights: {', '.join(insight_keys)}" if insights else "No insights found",
             "cycle_id": _current_cycle_id,
         })
 
@@ -1205,6 +1207,7 @@ def get_cycle_history(limit: int = 10) -> str:
             "exchange_type": "get_cycle_history",
             "from_agent": "crewai_agent",
             "count": len(cycles),
+            "value_summary": f"Retrieved {len(cycles)} cycle(s)" if cycles else "No cycle history",
             "cycle_id": _current_cycle_id,
         })
 
@@ -1251,14 +1254,25 @@ def make_dispatch_task_tool(
     _ROLE_INSTRUCTIONS = {
         "developer": (
             "Tools: write_workspace_file, read_workspace_file, "
-            "check_workspace_http, list_workspace_files, get_cycle_history.\n"
+            "check_workspace_http, list_workspace_files, get_team_insights, "
+            "share_insight, get_cycle_history.\n"
+            "Design: dark mode (#0f0f0f bg, #fff text, #4ade80 accent), "
+            "nav bar linking all pages, responsive, HTML5.\n"
+            "You can build HTML pages, shared CSS/JS files, or JSON data files.\n"
+            "If a shared styles.css exists, link to it instead of duplicating inline CSS.\n"
+            "Build completely — no placeholder content. Share what you built via share_insight.\n"
         ),
         "reviewer": (
             "Tools: review_workspace_files, check_workspace_http, "
-            "run_quality_checks_tool, get_cycle_history.\n"
+            "run_quality_checks_tool, share_insight, get_cycle_history.\n"
+            "Check ALL pages holistically. Focus on what matters most for product quality.\n"
+            "Share specific, actionable findings via share_insight.\n"
         ),
         "product_strategist": (
-            "Tools: list_workspace_files, read_workspace_file, share_insight, get_cycle_history.\n"
+            "Tools: list_workspace_files, read_workspace_file, get_team_insights, "
+            "share_insight, get_cycle_history.\n"
+            "Create an architecture plan covering: shared assets (CSS, JS, data), "
+            "pages, user flows, and quality fixes. Share via share_insight.\n"
             "Note: other agents can only see insights you share, not your raw output.\n"
         ),
     }
@@ -1353,6 +1367,10 @@ def make_dispatch_task_tool(
             except Exception as retry_exc:
                 result_text = f"[dispatch error after retry] {retry_exc}"
 
+        # Detect empty/trivial results
+        stripped = result_text.strip()
+        is_empty = len(stripped) < 20 or stripped.lower() in ("", "none", "n/a", "final answer")
+
         # Truncate
         truncated = len(result_text) > result_truncation
         result_text = result_text[:result_truncation]
@@ -1364,6 +1382,7 @@ def make_dispatch_task_tool(
             "task_summary": original_task_description[:120],
             "result_snippet": result_text[:200],
             "truncated": truncated,
+            "empty_result": is_empty,
         })
 
         # Emit result event
@@ -1372,20 +1391,29 @@ def make_dispatch_task_tool(
                 "exchange_type": "dispatch_result",
                 "from_agent": agent_role,
                 "to_agent": "BUILD Coordinator",
-                "result_snippet": result_text[:200],
+                "value_summary": result_text,
                 "dispatch_number": dispatch_number,
                 "truncated": truncated,
             })
         except Exception:
             pass
 
-        return {
+        result_dict = {
             "status": "success",
             "agent_role": agent_role,
             "result": result_text,
             "truncated": truncated,
             "dispatch_number": dispatch_number,
         }
+
+        if is_empty:
+            result_dict["warning"] = (
+                f"Agent '{agent_role}' returned an empty or trivial result. "
+                f"Do NOT retry the same task — the agent could not produce output. "
+                f"Try a different approach or skip this agent."
+            )
+
+        return result_dict
 
     # ------------------------------------------------------------------
     # Sequential dispatch tool (existing behaviour, refactored)

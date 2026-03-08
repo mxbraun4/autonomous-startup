@@ -262,7 +262,257 @@ HTML_TEMPLATE = """<!doctype html>
       word-break: break-word;
       font-size: 12px;
       line-height: 1.5;
-      max-width: 420px;
+      max-width: 600px;
+    }
+    #sharedKnowledgeBody td:nth-child(5),
+    #learningsBody td:nth-child(3) {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12px;
+      line-height: 1.5;
+      max-width: 600px;
+    }
+
+    /* ── Orchestration Flow (Option 1) ── */
+    .flow-container { padding: 16px 20px; }
+    .flow-iteration {
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px dashed var(--line);
+    }
+    .flow-iteration:last-child { border-bottom: none; margin-bottom: 0; }
+    .flow-iter-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--ink-soft);
+      margin-bottom: 10px;
+    }
+    .flow-coordinator {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--accent-light);
+      border: 2px solid var(--accent);
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #0369a1;
+      margin-bottom: 0;
+    }
+    .flow-coordinator .flow-icon { font-size: 16px; }
+    .flow-connectors {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      padding-left: 28px;
+    }
+    .flow-connector-line {
+      width: 2px;
+      height: 16px;
+      background: var(--line);
+      margin-left: 12px;
+    }
+    .flow-dispatch-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 0;
+    }
+    .flow-agent-box {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 14px;
+      min-width: 220px;
+      max-width: 380px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      animation: rise 400ms ease-out both;
+    }
+    .flow-agent-box.working {
+      border-color: var(--accent);
+      border-left: 4px solid var(--accent);
+    }
+    .flow-agent-box.done {
+      border-color: var(--ok);
+      border-left: 4px solid var(--ok);
+    }
+    .flow-agent-box.failed {
+      border-color: var(--danger);
+      border-left: 4px solid var(--danger);
+    }
+    .flow-agent-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+    .flow-agent-role {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .flow-agent-status {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 999px;
+      text-transform: uppercase;
+    }
+    .flow-agent-status.working { color: #0369a1; background: var(--accent-light); }
+    .flow-agent-status.done { color: #15803d; background: #f0fdf4; }
+    .flow-agent-status.failed { color: #b91c1c; background: #fef2f2; }
+    .flow-agent-task {
+      font-size: 12px;
+      color: var(--ink-soft);
+      line-height: 1.4;
+      margin-top: 4px;
+      word-break: break-word;
+    }
+    .flow-agent-result {
+      font-size: 11px;
+      color: var(--ink);
+      line-height: 1.4;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid #f0f0f0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+    .flow-empty {
+      color: var(--ink-soft);
+      font-size: 13px;
+      padding: 12px 0;
+    }
+
+    /* ── Timeline / Swimlane (Option 2) ── */
+    .timeline-container {
+      padding: 16px 20px;
+      overflow-x: auto;
+    }
+    .timeline-lanes { position: relative; min-height: 160px; }
+    .timeline-lane {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      margin-bottom: 6px;
+      min-height: 38px;
+    }
+    .timeline-lane-label {
+      width: 130px;
+      min-width: 130px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--ink-soft);
+      padding-right: 10px;
+      text-align: right;
+    }
+    .timeline-lane-track {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: #fafafa;
+      border-radius: 6px;
+      min-height: 34px;
+      padding: 3px 4px;
+      position: relative;
+    }
+    .timeline-block {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 500;
+      white-space: nowrap;
+      max-width: 260px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: default;
+      animation: rise 300ms ease-out both;
+    }
+    .timeline-block.dispatch { background: var(--accent-light); color: #0369a1; border: 1px solid #bae6fd; }
+    .timeline-block.result { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+    .timeline-block.insight { background: #fefce8; color: #a16207; border: 1px solid #fde68a; }
+    .timeline-block .tl-num {
+      font-size: 10px;
+      font-weight: 700;
+      background: rgba(0,0,0,0.06);
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+    .timeline-empty {
+      color: var(--ink-soft);
+      font-size: 13px;
+      padding: 12px 0;
+    }
+
+    /* ── Tree View (Option 3) ── */
+    .tree-container { padding: 16px 20px; }
+    .tree-root {
+      margin-bottom: 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px dashed var(--line);
+    }
+    .tree-root:last-child { border-bottom: none; }
+    .tree-node {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 4px 0;
+    }
+    .tree-branch {
+      display: flex;
+      flex-direction: column;
+      margin-left: 20px;
+      padding-left: 14px;
+      border-left: 2px solid var(--line);
+    }
+    .tree-branch .tree-node { position: relative; }
+    .tree-branch .tree-node::before {
+      content: "";
+      position: absolute;
+      left: -14px;
+      top: 13px;
+      width: 12px;
+      height: 2px;
+      background: var(--line);
+    }
+    .tree-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-top: 4px;
+      flex-shrink: 0;
+    }
+    .tree-dot.coordinator { background: var(--accent); }
+    .tree-dot.agent { background: var(--ok); }
+    .tree-dot.failed { background: var(--danger); }
+    .tree-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .tree-detail {
+      font-size: 11px;
+      color: var(--ink-soft);
+      line-height: 1.4;
+      margin-top: 2px;
+      word-break: break-word;
+    }
+    .tree-empty {
+      color: var(--ink-soft);
+      font-size: 13px;
+      padding: 12px 0;
     }
     .error {
       margin: 0;
@@ -353,8 +603,29 @@ HTML_TEMPLATE = """<!doctype html>
       </article>
     </section>
 
+    <section class="panel" id="orchestrationFlowPanel">
+      <h2>Orchestration Flow</h2>
+      <div id="flowContent" class="flow-container">
+        <div class="flow-empty">No dispatches yet</div>
+      </div>
+    </section>
+
+    <section class="panel" id="timelinePanel">
+      <h2>Timeline / Swimlane</h2>
+      <div id="timelineContent" class="timeline-container">
+        <div class="timeline-empty">No activity yet</div>
+      </div>
+    </section>
+
+    <section class="panel" id="treePanel">
+      <h2>Tree View</h2>
+      <div id="treeContent" class="tree-container">
+        <div class="tree-empty">No dispatches yet</div>
+      </div>
+    </section>
+
     <section class="panel">
-      <h2>Shared Knowledge</h2>
+      <h2>Agent Exchanges</h2>
       <table>
         <thead>
           <tr>
@@ -362,24 +633,10 @@ HTML_TEMPLATE = """<!doctype html>
             <th>Agent</th>
             <th>Action</th>
             <th>Topic</th>
-            <th>Insight</th>
+            <th>Detail</th>
           </tr>
         </thead>
         <tbody id="sharedKnowledgeBody"></tbody>
-      </table>
-    </section>
-
-    <section class="panel">
-      <h2>Learnings</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Iter</th>
-            <th>Key</th>
-            <th>Insight</th>
-          </tr>
-        </thead>
-        <tbody id="learningsBody"></tbody>
       </table>
     </section>
 
@@ -583,6 +840,219 @@ HTML_TEMPLATE = """<!doctype html>
       }
     }
 
+    // ── Orchestration Flow (Option 1) ──
+    function renderOrchestrationFlow(exchanges) {
+      const container = document.getElementById("flowContent");
+      if (!container) return;
+      // Collect dispatch & dispatch_result events
+      const dispatches = (exchanges || []).filter(e => e.exchange_type === "dispatch");
+      const results = (exchanges || []).filter(e => e.exchange_type === "dispatch_result");
+      if (dispatches.length === 0) {
+        container.innerHTML = '<div class="flow-empty">No dispatches yet</div>';
+        return;
+      }
+      // Group by cycle_id
+      const byCycle = {};
+      dispatches.forEach(d => {
+        const cid = d.cycle_id ?? "?";
+        if (!byCycle[cid]) byCycle[cid] = { dispatches: [], results: {} };
+        byCycle[cid].dispatches.push(d);
+      });
+      results.forEach(r => {
+        const cid = r.cycle_id ?? "?";
+        if (!byCycle[cid]) byCycle[cid] = { dispatches: [], results: {} };
+        const dn = r.dispatch_number;
+        byCycle[cid].results[dn] = r;
+      });
+
+      let html = "";
+      Object.keys(byCycle).sort((a, b) => Number(a) - Number(b)).forEach(cid => {
+        const group = byCycle[cid];
+        html += `<div class="flow-iteration">`;
+        html += `<div class="flow-iter-label">Iteration ${escapeHtml(String(cid))}</div>`;
+        html += `<div class="flow-coordinator"><span class="flow-icon">&#9678;</span> Coordinator</div>`;
+        html += `<div class="flow-connectors">`;
+
+        group.dispatches.forEach(d => {
+          const dn = d.dispatch_number;
+          const result = group.results[dn];
+          const hasResult = result && result.value_summary;
+          const statusClass = hasResult ? "done" : "working";
+          const statusLabel = hasResult ? "done" : "working";
+          const role = d.to_agent || d.key || "agent";
+          const task = d.task_summary || d.value_summary || "";
+
+          html += `<div class="flow-connector-line"></div>`;
+          html += `<div class="flow-dispatch-group">`;
+          html += `<div class="flow-agent-box ${statusClass}">`;
+          html += `<div class="flow-agent-header">`;
+          html += `<span class="flow-agent-role">${escapeHtml(role)}</span>`;
+          html += `<span class="flow-agent-status ${statusClass}">${statusLabel}</span>`;
+          html += `</div>`;
+          if (task) {
+            html += `<div class="flow-agent-task">${escapeHtml(task)}</div>`;
+          }
+          if (hasResult) {
+            const rv = result.value_summary;
+            const preview = rv.length > 300 ? rv.substring(0, 300) + "..." : rv;
+            html += `<div class="flow-agent-result">${escapeHtml(preview)}</div>`;
+          }
+          html += `</div></div>`;
+        });
+
+        html += `</div></div>`;
+      });
+      container.innerHTML = html;
+    }
+
+    // ── Timeline / Swimlane (Option 2) ──
+    function renderTimeline(exchanges) {
+      const container = document.getElementById("timelineContent");
+      if (!container) return;
+      if (!exchanges || exchanges.length === 0) {
+        container.innerHTML = '<div class="timeline-empty">No activity yet</div>';
+        return;
+      }
+      // Collect all agent roles that appear
+      const roleSet = new Set();
+      roleSet.add("coordinator");
+      exchanges.forEach(e => {
+        const from = (e.from_agent || "").toLowerCase().replace(/\s+/g, "_");
+        const to = (e.to_agent || "").toLowerCase().replace(/\s+/g, "_");
+        if (from && from !== "build_coordinator") roleSet.add(from);
+        if (to) roleSet.add(to);
+        // Normalize "BUILD Coordinator" -> coordinator
+        if (from === "build_coordinator") roleSet.add("coordinator");
+      });
+      const roles = Array.from(roleSet);
+      // Order: coordinator first, then alphabetical
+      roles.sort((a, b) => {
+        if (a === "coordinator") return -1;
+        if (b === "coordinator") return 1;
+        return a.localeCompare(b);
+      });
+
+      // Build lane events: assign each exchange to its relevant role
+      const laneEvents = {};
+      roles.forEach(r => { laneEvents[r] = []; });
+      exchanges.forEach(e => {
+        const etype = e.exchange_type || "";
+        const from = (e.from_agent || "").toLowerCase().replace(/\s+/g, "_");
+        const to = (e.to_agent || "").toLowerCase().replace(/\s+/g, "_");
+        const dn = e.dispatch_number;
+        const label = dn != null ? `#${dn}` : "";
+
+        if (etype === "dispatch") {
+          // Coordinator dispatches -> show in coordinator lane
+          const coordKey = "coordinator";
+          if (laneEvents[coordKey]) {
+            laneEvents[coordKey].push({ type: "dispatch", label: `${label} → ${to || e.key || "?"}`, raw: e });
+          }
+          // Also mark target agent lane
+          const targetRole = to || (e.key || "").toLowerCase().replace(/\s+/g, "_");
+          if (targetRole && laneEvents[targetRole]) {
+            const taskSnippet = (e.task_summary || "").substring(0, 60);
+            laneEvents[targetRole].push({ type: "dispatch", label: `${label} ${taskSnippet}`, raw: e });
+          }
+        } else if (etype === "dispatch_result") {
+          const sourceRole = from || "unknown";
+          if (laneEvents[sourceRole]) {
+            const snippet = (e.value_summary || "").substring(0, 50);
+            laneEvents[sourceRole].push({ type: "result", label: `${label} ${snippet}`, raw: e });
+          }
+        } else if (etype === "share_insight") {
+          const sourceRole = from || "unknown";
+          if (laneEvents[sourceRole]) {
+            laneEvents[sourceRole].push({ type: "insight", label: e.key || "insight", raw: e });
+          }
+        }
+      });
+
+      let html = '<div class="timeline-lanes">';
+      roles.forEach(role => {
+        const events = laneEvents[role] || [];
+        const displayName = role.replace(/_/g, " ");
+        html += `<div class="timeline-lane">`;
+        html += `<div class="timeline-lane-label">${escapeHtml(displayName)}</div>`;
+        html += `<div class="timeline-lane-track">`;
+        if (events.length === 0) {
+          html += `<span style="color: var(--ink-soft); font-size: 11px; padding: 0 8px;">idle</span>`;
+        } else {
+          events.forEach(ev => {
+            const blockClass = ev.type;
+            const dn = ev.raw.dispatch_number;
+            const numBadge = dn != null ? `<span class="tl-num">#${dn}</span> ` : "";
+            html += `<span class="timeline-block ${blockClass}" title="${escapeHtml(ev.label)}">${numBadge}${escapeHtml(ev.label.substring(0, 40))}</span>`;
+          });
+        }
+        html += `</div></div>`;
+      });
+      html += `</div>`;
+      container.innerHTML = html;
+    }
+
+    // ── Tree View (Option 3) ──
+    function renderTreeView(exchanges) {
+      const container = document.getElementById("treeContent");
+      if (!container) return;
+      const dispatches = (exchanges || []).filter(e => e.exchange_type === "dispatch");
+      const results = (exchanges || []).filter(e => e.exchange_type === "dispatch_result");
+      if (dispatches.length === 0) {
+        container.innerHTML = '<div class="tree-empty">No dispatches yet</div>';
+        return;
+      }
+      // Group by cycle
+      const byCycle = {};
+      dispatches.forEach(d => {
+        const cid = d.cycle_id ?? "?";
+        if (!byCycle[cid]) byCycle[cid] = [];
+        byCycle[cid].push(d);
+      });
+      const resultMap = {};
+      results.forEach(r => {
+        const key = `${r.cycle_id}_${r.dispatch_number}`;
+        resultMap[key] = r;
+      });
+
+      let html = "";
+      Object.keys(byCycle).sort((a, b) => Number(a) - Number(b)).forEach(cid => {
+        const group = byCycle[cid];
+        html += `<div class="tree-root">`;
+        html += `<div class="tree-node">`;
+        html += `<span class="tree-dot coordinator"></span>`;
+        html += `<div><span class="tree-label">Iteration ${escapeHtml(String(cid))} — Coordinator</span></div>`;
+        html += `</div>`;
+        html += `<div class="tree-branch">`;
+
+        group.forEach(d => {
+          const dn = d.dispatch_number;
+          const role = d.to_agent || d.key || "agent";
+          const task = d.task_summary || d.value_summary || "";
+          const resultKey = `${cid}_${dn}`;
+          const result = resultMap[resultKey];
+          const hasFailed = result && (result.value_summary || "").includes("[dispatch error");
+          const dotClass = result ? (hasFailed ? "failed" : "agent") : "coordinator";
+
+          html += `<div class="tree-node">`;
+          html += `<span class="tree-dot ${dotClass}"></span>`;
+          html += `<div>`;
+          html += `<span class="tree-label">${escapeHtml(role)}</span>`;
+          if (task) {
+            html += `<div class="tree-detail">${escapeHtml(task.substring(0, 200))}</div>`;
+          }
+          if (result && result.value_summary) {
+            const rv = result.value_summary;
+            const preview = rv.length > 200 ? rv.substring(0, 200) + "..." : rv;
+            html += `<div class="tree-detail" style="color: var(--ink); margin-top: 3px;">${escapeHtml(preview)}</div>`;
+          }
+          html += `</div></div>`;
+        });
+
+        html += `</div></div>`;
+      });
+      container.innerHTML = html;
+    }
+
     function renderSnapshot(snapshot) {
       renderRunOptions(snapshot.available_run_ids || [], snapshot.selected_run_id || "");
 
@@ -616,20 +1086,24 @@ HTML_TEMPLATE = """<!doctype html>
       // Hero subtitle — iteration count and status
       setText("heroMeta", `Iteration ${iterCount} — ${statusText}`);
 
-      // Shared Knowledge (was Agent Exchanges)
+      // Orchestration visualizations
+      const exchanges = snapshot.agent_exchanges || [];
+      renderOrchestrationFlow(exchanges);
+      renderTimeline(exchanges);
+      renderTreeView(exchanges);
+
+      // Agent Exchanges table (detail view)
       renderRows(
         "sharedKnowledgeBody",
-        (snapshot.agent_exchanges || []).map((item) => ({
+        exchanges.map((item) => ({
           cycle_id: item.cycle_id ?? "-",
           from_agent: item.from_agent || "-",
           exchange_type: item.exchange_type || "-",
-          key: item.key || "-",
-          value_summary: item.value_summary || "-",
-          value_full: item.value_full || item.value_summary || "-",
+          key: item.key || item.to_agent || "-",
+          value_summary: item.value_summary || item.task_summary || "-",
         })),
         ["cycle_id", "from_agent", "exchange_type", "key", "value_summary"],
-        "No shared knowledge yet",
-        {"value_summary": "value_full"}
+        "No exchanges yet"
       );
 
       // Agent Reasoning (was LLM Calls) — always expanded, no toggle
@@ -639,11 +1113,11 @@ HTML_TEMPLATE = """<!doctype html>
           cycle_id: item.cycle_id ?? "-",
           agent: item.agent || "-",
           model: item.model || "-",
-          message_full: item.message_full || item.message_summary || "-",
-          response_full: item.response_full || item.response_summary || "-",
+          message_summary: item.message_summary || "-",
+          response_summary: item.response_summary || "-",
           duration_ms: item.duration_ms != null ? item.duration_ms + " ms" : "-",
         })),
-        ["cycle_id", "agent", "model", "message_full", "response_full", "duration_ms"],
+        ["cycle_id", "agent", "model", "message_summary", "response_summary", "duration_ms"],
         "No agent reasoning yet"
       );
 
@@ -715,12 +1189,10 @@ HTML_TEMPLATE = """<!doctype html>
           .map((item) => ({
             cycle_id: item.cycle_id ?? "-",
             key: item.key || "-",
-            value_summary: item.value_summary || item.value_full || "-",
-            value_full: item.value_full || item.value_summary || "-",
+            value_summary: item.value_summary || "-",
           })),
         ["cycle_id", "key", "value_summary"],
-        "No learnings yet",
-        {"value_summary": "value_full"}
+        "No learnings yet"
       );
 
       // Event Breakdown chips
@@ -893,12 +1365,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
         del fmt, args
 
     def _serve_db_stats(self) -> None:
-        """Return database statistics as JSON."""
-        try:
-            from src.crewai_agents.tools import get_database
+        """Return database statistics as JSON.
 
-            db = get_database()
-            stats = db.get_stats()
+        Opens a fresh DB connection each time so we see writes from the
+        simulation process (which runs in a separate process).
+        """
+        try:
+            from src.database.database import StartupDatabase
+
+            db = StartupDatabase()
+            try:
+                stats = db.get_stats()
+            finally:
+                db.close()
             self._send_json(stats)
         except Exception as exc:
             self._send_json(

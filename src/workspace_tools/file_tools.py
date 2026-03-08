@@ -238,7 +238,7 @@ def _check_http_impl(pages: str = "") -> dict:
             return {"status": "ok", "pages": results}
         else:
             # Full standard suite
-            all_checks = checker.run_all_checks()
+            all_checks = checker.run_all_checks(workspace_root=str(_workspace_root))
             return {"status": "ok", **all_checks}
     except Exception as exc:
         return {"status": "error", "reason": str(exc)}

@@ -102,11 +102,17 @@ def ensure_litellm_tracing() -> None:
 
             model = str(kwargs.get("model", ""))
             messages = kwargs.get("messages") or (args[1] if len(args) > 1 else [])
+            # Capture all message content for full exchange visibility
             if isinstance(messages, list) and messages:
-                last_msg = str(messages[-1].get("content", ""))
+                msg_parts = []
+                for m in messages:
+                    role = m.get("role", "?")
+                    content = str(m.get("content", ""))
+                    if content:
+                        msg_parts.append(f"[{role}] {content}")
+                msg_summary = "\n\n".join(msg_parts)
             else:
-                last_msg = ""
-            msg_summary = last_msg
+                msg_summary = ""
 
             resp_text = ""
             if hasattr(result, "choices") and result.choices:
@@ -123,7 +129,7 @@ def ensure_litellm_tracing() -> None:
                                 tc_name = getattr(tc_name, "name", str(tc_name))
                             tc_args = ""
                             if hasattr(tc, "function") and hasattr(tc.function, "arguments"):
-                                tc_args = str(tc.function.arguments or "")[:100]
+                                tc_args = str(tc.function.arguments or "")
                             resp_text = f"[tool_call] {tc_name}({tc_args})"
             resp_summary = resp_text
 
@@ -142,6 +148,22 @@ def ensure_litellm_tracing() -> None:
                 payload["cycle_id"] = _current_cycle_id
 
             el.emit("llm_call", payload)
+
+            # Emit tool_called events for every tool the model invoked
+            if hasattr(result, "choices") and result.choices:
+                tc_list = getattr(result.choices[0].message, "tool_calls", None) or []
+                for tc in tc_list:
+                    tc_fn = getattr(tc, "function", None)
+                    tc_name = getattr(tc_fn, "name", "") if tc_fn else ""
+                    tc_args = getattr(tc_fn, "arguments", "") if tc_fn else ""
+                    tc_payload: dict[str, Any] = {
+                        "tool_name": tc_name,
+                        "arguments": str(tc_args),
+                        "agent": agent_name,
+                    }
+                    if _current_cycle_id is not None:
+                        tc_payload["cycle_id"] = _current_cycle_id
+                    el.emit("tool_called", tc_payload)
         except Exception:
             pass
 
@@ -351,15 +373,27 @@ def create_build_coordinator(
         BUILD Coordinator agent
     """
     backstory = _with_prompt_override(
-        '''You are a BUILD phase coordinator. You dispatch tasks to specialist agents
-        (product_strategist, developer, reviewer) and read their results.
-        You do NOT write code or specs yourself — you act by calling dispatch tools.
+        '''You are the BUILD phase coordinator for a startup-VC matching platform.
 
-        You have two dispatch tools:
-        - dispatch_task_to_agent: dispatch one task at a time (sequential)
-        - dispatch_parallel_tasks: dispatch multiple independent tasks concurrently
+        YOUR GOAL: Produce the best possible product within your dispatch budget.
+        You decide the workflow. You have these agents and tools:
 
-        Always call your tools to take action. Never just describe what you would do.
+        AGENTS (via dispatch tools):
+        - product_strategist: inspects workspace, defines architecture and roadmap
+        - developer: builds pages and shared assets (CSS, JS, data files)
+        - reviewer: audits quality, DRY, accessibility, broken links, functional completeness
+
+        DISPATCH TOOLS:
+        - dispatch_task_to_agent: run one agent task sequentially
+        - dispatch_parallel_tasks: run 2-3 independent agent tasks concurrently
+
+        PRINCIPLES:
+        - Understand the current state before building (check insights, read files).
+        - Give each dispatched agent a clear, specific brief.
+        - Use parallel dispatch for independent work — it multiplies your throughput.
+        - React to reviewer findings — if quality issues are found, dispatch fixes.
+        - You do NOT write code yourself — you act ONLY by calling dispatch tools.
+        - Always call your tools. Never just describe what you would do.
         ''',
         prompt_override,
     )
@@ -377,7 +411,7 @@ def create_build_coordinator(
         verbose=True,
         allow_delegation=False,
         memory=True,
-        max_iter=20,
+        max_iter=25,
     )
 
 
@@ -453,9 +487,29 @@ def create_developer_agent(
     """
     backstory = _with_prompt_override(
         '''You are a web developer building a startup-VC matching website.
-        Read the build spec from team insights, then implement it as HTML/CSS/JS
-        files using write_workspace_file. Use relative paths like "index.html" or
-        "backend/main.py" — the workspace directory is already set as root.
+
+        YOUR WORKFLOW:
+        1. Call get_team_insights to read the build spec, roadmap, or architecture plan.
+        2. Implement what was requested using write_workspace_file.
+        3. Share what you built via share_insight when done.
+
+        You can build:
+        - HTML pages (one complete page per dispatch)
+        - Shared CSS files (styles.css) that multiple pages link to
+        - Shared JS files for cross-page interactivity
+        - JSON data files that pages can reference for consistent content
+
+        DESIGN SYSTEM (follow for every page):
+        - Dark mode: background #0f0f0f, text #ffffff, accent #4ade80
+        - Font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif
+        - Navigation bar at top linking all platform pages
+        - Responsive layout with meta viewport
+        - Proper HTML5: DOCTYPE, charset UTF-8, lang="en"
+        - If a shared styles.css exists, use <link rel="stylesheet" href="styles.css">
+          instead of duplicating inline styles. Never use style= attributes —
+          add classes to styles.css instead.
+
+        Use relative file paths. Build things completely — no placeholder content.
         ''',
         prompt_override,
     )
@@ -498,13 +552,29 @@ def create_product_strategist(
         Product Strategist agent
     """
     backstory = _with_prompt_override(
-        '''You are a product manager for a startup-VC matching website.
-        Inspect the workspace to see what exists, identify the highest-priority
-        missing page, and write a clear build spec.
+        '''You are the product architect for a startup-VC matching website.
 
-        IMPORTANT: Always call share_insight to publish your spec so the developer
-        can read it from team insights. Do not just return the spec as text —
-        the developer cannot see your raw output, only shared insights.
+        YOUR JOB EVERY ITERATION:
+        1. Call list_workspace_files and read_workspace_file to see what exists.
+        2. Call get_team_insights to read prior roadmaps, reviewer findings, and
+           customer feedback.
+        3. Create or update an ARCHITECTURE PLAN that covers:
+           a) Shared assets — CSS, JS, data files that multiple pages should use.
+              If you see duplicated CSS across pages, recommend extracting styles.css.
+              If pages show related data (startups, investors, matches), recommend
+              a shared JSON data model so content stays consistent.
+           b) Pages — what pages the platform needs, what each should contain.
+           c) User flows — how a startup founder or VC investor moves through
+              the site (e.g., land on index → browse startups → view match → contact).
+              Each flow should be a connected path, not isolated pages.
+           d) Quality issues — anything the reviewer flagged that needs fixing.
+        4. Share the plan via share_insight (key: "backlog.roadmap").
+
+        FOR EACH ITEM specify: file name, brief spec, priority (1=highest),
+        status (done/todo/fix), and dependencies (what must exist first).
+
+        CRITICAL: Share the full plan via share_insight so the coordinator
+        and developer can read it. They cannot see your raw output.
         ''',
         prompt_override,
     )
@@ -549,8 +619,20 @@ def create_reviewer_agent(
         Reviewer QA agent
     """
     backstory = _with_prompt_override(
-        '''You are a QA reviewer. Run quality checks (syntax, HTTP, workspace validation)
-        and report PASS or FAIL with specific issues. Require fixes before sign-off.
+        '''You are a senior QA engineer for a startup-VC matching website.
+
+        YOUR GOAL: Find the issues that matter most for product quality. You decide
+        what to audit and how deep to go. Think about what a real user would notice —
+        broken links, inconsistent design, dead-end pages, duplicated code, missing
+        functionality, accessibility gaps.
+
+        You have tools to read all workspace files and run HTTP checks. Use them.
+        Check ALL pages, not just the newest. Look at the product holistically — how
+        pages connect, whether content is consistent across them, whether the
+        codebase is maintainable.
+
+        Share a QA report via share_insight with specific, actionable findings.
+        Be honest about what's good and what needs work.
         ''',
         prompt_override,
     )

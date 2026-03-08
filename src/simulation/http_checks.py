@@ -68,20 +68,57 @@ class WorkspaceHTTPChecker:
             "broken_links": broken_links,
         }
 
-    def run_all_checks(self) -> Dict[str, Any]:
-        """Run all checks and return consolidated results with derived scores."""
-        landing = self.check_page_loads("/index.html")
-        navigation = self.check_navigation_links("/index.html")
+    def run_all_checks(self, workspace_root: str = "") -> Dict[str, Any]:
+        """Run all checks and return consolidated results with derived scores.
 
-        http_landing_score = 1.0 if landing.get("loaded") else 0.0
+        If *workspace_root* is provided, dynamically discovers all .html files
+        and checks each one.  Otherwise falls back to checking index.html only.
+        """
+        from pathlib import Path
 
-        total_links = navigation.get("links_found", 0)
-        ok_links = navigation.get("links_ok", 0)
+        # Discover pages dynamically from workspace, or fall back to index.html
+        html_pages: List[str] = []
+        if workspace_root:
+            ws = Path(workspace_root)
+            if ws.is_dir():
+                html_pages = sorted(
+                    str(f.relative_to(ws)).replace("\\", "/")
+                    for f in ws.rglob("*.html")
+                )
+        if not html_pages:
+            html_pages = ["index.html"]
+
+        # Check that every page loads
+        page_results: Dict[str, Any] = {}
+        pages_loaded = 0
+        for page in html_pages:
+            result = self.check_page_loads(f"/{page}")
+            page_results[page] = result
+            if result.get("loaded"):
+                pages_loaded += 1
+
+        http_landing_score = pages_loaded / len(html_pages) if html_pages else 0.0
+
+        # Check navigation links on all loaded pages
+        total_links = 0
+        ok_links = 0
+        all_broken: List[str] = []
+        for page in html_pages:
+            if page_results.get(page, {}).get("loaded"):
+                nav = self.check_navigation_links(f"/{page}")
+                total_links += nav.get("links_found", 0)
+                ok_links += nav.get("links_ok", 0)
+                all_broken.extend(nav.get("broken_links", []))
+
+        # Deduplicate broken links
+        all_broken = list(dict.fromkeys(all_broken))
         http_navigation_score = (ok_links / total_links) if total_links > 0 else 0.0
 
         return {
-            "landing": landing,
-            "navigation": navigation,
+            "pages_checked": html_pages,
+            "pages_loaded": pages_loaded,
+            "page_results": page_results,
+            "broken_links": all_broken,
             "http_landing_score": http_landing_score,
             "http_navigation_score": http_navigation_score,
         }

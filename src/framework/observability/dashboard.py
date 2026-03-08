@@ -131,7 +131,7 @@ def build_run_snapshot(
                 "task_id": task_id,
                 "cycle_id": cycle_id,
                 "agent_role": str(payload.get("agent_role", "")),
-                "objective": _truncate(str(payload.get("objective", "")), limit=120),
+                "objective": str(payload.get("objective", "")),
                 "started_at_utc": event.timestamp_utc.isoformat(),
             }
         elif event.event_type in {"task_completed", "task_failed"} and task_id:
@@ -150,10 +150,8 @@ def build_run_snapshot(
                 "cycle_id": cycle_id,
                 "agent": str(payload.get("agent", "")),
                 "model": str(payload.get("model", "")),
-                "message_summary": _truncate(str(payload.get("message_summary", "")), limit=150),
-                "message_full": str(payload.get("message_summary", "")),
-                "response_summary": _truncate(str(payload.get("response_summary", "")), limit=150),
-                "response_full": str(payload.get("response_summary", "")),
+                "message_summary": str(payload.get("message_summary", "")),
+                "response_summary": str(payload.get("response_summary", "")),
                 "duration_ms": payload.get("duration_ms", 0),
             })
         elif event.event_type == "agent_exchange":
@@ -161,13 +159,12 @@ def build_run_snapshot(
                 "sequence": event.sequence,
                 "cycle_id": cycle_id,
                 "from_agent": str(payload.get("from_agent", "")),
+                "to_agent": str(payload.get("to_agent", "")),
                 "exchange_type": str(payload.get("exchange_type", "")),
                 "key": str(payload.get("key", payload.get("topic", ""))),
-                "value_summary": _truncate(
-                    str(payload.get("value_summary", payload.get("count", ""))),
-                    limit=150,
-                ),
-                "value_full": str(payload.get("value_summary", payload.get("count", ""))),
+                "value_summary": str(payload.get("value_summary", "")),
+                "task_summary": str(payload.get("task_summary", "")),
+                "dispatch_number": payload.get("dispatch_number"),
             })
 
     cycle_summaries = [cycle_rows[key] for key in sorted(cycle_rows)]
