@@ -85,19 +85,7 @@ class EventLogger:
         )
         self._append(event)
 
-        # Derive canonical tool_result and policy_violation classes.
-        if event_type in {"tool_called", "tool_error", "tool_denied"}:
-            self._sequence += 1
-            derived = create_event(
-                sequence=self._sequence,
-                event_type="tool_result",
-                run_id=run_id,
-                cycle_id=cycle_id,
-                payload=payload_dict,
-                metadata={"derived_from": event_type},
-            )
-            self._append(derived)
-
+        # Derive policy_violation from tool_denied events.
         if event_type == "tool_denied":
             denied_reason = str(payload_dict.get("denied_reason", "")).lower()
             if denied_reason:
