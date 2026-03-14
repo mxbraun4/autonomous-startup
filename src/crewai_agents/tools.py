@@ -12,11 +12,8 @@ import re
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
-
-import requests
 
 from src.crewai_agents.runtime_env import (
     configure_runtime_environment,
@@ -57,11 +54,6 @@ def set_current_cycle_id(cycle_id: Optional[int]) -> None:
     _current_cycle_id = cycle_id
 
 
-# Dynamic runtime tool registry (autonomy gap: dynamic tool creation + self deployment)
-_dynamic_tool_specs: Dict[str, Dict[str, Any]] = {}
-_dynamic_tool_invocations: Dict[str, int] = {}
-
-
 def _cleanup_globals() -> None:
     """Close global singletons at interpreter shutdown."""
     global _db, _memory_store
@@ -71,7 +63,6 @@ def _cleanup_globals() -> None:
     if _memory_store is not None:
         _memory_store.close()
         _memory_store = None
-    clear_dynamic_tool_registry()
 
 
 atexit.register(_cleanup_globals)
@@ -107,133 +98,6 @@ def set_event_logger(event_logger: "EventLogger") -> None:
 def get_event_logger() -> Optional["EventLogger"]:
     """Get the current event logger (may be None if not initialised)."""
     return _event_logger
-
-
-def _tool_artifact_dir() -> Path:
-    root = Path(getattr(settings, "generated_tools_dir", "data/generated_tools"))
-    return root.resolve()
-
-
-def _slugify_tool_name(raw_name: str) -> str:
-    cleaned = re.sub(r"[^a-zA-Z0-9_]+", "_", str(raw_name or "").strip().lower())
-    cleaned = cleaned.strip("_")
-    return cleaned or "generated_tool"
-
-
-def _unique_tool_name(base_name: str) -> str:
-    if base_name not in _dynamic_tool_specs:
-        return base_name
-
-    index = 2
-    while True:
-        candidate = f"{base_name}_{index}"
-        if candidate not in _dynamic_tool_specs:
-            return candidate
-        index += 1
-
-
-def _prune_old_tool_artifacts(root: Path) -> int:
-    retention_days = int(getattr(settings, "generated_tools_retention_days", 30))
-    if retention_days <= 0:
-        return 0
-
-    cutoff_epoch = (
-        datetime.now(timezone.utc).timestamp()
-        - (retention_days * 24 * 60 * 60)
-    )
-    removed = 0
-    for path in root.glob("*.json"):
-        try:
-            if path.stat().st_mtime < cutoff_epoch:
-                path.unlink(missing_ok=True)
-                removed += 1
-        except Exception:
-            continue
-    return removed
-
-
-def _persist_dynamic_tool_spec(record: Dict[str, Any]) -> Path:
-    root = _tool_artifact_dir()
-    root.mkdir(parents=True, exist_ok=True)
-    _prune_old_tool_artifacts(root)
-
-    tool_name = str(record.get("tool_name", "generated_tool"))
-    artifact_path = root / f"{tool_name}.json"
-    artifact_path.write_text(
-        json.dumps(record, indent=2, ensure_ascii=True),
-        encoding="utf-8",
-    )
-    return artifact_path
-
-
-def _register_dynamic_tool_spec(
-    spec: Dict[str, Any],
-    *,
-    source: str,
-) -> Dict[str, Any]:
-    base_name = _slugify_tool_name(spec.get("tool_name") or spec.get("description") or "tool")
-    tool_name = _unique_tool_name(base_name)
-
-    record = dict(spec)
-    record["tool_name"] = tool_name
-    record["registered_source"] = source
-    record["registered_at_utc"] = datetime.now(timezone.utc).isoformat()
-    _dynamic_tool_specs[tool_name] = record
-    _dynamic_tool_invocations.setdefault(tool_name, 0)
-
-    artifact_path = _persist_dynamic_tool_spec(record)
-    return {
-        "tool_name": tool_name,
-        "status": "registered",
-        "deployment_status": "deployed",
-        "artifact_path": str(artifact_path),
-    }
-
-
-def _execute_dynamic_tool(
-    tool_name: str,
-    payload: Dict[str, Any],
-) -> Dict[str, Any]:
-    spec = _dynamic_tool_specs.get(tool_name)
-    if spec is None:
-        return {
-            "status": "failed",
-            "reason": "dynamic_tool_not_found",
-            "tool_name": tool_name,
-        }
-
-    _dynamic_tool_invocations[tool_name] = _dynamic_tool_invocations.get(tool_name, 0) + 1
-
-    features = spec.get("features", [])
-    if not isinstance(features, list):
-        features = []
-
-    return {
-        "status": "success",
-        "tool_name": tool_name,
-        "description": spec.get("description", ""),
-        "features": [str(item) for item in features],
-        "payload": dict(payload),
-        "invocation_count": _dynamic_tool_invocations[tool_name],
-        "result": (
-            f"Executed {tool_name} with {len(payload)} input field(s); "
-            f"supported features={len(features)}"
-        ),
-    }
-
-
-def get_dynamic_tool_registry_snapshot() -> Dict[str, Dict[str, Any]]:
-    """Return a copy of dynamic tool specs for tests/introspection."""
-    return {
-        name: dict(spec)
-        for name, spec in _dynamic_tool_specs.items()
-    }
-
-
-def clear_dynamic_tool_registry() -> None:
-    """Clear dynamic tool registry (used by tests)."""
-    _dynamic_tool_specs.clear()
-    _dynamic_tool_invocations.clear()
 
 
 def _iter_python_files(paths: List[str]) -> List[Path]:
@@ -416,399 +280,11 @@ def run_quality_checks_tool(
     return json.dumps(result, indent=2, ensure_ascii=True)
 
 
-# =============================================================================
-# WEB DATA COLLECTION TOOLS — Serper.dev backed with graceful fallback
-# =============================================================================
-
-def _serper_search(
-    query: str,
-    search_type: str = "search",
-    n_results: int = 10,
-) -> Dict[str, Any]:
-    """Call the Serper.dev REST API and return parsed JSON.
-
-    Returns a dict with ``"status": "skipped"`` when ``SERPER_API_KEY`` is not
-    configured, so callers degrade gracefully.
-    """
-    api_key = settings.serper_api_key
-    if not api_key:
-        return {"status": "skipped", "reason": "SERPER_API_KEY not set"}
-
-    url = "https://google.serper.dev/search"
-    headers = {
-        "X-API-KEY": api_key,
-        "Content-Type": "application/json",
-    }
-    payload = {"q": query, "num": n_results}
-
-    try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=15)
-        resp.raise_for_status()
-        return resp.json()
-    except requests.RequestException as exc:
-        logger.warning("Serper API error: %s", exc)
-        return {"status": "error", "reason": str(exc)}
-
-
-def _fetch_url(url: str, max_chars: int = 4000) -> Dict[str, Any]:
-    """Fetch a URL, strip HTML tags, and return truncated plain text."""
-    try:
-        resp = requests.get(url, timeout=10, headers={"User-Agent": "AutonomousStartupBot/1.0"})
-        resp.raise_for_status()
-        # Strip HTML tags via regex
-        text = re.sub(r"<[^>]+>", " ", resp.text)
-        # Collapse whitespace
-        text = re.sub(r"\s+", " ", text).strip()
-        truncated = len(text) > max_chars
-        text = text[:max_chars]
-        return {"status": "ok", "text": text, "truncated": truncated, "url": url}
-    except requests.RequestException as exc:
-        logger.warning("fetch_url error for %s: %s", url, exc)
-        return {"status": "error", "reason": str(exc), "url": url}
-
-
-@tool("Search Web for Startups")
-def web_search_startups(query: str, sector: str = "technology") -> str:
-    """Search the web for startup information using Serper.dev.
-
-    Args:
-        query: Search query (e.g., "fintech startups funding 2024")
-        sector: Target sector to focus on
-
-    Returns:
-        JSON with organic search results or skip/error status
-    """
-    logger.info(f"Web search for startups: {query} (sector: {sector})")
-
-    raw = _serper_search(f"{query} {sector} startups")
-    if raw.get("status") in ("skipped", "error"):
-        return json.dumps(raw, indent=2)
-
-    organic = raw.get("organic", [])
-    results = []
-    for item in organic:
-        results.append({
-            "title": item.get("title", ""),
-            "link": item.get("link", ""),
-            "snippet": item.get("snippet", ""),
-            "sector": sector,
-        })
-
-    return json.dumps({
-        "status": "success",
-        "query": query,
-        "sector": sector,
-        "result_count": len(results),
-        "results": results,
-        "instructions": (
-            "Extract startup names, descriptions, stages, and websites from the "
-            "results above, then use 'Save Startup to Database' for each."
-        ),
-    }, indent=2)
-
-
-@tool("Search Web for VCs")
-def web_search_vcs(query: str, focus_sector: str = "technology") -> str:
-    """Search the web for VC and investor information using Serper.dev.
-
-    Args:
-        query: Search query (e.g., "seed stage VCs fintech")
-        focus_sector: Sector focus to filter VCs
-
-    Returns:
-        JSON with organic search results or skip/error status
-    """
-    logger.info(f"Web search for VCs: {query} (focus: {focus_sector})")
-
-    raw = _serper_search(f"{query} {focus_sector} venture capital investors")
-    if raw.get("status") in ("skipped", "error"):
-        return json.dumps(raw, indent=2)
-
-    organic = raw.get("organic", [])
-    results = []
-    for item in organic:
-        results.append({
-            "title": item.get("title", ""),
-            "link": item.get("link", ""),
-            "snippet": item.get("snippet", ""),
-            "focus_sector": focus_sector,
-        })
-
-    return json.dumps({
-        "status": "success",
-        "query": query,
-        "focus_sector": focus_sector,
-        "result_count": len(results),
-        "results": results,
-        "instructions": (
-            "Extract VC firm names, sectors, stage focus, and websites from the "
-            "results above, then use 'Save VC to Database' for each."
-        ),
-    }, indent=2)
-
-
-@tool("Fetch and Parse Webpage")
-def fetch_webpage(url: str, extract_type: str = "startups") -> str:
-    """Fetch a webpage and return its text content for extraction.
-
-    Args:
-        url: The URL to fetch
-        extract_type: What to extract - 'startups' or 'vcs'
-
-    Returns:
-        JSON with page text (HTML stripped, truncated to 4000 chars) or error
-    """
-    logger.info(f"Fetch webpage: {url} (extract: {extract_type})")
-
-    result = _fetch_url(url)
-    result["extract_type"] = extract_type
-    if result.get("status") == "ok":
-        result["instructions"] = (
-            f"Extract {extract_type} information from the page text above, "
-            f"then use the appropriate 'Save to Database' tool for each entry found."
-        )
-    return json.dumps(result, indent=2)
-
-
-@tool("Run Data Collection")
-def run_data_collection(sectors: str = "fintech,healthtech,ai_ml,devtools,saas") -> str:
-    """Search the web for startups and VCs across the given sectors and save them to the database.
-
-    This is a convenience tool that performs a full data-collection sweep:
-    it searches Serper.dev for startups and VCs in each sector, persists
-    every result to the SQLite database, and returns a summary.
-
-    Requires SERPER_API_KEY to be set; returns status=skipped otherwise.
-
-    Args:
-        sectors: Comma-separated list of sectors to search
-            (e.g. "fintech,healthtech,ai_ml")
-
-    Returns:
-        JSON summary with counts of startups and VCs saved per sector
-    """
-    if not settings.serper_api_key:
-        return json.dumps({"status": "skipped", "reason": "SERPER_API_KEY not set"})
-
-    sector_list = [s.strip().lower().replace(" ", "_") for s in sectors.split(",") if s.strip()]
-    logger.info("run_data_collection: sectors=%s", sector_list)
-
-    db = get_database()
-    sector_results: List[Dict[str, Any]] = []
-
-    for sector in sector_list:
-        startups_saved = 0
-        vcs_saved = 0
-
-        # --- startups ---
-        raw = _serper_search(f"{sector} startups funding", n_results=5)
-        for item in raw.get("organic", []):
-            name = (item.get("title") or "").split(" - ")[0].split(" | ")[0].strip()
-            if not name:
-                continue
-            success = db.add_startup({
-                "name": name,
-                "description": item.get("snippet", ""),
-                "sector": sector,
-                "stage": "unknown",
-                "website": item.get("link", ""),
-                "source": "serper",
-                "fundraising_status": "unknown",
-            })
-            if success:
-                startups_saved += 1
-
-        # --- VCs ---
-        raw = _serper_search(f"{sector} venture capital investors", n_results=5)
-        for item in raw.get("organic", []):
-            name = (item.get("title") or "").split(" - ")[0].split(" | ")[0].strip()
-            if not name:
-                continue
-            success = db.add_vc({
-                "name": name,
-                "sectors": [sector],
-                "stage_focus": "unknown",
-                "website": item.get("link", ""),
-                "source": "serper",
-            })
-            if success:
-                vcs_saved += 1
-
-        sector_results.append({
-            "sector": sector,
-            "startups_saved": startups_saved,
-            "vcs_saved": vcs_saved,
-        })
-
-    total_startups = sum(r["startups_saved"] for r in sector_results)
-    total_vcs = sum(r["vcs_saved"] for r in sector_results)
-
-    return json.dumps({
-        "status": "success",
-        "total_startups_saved": total_startups,
-        "total_vcs_saved": total_vcs,
-        "by_sector": sector_results,
-    }, indent=2)
-
-
-@tool("Save Startup to Database")
-def save_startup(
-    name: str,
-    description: str = "",
-    sector: str = "technology",
-    stage: str = "seed",
-    website: str = "",
-    location: str = "",
-    recent_news: str = "",
-    source: str = "web_search"
-) -> str:
-    """Save a startup to the database.
-
-    Args:
-        name: Startup name (required)
-        description: What the startup does
-        sector: Business sector (fintech, healthtech, ai_ml, devtools, etc.)
-        stage: Funding stage (seed, series_a, series_b, growth)
-        website: Company website URL
-        location: Company location
-        recent_news: Recent news or achievements
-        source: Where the data came from
-
-    Returns:
-        Confirmation of save status
-    """
-    logger.info(f"Saving startup: {name}")
-
-    db = get_database()
-    startup = {
-        'name': name,
-        'description': description,
-        'sector': sector.lower().replace(' ', '_'),
-        'stage': stage.lower().replace(' ', '_'),
-        'website': website,
-        'location': location,
-        'recent_news': recent_news,
-        'source': source,
-        'fundraising_status': 'unknown'
-    }
-
-    success = db.add_startup(startup)
-
-    return json.dumps({
-        'status': 'success' if success else 'failed',
-        'startup': name,
-        'message': f"Startup '{name}' saved to database" if success else f"Failed to save '{name}'"
-    }, indent=2)
-
-
-@tool("Save VC to Database")
-def save_vc(
-    name: str,
-    sectors: str = "technology",
-    stage_focus: str = "seed",
-    check_size: str = "",
-    geography: str = "",
-    recent_activity: str = "",
-    website: str = "",
-    source: str = "web_search"
-) -> str:
-    """Save a VC/investor to the database.
-
-    Args:
-        name: VC firm name (required)
-        sectors: Investment sectors (comma-separated, e.g., "fintech, ai_ml, saas")
-        stage_focus: Investment stage focus (seed, series_a, series_b, growth)
-        check_size: Typical check size (e.g., "500K-2M", "5M-15M")
-        geography: Geographic focus (e.g., "US, Europe")
-        recent_activity: Recent investments or news
-        website: Firm website URL
-        source: Where the data came from
-
-    Returns:
-        Confirmation of save status
-    """
-    logger.info(f"Saving VC: {name}")
-
-    db = get_database()
-
-    # Parse sectors into list
-    sector_list = [s.strip().lower().replace(' ', '_') for s in sectors.split(',')]
-
-    vc = {
-        'name': name,
-        'sectors': sector_list,
-        'stage_focus': stage_focus.lower().replace(' ', '_'),
-        'check_size': check_size,
-        'geography': geography,
-        'recent_activity': recent_activity,
-        'website': website,
-        'source': source
-    }
-
-    success = db.add_vc(vc)
-
-    return json.dumps({
-        'status': 'success' if success else 'failed',
-        'vc': name,
-        'message': f"VC '{name}' saved to database" if success else f"Failed to save '{name}'"
-    }, indent=2)
 
 
 # =============================================================================
 # DATA RETRIEVAL TOOLS
 # =============================================================================
-
-@tool("Get Startups from Database")
-def get_startups_tool(sector: str = "all", stage: str = "all", limit: int = 20) -> str:
-    """Retrieve startups from the database.
-
-    Args:
-        sector: Filter by sector (fintech, healthtech, ai_ml, etc.) or 'all'
-        stage: Filter by stage (seed, series_a, series_b) or 'all'
-        limit: Maximum number of results
-
-    Returns:
-        JSON with startups from database
-    """
-    logger.info(f"Getting startups: sector={sector}, stage={stage}")
-
-    db = get_database()
-    startups = db.get_startups(sector=sector, stage=stage, limit=limit)
-
-    return json.dumps({
-        'status': 'success',
-        'count': len(startups),
-        'sector': sector,
-        'stage': stage,
-        'startups': startups
-    }, indent=2)
-
-
-@tool("Get VCs from Database")
-def get_vcs_tool(sector: str = "all", stage_focus: str = "all", limit: int = 20) -> str:
-    """Retrieve VCs from the database.
-
-    Args:
-        sector: Filter by sector focus or 'all'
-        stage_focus: Filter by stage focus or 'all'
-        limit: Maximum number of results
-
-    Returns:
-        JSON with VCs from database
-    """
-    logger.info(f"Getting VCs: sector={sector}, stage={stage_focus}")
-
-    db = get_database()
-    vcs = db.get_vcs(sector=sector, stage_focus=stage_focus, limit=limit)
-
-    return json.dumps({
-        'status': 'success',
-        'count': len(vcs),
-        'sector': sector,
-        'stage_focus': stage_focus,
-        'vcs': vcs
-    }, indent=2)
-
 
 @tool("Get Database Stats")
 def get_database_stats() -> str:
@@ -830,191 +306,6 @@ def get_database_stats() -> str:
 # =============================================================================
 # ANALYSIS AND CONTENT TOOLS
 # =============================================================================
-
-@tool("Validate Data Quality")
-def data_validator_tool(data_json: str) -> str:
-    """Validate scraped data for quality and completeness.
-
-    Args:
-        data_json: JSON string of data to validate
-
-    Returns:
-        Validation report with quality score
-    """
-    logger.info("Data validator: Checking data quality")
-
-    try:
-        data = json.loads(data_json)
-        startups = data.get('startups', [])
-
-        if not startups:
-            return json.dumps({
-                'status': 'fail',
-                'reason': 'No data to validate'
-            })
-
-        required_fields = ['name', 'sector', 'description']
-        total_fields = 0
-        present_fields = 0
-
-        for startup in startups:
-            for field in required_fields:
-                total_fields += 1
-                if field in startup and startup[field]:
-                    present_fields += 1
-
-        completeness = present_fields / total_fields if total_fields > 0 else 0
-
-        return json.dumps({
-            'status': 'pass' if completeness > 0.8 else 'warning',
-            'completeness_score': completeness,
-            'total_records': len(startups),
-            'quality_issues': [] if completeness > 0.8 else ['Some records missing required fields']
-        }, indent=2)
-
-    except Exception as e:
-        return json.dumps({
-            'status': 'error',
-            'reason': str(e)
-        })
-
-
-@tool("Build Tool Specification")
-def tool_builder_tool(tool_idea: str, requirements: str = "") -> str:
-    """Build a specification for a new tool or feature.
-
-    Args:
-        tool_idea: Description of the tool to build
-        requirements: Specific requirements or constraints
-
-    Returns:
-        Tool specification with implementation approach
-    """
-    logger.info(f"Tool builder: Creating spec for {tool_idea}")
-
-    spec = {
-        'tool_name': tool_idea.split()[0].lower() + '_tool',
-        'description': tool_idea,
-        'requirements': requirements,
-        'features': [
-            'Core functionality',
-            'Input validation',
-            'Error handling',
-            'Performance optimization'
-        ],
-        'implementation_approach': [
-            '1. Define interface and input/output schema',
-            '2. Implement core logic',
-            '3. Add validation and error handling',
-            '4. Write unit tests',
-            '5. Integration testing',
-            '6. Documentation'
-        ],
-        'estimated_complexity': 'medium'
-    }
-
-    registration = _register_dynamic_tool_spec(spec, source="tool_builder_tool")
-    spec["tool_name"] = registration["tool_name"]
-    spec["runtime_registration"] = {
-        "status": registration["status"],
-        "tool_name": registration["tool_name"],
-    }
-    spec["deployment"] = {
-        "status": registration["deployment_status"],
-        "artifact_path": registration["artifact_path"],
-    }
-
-    return json.dumps(spec, indent=2)
-
-
-@tool("Register Dynamic Tool")
-def register_dynamic_tool(tool_spec_json: str, source: str = "agent") -> str:
-    """Register a dynamic tool spec and deploy it as a local artifact."""
-    try:
-        parsed = json.loads(tool_spec_json)
-    except Exception as exc:
-        return json.dumps(
-            {
-                "status": "failed",
-                "reason": "invalid_json",
-                "error": str(exc),
-            },
-            indent=2,
-        )
-
-    if not isinstance(parsed, dict):
-        return json.dumps(
-            {
-                "status": "failed",
-                "reason": "tool_spec_must_be_object",
-            },
-            indent=2,
-        )
-
-    registration = _register_dynamic_tool_spec(parsed, source=source)
-    return json.dumps(
-        {
-            "status": "success",
-            "registration": registration,
-        },
-        indent=2,
-    )
-
-
-@tool("List Dynamic Tools")
-def list_dynamic_tools() -> str:
-    """List currently registered dynamic tools."""
-    tools = []
-    for name, spec in sorted(_dynamic_tool_specs.items()):
-        tools.append(
-            {
-                "tool_name": name,
-                "description": spec.get("description", ""),
-                "registered_source": spec.get("registered_source", ""),
-                "registered_at_utc": spec.get("registered_at_utc", ""),
-                "invocation_count": _dynamic_tool_invocations.get(name, 0),
-            }
-        )
-
-    return json.dumps(
-        {
-            "status": "success",
-            "count": len(tools),
-            "tools": tools,
-        },
-        indent=2,
-    )
-
-
-@tool("Execute Dynamic Tool")
-def execute_dynamic_tool(tool_name: str, payload_json: str = "{}") -> str:
-    """Execute a registered dynamic tool with JSON payload."""
-    try:
-        payload = json.loads(payload_json) if payload_json else {}
-    except Exception as exc:
-        return json.dumps(
-            {
-                "status": "failed",
-                "reason": "invalid_payload_json",
-                "error": str(exc),
-                "tool_name": tool_name,
-            },
-            indent=2,
-        )
-
-    if not isinstance(payload, dict):
-        return json.dumps(
-            {
-                "status": "failed",
-                "reason": "payload_must_be_object",
-                "tool_name": tool_name,
-            },
-            indent=2,
-        )
-
-    result = _execute_dynamic_tool(tool_name=tool_name, payload=payload)
-    return json.dumps(result, indent=2)
-
 
 # =============================================================================
 # CONSENSUS MEMORY TOOLS
@@ -1219,6 +510,50 @@ def get_cycle_history(limit: int = 10) -> str:
 
 
 get_cycle_history.cache_function = _NO_CACHE
+
+
+@tool("Mark Feedback Addressed")
+def mark_feedback_addressed_tool(feedback_ids: str) -> str:
+    """Mark customer feedback items as addressed after fixing them.
+
+    Call this after you have dispatched agents to fix issues raised in
+    the UNRESOLVED FEEDBACK section.  Pass the feedback IDs shown in
+    square brackets (e.g. "ab12,cd34,ef56").
+
+    Args:
+        feedback_ids: Comma-separated feedback IDs to mark as addressed
+
+    Returns:
+        JSON confirmation with count of items updated
+    """
+    from src.workspace_tools.file_tools import _mark_feedback_addressed
+
+    ids = [fid.strip() for fid in feedback_ids.split(",") if fid.strip()]
+    if not ids:
+        return json.dumps({"status": "error", "reason": "No feedback IDs provided"})
+
+    cycle_id = _current_cycle_id or 0
+    count = _mark_feedback_addressed(ids, addressed_in_cycle=cycle_id)
+
+    el = get_event_logger()
+    if el is not None:
+        el.emit("agent_exchange", {
+            "exchange_type": "feedback_addressed",
+            "from_agent": "coordinator",
+            "feedback_ids": ids,
+            "count": count,
+            "cycle_id": cycle_id,
+        })
+
+    return json.dumps({
+        "status": "success",
+        "marked_count": count,
+        "feedback_ids": ids,
+        "message": f"Marked {count} feedback item(s) as addressed",
+    }, indent=2)
+
+
+mark_feedback_addressed_tool.cache_function = _NO_CACHE
 
 
 # =============================================================================
@@ -1580,10 +915,7 @@ def make_dispatch_task_tool(
 # ---------------------------------------------------------------------------
 for _t in (
     run_quality_checks_tool,
-    get_startups_tool,
-    get_vcs_tool,
     get_database_stats,
-    list_dynamic_tools,
     get_team_insights,
 ):
     _t.cache_function = _NO_CACHE

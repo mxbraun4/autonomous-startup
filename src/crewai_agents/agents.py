@@ -9,19 +9,9 @@ configure_runtime_environment()
 from crewai import Agent, LLM
 from src.crewai_agents.mock_llm import DeterministicMockLLM
 from src.crewai_agents.tools import (
-    # Web collection tools
-    web_search_startups,
-    web_search_vcs,
-    fetch_webpage,
-    run_data_collection,
-    save_startup,
-    save_vc,
     # Database tools
-    get_startups_tool,
-    get_vcs_tool,
     get_database_stats,
     # Analysis tools
-    data_validator_tool,
     run_quality_checks_tool,
     # Consensus memory tools
     share_insight,
@@ -88,6 +78,9 @@ def ensure_litellm_tracing() -> None:
     import time as _time
     _original = litellm.completion
 
+    # Track tool_call_ids we've already emitted results for, to avoid duplicates
+    _emitted_tool_results: set = set()
+
     def _traced_completion(*args: Any, **kwargs: Any) -> Any:
         t0 = _time.monotonic()
         result = _original(*args, **kwargs)
@@ -102,6 +95,31 @@ def ensure_litellm_tracing() -> None:
 
             model = str(kwargs.get("model", ""))
             messages = kwargs.get("messages") or (args[1] if len(args) > 1 else [])
+
+            # Emit tool_result events for tool results in the incoming messages.
+            # After CrewAI executes a tool, it appends a role="tool" message
+            # with the actual return value before calling the LLM again.
+            if isinstance(messages, list):
+                agent_for_results = _extract_agent_from_messages(messages)
+                for m in messages:
+                    if not isinstance(m, dict) or m.get("role") != "tool":
+                        continue
+                    tc_id = m.get("tool_call_id", "")
+                    if tc_id in _emitted_tool_results:
+                        continue
+                    _emitted_tool_results.add(tc_id)
+                    content = str(m.get("content", ""))
+                    # Truncate large results to keep event log manageable
+                    truncated = len(content) > 2000
+                    tr_payload: dict[str, Any] = {
+                        "tool_call_id": tc_id,
+                        "result": content[:2000],
+                        "truncated": truncated,
+                        "agent": agent_for_results,
+                    }
+                    if _current_cycle_id is not None:
+                        tr_payload["cycle_id"] = _current_cycle_id
+                    el.emit("tool_result", tr_payload)
             # Capture all message content for full exchange visibility
             if isinstance(messages, list) and messages:
                 msg_parts = []
@@ -137,12 +155,23 @@ def ensure_litellm_tracing() -> None:
                 messages if isinstance(messages, list) else []
             )
 
+            # Extract token usage from litellm response
+            tokens_info: dict[str, int] = {}
+            if hasattr(result, "usage") and result.usage is not None:
+                usage = result.usage
+                tokens_info = {
+                    "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                    "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                    "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+                }
+
             payload: dict[str, Any] = {
                 "agent": agent_name,
                 "model": model,
                 "message_summary": msg_summary,
                 "response_summary": resp_summary,
                 "duration_ms": duration_ms,
+                "tokens": tokens_info,
             }
             if _current_cycle_id is not None:
                 payload["cycle_id"] = _current_cycle_id
@@ -156,9 +185,11 @@ def ensure_litellm_tracing() -> None:
                     tc_fn = getattr(tc, "function", None)
                     tc_name = getattr(tc_fn, "name", "") if tc_fn else ""
                     tc_args = getattr(tc_fn, "arguments", "") if tc_fn else ""
+                    tc_id = getattr(tc, "id", "") or ""
                     tc_payload: dict[str, Any] = {
                         "tool_name": tc_name,
                         "arguments": str(tc_args),
+                        "tool_call_id": tc_id,
                         "agent": agent_name,
                     }
                     if _current_cycle_id is not None:
@@ -395,59 +426,6 @@ Rules:
         allow_delegation=False,
         memory=True,
         max_iter=25,
-    )
-
-
-def create_data_strategist(
-    llm: LLM = None,
-    prompt_override: Optional[str] = None,
-    extra_tools: Optional[list] = None,
-) -> Agent:
-    """Create the Data Strategy Expert agent.
-
-    This agent identifies data gaps and coordinates data collection efforts.
-
-    Args:
-        llm: LLM instance to use
-
-    Returns:
-        Data Strategist agent
-    """
-    backstory = _with_prompt_override(
-        '''You are an expert in data quality, coverage analysis, and gap identification.
-        You find and collect startup and VC data, identify gaps in coverage,
-        and ensure data quality through validation.
-        ''',
-        prompt_override,
-    )
-
-    tools = [
-        run_data_collection,
-        web_search_startups,
-        web_search_vcs,
-        fetch_webpage,
-        save_startup,
-        save_vc,
-        get_startups_tool,
-        get_vcs_tool,
-        get_database_stats,
-        data_validator_tool,
-        make_share_insight("data_strategist"),
-        get_team_insights,
-    ]
-    if extra_tools:
-        tools.extend(extra_tools)
-
-    return Agent(
-        role='Data Strategy Expert',
-        goal='Maintain comprehensive, high-quality startup and VC data with zero critical gaps',
-        backstory=backstory,
-        tools=tools,
-        llm=llm or get_llm("data"),
-        verbose=True,
-        allow_delegation=True,
-        memory=True,
-        max_iter=10,
     )
 
 
