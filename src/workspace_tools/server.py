@@ -4,12 +4,18 @@ from __future__ import annotations
 import datetime
 import functools
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 import threading
+import time
 import uuid
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Optional
+from urllib.error import URLError
+from urllib.request import urlopen
 
 # ---------------------------------------------------------------------------
 # SQLite helpers for the feedback database
@@ -191,3 +197,111 @@ class WorkspaceServer:
             self._httpd.server_close()
             self._httpd = None
             self._thread = None
+
+
+class FlaskAppServer:
+    """Runs an agent-built Flask app from the workspace as a subprocess.
+
+    The agents write ``app.py`` in the workspace directory.  This class
+    launches it as a child process, waits for it to start serving, and
+    exposes the same ``start() -> url`` / ``stop()`` interface as
+    :class:`WorkspaceServer`.
+
+    Usage:
+        server = FlaskAppServer("workspace/")
+        url = server.start()   # e.g. "http://127.0.0.1:54321"
+        ...
+        server.stop()
+    """
+
+    def __init__(
+        self,
+        workspace_root: str | Path,
+        host: str = "127.0.0.1",
+        port: int = 0,
+    ) -> None:
+        self._workspace_root = Path(workspace_root).resolve()
+        self._host = host
+        self._port = port or self._find_free_port()
+        self._process: Optional[subprocess.Popen] = None
+
+    @staticmethod
+    def _find_free_port() -> int:
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            return s.getsockname()[1]
+
+    @property
+    def is_running(self) -> bool:
+        return self._process is not None and self._process.poll() is None
+
+    @property
+    def port(self) -> Optional[int]:
+        if not self.is_running:
+            return None
+        return self._port
+
+    @property
+    def base_url(self) -> Optional[str]:
+        if not self.is_running:
+            return None
+        return f"http://{self._host}:{self._port}"
+
+    def has_flask_app(self) -> bool:
+        """Return True if workspace/app.py exists."""
+        return (self._workspace_root / "app.py").is_file()
+
+    def start(self, timeout: float = 15.0) -> str:
+        """Start the Flask app subprocess. Returns the base URL.
+
+        The app.py must honour ``FLASK_RUN_HOST`` / ``FLASK_RUN_PORT``
+        environment variables (the placeholder does).
+        """
+        if self.is_running:
+            return self.base_url
+
+        app_py = self._workspace_root / "app.py"
+        if not app_py.exists():
+            raise FileNotFoundError(f"No app.py in {self._workspace_root}")
+
+        env = os.environ.copy()
+        env["FLASK_RUN_HOST"] = self._host
+        env["FLASK_RUN_PORT"] = str(self._port)
+
+        self._process = subprocess.Popen(
+            [sys.executable, str(app_py)],
+            cwd=str(self._workspace_root),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        # Poll until the server responds or the process dies
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._process.poll() is not None:
+                stderr = ""
+                if self._process.stderr:
+                    stderr = self._process.stderr.read().decode(errors="replace")[:500]
+                raise RuntimeError(f"Flask app exited immediately: {stderr}")
+            try:
+                with urlopen(f"http://{self._host}:{self._port}/", timeout=1):
+                    pass
+                return self.base_url
+            except (URLError, OSError):
+                time.sleep(0.3)
+
+        self.stop()
+        raise TimeoutError(f"Flask app did not start within {timeout}s")
+
+    def stop(self) -> None:
+        """Terminate the Flask app subprocess."""
+        if self._process is not None:
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+                self._process.wait(timeout=2)
+            self._process = None

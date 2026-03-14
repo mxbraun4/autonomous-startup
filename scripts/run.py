@@ -13,9 +13,6 @@ def _mode_script(mode: str) -> Path:
     scripts_dir = Path(__file__).resolve().parent
     mapping = {
         "crewai": scripts_dir / "run_simulation.py",
-        "web": scripts_dir / "run_web_autonomy.py",
-        "framework": scripts_dir / "run_framework_simulation.py",
-        "scheduler": scripts_dir / "run_scheduler.py",
         "dashboard": scripts_dir / "live_dashboard.py",
         "preview": scripts_dir / "serve_workspace.py",
     }
@@ -32,11 +29,11 @@ def build_command(mode: str, passthrough_args: List[str]) -> List[str]:
 
 def main(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Unified runner for CrewAI, web-autonomy, framework, scheduler, dashboard, and preview modes.",
+        description="Unified runner for CrewAI, dashboard, and preview modes.",
     )
     parser.add_argument(
         "--mode",
-        choices=["crewai", "web", "framework", "scheduler", "dashboard", "preview"],
+        choices=["crewai", "dashboard", "preview"],
         default="crewai",
         help="Execution mode (default: crewai)",
     )

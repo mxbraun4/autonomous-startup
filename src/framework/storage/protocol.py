@@ -169,10 +169,6 @@ class MemoryStoreProtocol(abc.ABC):
         """Get all versions of a procedure."""
 
     @abc.abstractmethod
-    async def proc_rollback(self, task_type: str, target_version: int) -> Optional[Procedure]:
-        """Reactivate an older version of a procedure."""
-
-    @abc.abstractmethod
     async def proc_list_types(self) -> List[str]:
         """List all known task types."""
 

@@ -170,16 +170,6 @@ class TestProceduralIntegration:
         assert active[0].version == 2
         assert active[0].score == 0.75
 
-    def test_rollback(self, store):
-        store.proc_save("wf", {"v": 1}, score=0.5)
-        store.proc_save("wf", {"v": 2}, score=0.6)
-        store.proc_save("wf", {"v": 3}, score=0.7)
-
-        # Rollback to v1
-        result = store.proc_rollback("wf", 1)
-        assert result is not None
-        assert result.current_version == 1
-
     def test_list_types(self, store):
         store.proc_save("type_a", {"s": 1}, 0.5)
         store.proc_save("type_b", {"s": 2}, 0.6)

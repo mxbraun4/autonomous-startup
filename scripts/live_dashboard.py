@@ -262,7 +262,74 @@ HTML_TEMPLATE = """<!doctype html>
       word-break: break-word;
       font-size: 12px;
       line-height: 1.5;
-      max-width: 420px;
+      max-width: 600px;
+    }
+    #sharedKnowledgeBody td:nth-child(5),
+    #learningsBody td:nth-child(3) {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12px;
+      line-height: 1.5;
+      max-width: 600px;
+    }
+
+    /* ── Tree View ── */
+    .tree-container { padding: 16px 20px; }
+    .tree-root {
+      margin-bottom: 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px dashed var(--line);
+    }
+    .tree-root:last-child { border-bottom: none; }
+    .tree-node {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 4px 0;
+    }
+    .tree-branch {
+      display: flex;
+      flex-direction: column;
+      margin-left: 20px;
+      padding-left: 14px;
+      border-left: 2px solid var(--line);
+    }
+    .tree-branch .tree-node { position: relative; }
+    .tree-branch .tree-node::before {
+      content: "";
+      position: absolute;
+      left: -14px;
+      top: 13px;
+      width: 12px;
+      height: 2px;
+      background: var(--line);
+    }
+    .tree-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-top: 4px;
+      flex-shrink: 0;
+    }
+    .tree-dot.coordinator { background: var(--accent); }
+    .tree-dot.agent { background: var(--ok); }
+    .tree-dot.failed { background: var(--danger); }
+    .tree-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .tree-detail {
+      font-size: 11px;
+      color: var(--ink-soft);
+      line-height: 1.4;
+      margin-top: 2px;
+      word-break: break-word;
+    }
+    .tree-empty {
+      color: var(--ink-soft);
+      font-size: 13px;
+      padding: 12px 0;
     }
     .error {
       margin: 0;
@@ -353,8 +420,15 @@ HTML_TEMPLATE = """<!doctype html>
       </article>
     </section>
 
+    <section class="panel" id="treePanel">
+      <h2>Tree View</h2>
+      <div id="treeContent" class="tree-container">
+        <div class="tree-empty">No dispatches yet</div>
+      </div>
+    </section>
+
     <section class="panel">
-      <h2>Shared Knowledge</h2>
+      <h2>Agent Exchanges</h2>
       <table>
         <thead>
           <tr>
@@ -362,24 +436,10 @@ HTML_TEMPLATE = """<!doctype html>
             <th>Agent</th>
             <th>Action</th>
             <th>Topic</th>
-            <th>Insight</th>
+            <th>Detail</th>
           </tr>
         </thead>
         <tbody id="sharedKnowledgeBody"></tbody>
-      </table>
-    </section>
-
-    <section class="panel">
-      <h2>Learnings</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Iter</th>
-            <th>Key</th>
-            <th>Insight</th>
-          </tr>
-        </thead>
-        <tbody id="learningsBody"></tbody>
       </table>
     </section>
 
@@ -583,6 +643,68 @@ HTML_TEMPLATE = """<!doctype html>
       }
     }
 
+    // ── Tree View ──
+    function renderTreeView(exchanges) {
+      const container = document.getElementById("treeContent");
+      if (!container) return;
+      const dispatches = (exchanges || []).filter(e => e.exchange_type === "dispatch");
+      const results = (exchanges || []).filter(e => e.exchange_type === "dispatch_result");
+      if (dispatches.length === 0) {
+        container.innerHTML = '<div class="tree-empty">No dispatches yet</div>';
+        return;
+      }
+      // Group by cycle
+      const byCycle = {};
+      dispatches.forEach(d => {
+        const cid = d.cycle_id ?? "?";
+        if (!byCycle[cid]) byCycle[cid] = [];
+        byCycle[cid].push(d);
+      });
+      const resultMap = {};
+      results.forEach(r => {
+        const key = `${r.cycle_id}_${r.dispatch_number}`;
+        resultMap[key] = r;
+      });
+
+      let html = "";
+      Object.keys(byCycle).sort((a, b) => Number(a) - Number(b)).forEach(cid => {
+        const group = byCycle[cid];
+        html += `<div class="tree-root">`;
+        html += `<div class="tree-node">`;
+        html += `<span class="tree-dot coordinator"></span>`;
+        html += `<div><span class="tree-label">Iteration ${escapeHtml(String(cid))} — Coordinator</span></div>`;
+        html += `</div>`;
+        html += `<div class="tree-branch">`;
+
+        group.forEach(d => {
+          const dn = d.dispatch_number;
+          const role = d.to_agent || d.key || "agent";
+          const task = d.task_summary || d.value_summary || "";
+          const resultKey = `${cid}_${dn}`;
+          const result = resultMap[resultKey];
+          const hasFailed = result && (result.value_summary || "").includes("[dispatch error");
+          const dotClass = result ? (hasFailed ? "failed" : "agent") : "coordinator";
+
+          html += `<div class="tree-node">`;
+          html += `<span class="tree-dot ${dotClass}"></span>`;
+          html += `<div>`;
+          html += `<span class="tree-label">${escapeHtml(role)}</span>`;
+          if (task) {
+            html += `<div class="tree-detail">${escapeHtml(task.substring(0, 200))}</div>`;
+          }
+          if (result && result.value_summary) {
+            const rv = result.value_summary;
+            const preview = rv.length > 200 ? rv.substring(0, 200) + "..." : rv;
+            html += `<div class="tree-detail" style="color: var(--ink); margin-top: 3px;">${escapeHtml(preview)}</div>`;
+          }
+          html += `</div></div>`;
+        });
+
+        html += `</div></div>`;
+      });
+      container.innerHTML = html;
+    }
+
     function renderSnapshot(snapshot) {
       renderRunOptions(snapshot.available_run_ids || [], snapshot.selected_run_id || "");
 
@@ -616,20 +738,22 @@ HTML_TEMPLATE = """<!doctype html>
       // Hero subtitle — iteration count and status
       setText("heroMeta", `Iteration ${iterCount} — ${statusText}`);
 
-      // Shared Knowledge (was Agent Exchanges)
+      // Tree view
+      const exchanges = snapshot.agent_exchanges || [];
+      renderTreeView(exchanges);
+
+      // Agent Exchanges table (detail view)
       renderRows(
         "sharedKnowledgeBody",
-        (snapshot.agent_exchanges || []).map((item) => ({
+        exchanges.map((item) => ({
           cycle_id: item.cycle_id ?? "-",
           from_agent: item.from_agent || "-",
           exchange_type: item.exchange_type || "-",
-          key: item.key || "-",
-          value_summary: item.value_summary || "-",
-          value_full: item.value_full || item.value_summary || "-",
+          key: item.key || item.to_agent || "-",
+          value_summary: item.value_summary || item.task_summary || "-",
         })),
         ["cycle_id", "from_agent", "exchange_type", "key", "value_summary"],
-        "No shared knowledge yet",
-        {"value_summary": "value_full"}
+        "No exchanges yet"
       );
 
       // Agent Reasoning (was LLM Calls) — always expanded, no toggle
@@ -639,11 +763,11 @@ HTML_TEMPLATE = """<!doctype html>
           cycle_id: item.cycle_id ?? "-",
           agent: item.agent || "-",
           model: item.model || "-",
-          message_full: item.message_full || item.message_summary || "-",
-          response_full: item.response_full || item.response_summary || "-",
+          message_summary: item.message_summary || "-",
+          response_summary: item.response_summary || "-",
           duration_ms: item.duration_ms != null ? item.duration_ms + " ms" : "-",
         })),
-        ["cycle_id", "agent", "model", "message_full", "response_full", "duration_ms"],
+        ["cycle_id", "agent", "model", "message_summary", "response_summary", "duration_ms"],
         "No agent reasoning yet"
       );
 
@@ -715,12 +839,10 @@ HTML_TEMPLATE = """<!doctype html>
           .map((item) => ({
             cycle_id: item.cycle_id ?? "-",
             key: item.key || "-",
-            value_summary: item.value_summary || item.value_full || "-",
-            value_full: item.value_full || item.value_summary || "-",
+            value_summary: item.value_summary || "-",
           })),
         ["cycle_id", "key", "value_summary"],
-        "No learnings yet",
-        {"value_summary": "value_full"}
+        "No learnings yet"
       );
 
       // Event Breakdown chips
@@ -893,12 +1015,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
         del fmt, args
 
     def _serve_db_stats(self) -> None:
-        """Return database statistics as JSON."""
-        try:
-            from src.crewai_agents.tools import get_database
+        """Return database statistics as JSON.
 
-            db = get_database()
-            stats = db.get_stats()
+        Opens a fresh DB connection each time so we see writes from the
+        simulation process (which runs in a separate process).
+        """
+        try:
+            from src.database.database import StartupDatabase
+
+            db = StartupDatabase()
+            try:
+                stats = db.get_stats()
+            finally:
+                db.close()
             self._send_json(stats)
         except Exception as exc:
             self._send_json(

@@ -79,12 +79,6 @@ class ProceduralStoreBackend:
         proc = await self.proc_get(task_type)
         return [proc] if proc else []
 
-    async def proc_rollback(self, task_type: str, target_version: int) -> Optional[Procedure]:
-        ok = await asyncio.to_thread(self._sync_rollback, task_type, target_version)
-        if not ok:
-            return None
-        return await self.proc_get(task_type)
-
     async def proc_list_types(self) -> List[str]:
         return await asyncio.to_thread(self._sync_list_types)
 
@@ -128,26 +122,6 @@ class ProceduralStoreBackend:
         if not rows:
             return None
         return self._rows_to_procedure(task_type, rows)
-
-    def _sync_rollback(self, task_type: str, target_version: int) -> bool:
-        row = self._conn.execute(
-            "SELECT version FROM procedures WHERE task_type = ? AND version = ?",
-            (task_type, target_version),
-        ).fetchone()
-        if not row:
-            logger.warning(f"Rollback failed: version {target_version} not found for {task_type}")
-            return False
-
-        self._conn.execute(
-            "UPDATE procedures SET is_active = 0 WHERE task_type = ?",
-            (task_type,),
-        )
-        self._conn.execute(
-            "UPDATE procedures SET is_active = 1 WHERE task_type = ? AND version = ?",
-            (task_type, target_version),
-        )
-        self._conn.commit()
-        return True
 
     def _sync_list_types(self) -> List[str]:
         rows = self._conn.execute(

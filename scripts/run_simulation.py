@@ -116,6 +116,9 @@ def _start_dashboard(port: int = 8765, open_browser: bool = True) -> str | None:
 def _start_preview_server(port: int = 8080, open_browser: bool = True) -> str | None:
     """Start the workspace preview server on a daemon thread.
 
+    If the workspace contains ``app.py``, launches it as a Flask subprocess.
+    Otherwise falls back to the static preview server.
+
     Returns the preview URL, or None if the server fails to start.
     """
     from scripts.serve_workspace import PreviewServer, PreviewHandler
@@ -123,13 +126,36 @@ def _start_preview_server(port: int = 8080, open_browser: bool = True) -> str | 
     workspace = Path(__file__).resolve().parent.parent / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
 
-    # Write a placeholder so the server has something to show immediately
-    index = workspace / "index.html"
-    if not index.exists():
-        index.write_text(
-            "<html><body><h1>Workspace</h1>"
-            "<p>Waiting for agents to build...</p>"
-            "</body></html>",
+    # Write Flask app placeholder so the server has something to show immediately
+    app_py = workspace / "app.py"
+    templates_dir = workspace / "templates"
+    if not app_py.exists():
+        templates_dir.mkdir(parents=True, exist_ok=True)
+        app_py.write_text(
+            'import os\n'
+            'from flask import Flask, render_template\n'
+            '\n'
+            'app = Flask(__name__)\n'
+            '\n'
+            "@app.route('/')\n"
+            'def index():\n'
+            "    return render_template('index.html')\n"
+            '\n'
+            "if __name__ == '__main__':\n"
+            "    host = os.environ.get('FLASK_RUN_HOST', '127.0.0.1')\n"
+            "    port = int(os.environ.get('FLASK_RUN_PORT', '5000'))\n"
+            '    app.run(host=host, port=port, debug=False)\n',
+            encoding="utf-8",
+        )
+        (templates_dir / "index.html").write_text(
+            '<!DOCTYPE html>\n'
+            '<html>\n'
+            '<head><title>Startup-VC Matching Platform</title></head>\n'
+            '<body>\n'
+            '<h1>Startup-VC Matching Platform</h1>\n'
+            '<p>Waiting for agents to build...</p>\n'
+            '</body>\n'
+            '</html>\n',
             encoding="utf-8",
         )
 
@@ -214,8 +240,8 @@ def main():
     parser.add_argument(
         '--iterations',
         type=int,
-        default=3,
-        help='Number of Build-Measure-Learn iterations (default: 3)'
+        default=10,
+        help='Number of Build-Measure-Learn iterations (default: 10)'
     )
     parser.add_argument(
         '--verbose',

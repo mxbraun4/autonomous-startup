@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -89,8 +89,4 @@ class ProcedureUpdater:
         )
         return _resolve(result)
 
-    def rollback(self, task_type: str, target_version: int) -> Optional[Procedure]:
-        """Rollback procedure to a prior version via store proc_rollback()."""
-        result = self._store.proc_rollback(task_type, target_version)
-        return _resolve(result)
 

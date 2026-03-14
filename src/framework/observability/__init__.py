@@ -1,4 +1,4 @@
-"""Layer H - Observability and replay utilities."""
+"""Observability - event logging and dashboard."""
 
 from src.framework.observability.dashboard import (
     build_run_snapshot,
@@ -11,8 +11,6 @@ from src.framework.observability.events import (
     create_event,
 )
 from src.framework.observability.logger import EventLogger
-from src.framework.observability.replay import ReplayDiff, ReplayEngine, ReplayResult
-from src.framework.observability.timeline import Timeline, TimelineBuilder
 
 __all__ = [
     "build_run_snapshot",
@@ -21,10 +19,5 @@ __all__ = [
     "EVENT_TYPES_REQUIRED",
     "EventLogger",
     "ObservabilityEvent",
-    "ReplayDiff",
-    "ReplayEngine",
-    "ReplayResult",
-    "Timeline",
-    "TimelineBuilder",
     "create_event",
 ]

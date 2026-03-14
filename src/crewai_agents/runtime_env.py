@@ -44,6 +44,10 @@ def configure_runtime_environment() -> None:
     # Best-effort patch to keep CrewAI sqlite/chroma files in the workspace.
     patch_crewai_storage_paths()
 
+    # Patch CrewAI's native tool loop to be more generous with text responses.
+    from src.crewai_agents.patch_crewai import patch_crewai_native_tool_loop
+    patch_crewai_native_tool_loop()
+
 
 def crewai_db_storage_path() -> str:
     """Return writable project-local CrewAI DB storage path."""

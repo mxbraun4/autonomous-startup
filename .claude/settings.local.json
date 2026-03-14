@@ -7,7 +7,11 @@
       "Bash(git -C \"E:\\\\autonomous-startup\" branch -a)",
       "Bash(git -C \"E:\\\\autonomous-startup\" log --graph --oneline --decorate -10 main)",
       "Bash(grep:*)",
-      "Bash(sort:*)"
+      "Bash(sort:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(cd /c/Users/Maxi\\\\ Braun/Dropbox\\\\ \\\\\\(Old\\\\\\)/PC/Desktop/autonomous-startup && wc -l src/**/*.py | tail -1)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

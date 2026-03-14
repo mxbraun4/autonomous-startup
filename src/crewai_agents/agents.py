@@ -9,23 +9,14 @@ configure_runtime_environment()
 from crewai import Agent, LLM
 from src.crewai_agents.mock_llm import DeterministicMockLLM
 from src.crewai_agents.tools import (
-    # Web collection tools
-    web_search_startups,
-    web_search_vcs,
-    fetch_webpage,
-    run_data_collection,
-    save_startup,
-    save_vc,
     # Database tools
-    get_startups_tool,
-    get_vcs_tool,
     get_database_stats,
     # Analysis tools
-    data_validator_tool,
     run_quality_checks_tool,
     # Consensus memory tools
     share_insight,
     get_team_insights,
+    get_cycle_history,
     # Role-aware share_insight factory
     make_share_insight,
 )
@@ -87,6 +78,9 @@ def ensure_litellm_tracing() -> None:
     import time as _time
     _original = litellm.completion
 
+    # Track tool_call_ids we've already emitted results for, to avoid duplicates
+    _emitted_tool_results: set = set()
+
     def _traced_completion(*args: Any, **kwargs: Any) -> Any:
         t0 = _time.monotonic()
         result = _original(*args, **kwargs)
@@ -101,11 +95,42 @@ def ensure_litellm_tracing() -> None:
 
             model = str(kwargs.get("model", ""))
             messages = kwargs.get("messages") or (args[1] if len(args) > 1 else [])
+
+            # Emit tool_result events for tool results in the incoming messages.
+            # After CrewAI executes a tool, it appends a role="tool" message
+            # with the actual return value before calling the LLM again.
+            if isinstance(messages, list):
+                agent_for_results = _extract_agent_from_messages(messages)
+                for m in messages:
+                    if not isinstance(m, dict) or m.get("role") != "tool":
+                        continue
+                    tc_id = m.get("tool_call_id", "")
+                    if tc_id in _emitted_tool_results:
+                        continue
+                    _emitted_tool_results.add(tc_id)
+                    content = str(m.get("content", ""))
+                    # Truncate large results to keep event log manageable
+                    truncated = len(content) > 2000
+                    tr_payload: dict[str, Any] = {
+                        "tool_call_id": tc_id,
+                        "result": content[:2000],
+                        "truncated": truncated,
+                        "agent": agent_for_results,
+                    }
+                    if _current_cycle_id is not None:
+                        tr_payload["cycle_id"] = _current_cycle_id
+                    el.emit("tool_result", tr_payload)
+            # Capture all message content for full exchange visibility
             if isinstance(messages, list) and messages:
-                last_msg = str(messages[-1].get("content", ""))
+                msg_parts = []
+                for m in messages:
+                    role = m.get("role", "?")
+                    content = str(m.get("content", ""))
+                    if content:
+                        msg_parts.append(f"[{role}] {content}")
+                msg_summary = "\n\n".join(msg_parts)
             else:
-                last_msg = ""
-            msg_summary = last_msg
+                msg_summary = ""
 
             resp_text = ""
             if hasattr(result, "choices") and result.choices:
@@ -122,7 +147,7 @@ def ensure_litellm_tracing() -> None:
                                 tc_name = getattr(tc_name, "name", str(tc_name))
                             tc_args = ""
                             if hasattr(tc, "function") and hasattr(tc.function, "arguments"):
-                                tc_args = str(tc.function.arguments or "")[:100]
+                                tc_args = str(tc.function.arguments or "")
                             resp_text = f"[tool_call] {tc_name}({tc_args})"
             resp_summary = resp_text
 
@@ -130,17 +155,46 @@ def ensure_litellm_tracing() -> None:
                 messages if isinstance(messages, list) else []
             )
 
+            # Extract token usage from litellm response
+            tokens_info: dict[str, int] = {}
+            if hasattr(result, "usage") and result.usage is not None:
+                usage = result.usage
+                tokens_info = {
+                    "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                    "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                    "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+                }
+
             payload: dict[str, Any] = {
                 "agent": agent_name,
                 "model": model,
                 "message_summary": msg_summary,
                 "response_summary": resp_summary,
                 "duration_ms": duration_ms,
+                "tokens": tokens_info,
             }
             if _current_cycle_id is not None:
                 payload["cycle_id"] = _current_cycle_id
 
             el.emit("llm_call", payload)
+
+            # Emit tool_called events for every tool the model invoked
+            if hasattr(result, "choices") and result.choices:
+                tc_list = getattr(result.choices[0].message, "tool_calls", None) or []
+                for tc in tc_list:
+                    tc_fn = getattr(tc, "function", None)
+                    tc_name = getattr(tc_fn, "name", "") if tc_fn else ""
+                    tc_args = getattr(tc_fn, "arguments", "") if tc_fn else ""
+                    tc_id = getattr(tc, "id", "") or ""
+                    tc_payload: dict[str, Any] = {
+                        "tool_name": tc_name,
+                        "arguments": str(tc_args),
+                        "tool_call_id": tc_id,
+                        "agent": agent_name,
+                    }
+                    if _current_cycle_id is not None:
+                        tc_payload["cycle_id"] = _current_cycle_id
+                    el.emit("tool_called", tc_payload)
         except Exception:
             pass
 
@@ -196,7 +250,50 @@ def _openrouter_model_for_role(role: Optional[str]) -> str:
     return ""
 
 
+_registered_models: set = set()
+
+
+def _ensure_litellm_model_info(model: str) -> None:
+    """Register model capabilities with LiteLLM if not already known.
+
+    LiteLLM's model registry may not include every OpenRouter variant (e.g.
+    ``openrouter/qwen/qwen3-coder-next``).  When a model is unknown, CrewAI
+    falls back to ReAct text parsing instead of native function calling,
+    which causes frequent JSON formatting errors from smaller LLMs.
+
+    This registers the model as supporting function calling so CrewAI uses
+    the native tool-call API path.
+    """
+    if model in _registered_models:
+        return
+    _registered_models.add(model)
+
+    try:
+        import litellm
+        litellm.get_model_info(model)
+        return  # Already known
+    except Exception:
+        pass
+
+    try:
+        import litellm
+        # Infer provider from model string (e.g. "openrouter/qwen/..." -> "openrouter")
+        provider = model.split("/")[0] if "/" in model else ""
+        litellm.register_model({
+            model: {
+                "mode": "chat",
+                "supports_function_calling": True,
+                "supports_tool_choice": True,
+                "litellm_provider": provider,
+            },
+        })
+        logger.info("Registered %s with litellm (function calling enabled)", model)
+    except Exception:
+        pass  # non-critical; will fall back to ReAct
+
+
 def _build_openrouter_llm(model: str) -> LLM:
+    _ensure_litellm_model_info(model)
     return LLM(
         model=model,
         api_key=settings.openrouter_api_key,
@@ -255,18 +352,8 @@ def create_master_coordinator(
     Returns:
         Master Coordinator agent
     """
-    workspace_note = ""
-    if extra_tools:
-        workspace_note = (
-            "\n\n        You also have workspace file tools that let you read and list "
-            "files in a product workspace directory. Use these to inspect the current "
-            "state of the website before deciding what to delegate."
-        )
     backstory = _with_prompt_override(
-        '''You are a startup ecosystem coordinator. Analyze build results, extract
-        learnings, and formulate recommendations for the next iteration.
-        '''
-        + workspace_note,
+        '''You are a startup ecosystem coordinator. You analyze build results, extract learnings, and formulate recommendations for the next iteration. Use your tools to gather context and share your findings. Always act through tool calls, not text-only responses. Call ONE tool at a time, never multiple tools in parallel.''',
         prompt_override,
     )
 
@@ -307,100 +394,38 @@ def create_build_coordinator(
         BUILD Coordinator agent
     """
     backstory = _with_prompt_override(
-        '''You are a BUILD phase coordinator. You dispatch tasks to specialist agents
-        (product_strategist, developer, reviewer) and read their results.
-        You do NOT write code or specs yourself.
+        '''You coordinate the BUILD phase of a startup-VC matching platform.
 
-        Prefer scoped developer dispatches: one focused challenge at a time.
-        Avoid asking for an entire backend+frontend build in a single dispatch.
+Tech stack: Python Flask backend (app.py), Jinja2 HTML templates (templates/), static assets (static/css, static/js), SQLite databases (.db files). The app runs via "python app.py".
 
-        CRITICAL: You MUST call dispatch_task_to_agent at least once before giving
-        your final answer. Never return a text plan — actually call the tool.
-        ''',
+Workflow: Read context (workspace files, team insights, feedback) to understand the current state, then dispatch specific tasks to agents.
+
+Agent roles:
+- product_strategist: Analyzes feedback, defines product direction, and proposes what to build. Dispatch this agent first to get ideas and a plan, then use its output to give the developer specific tasks.
+- developer: Builds and fixes code. Give it concrete tasks like "Add a /startups route to app.py that queries the SQLite database and renders a startups.html template" or "Create the base.html Jinja layout with nav bar and footer." The developer reads files on its own and writes code.
+- reviewer: Reviews code quality, runs QA checks, identifies bugs.
+
+Rules:
+- Read context first, then dispatch. Keep context-gathering to 2-3 tool calls max before dispatching.
+- Developer tasks must be BUILD or FIX tasks — never "read and report back."
+- Call ONE tool at a time, never multiple tools in parallel.''',
         prompt_override,
     )
 
-    tools = [make_share_insight("coordinator"), get_team_insights]
+    tools = [make_share_insight("coordinator"), get_team_insights, get_cycle_history]
     if extra_tools:
         tools.extend(extra_tools)
 
     return Agent(
         role='BUILD Coordinator',
-        goal='Orchestrate product_strategist, developer, and reviewer to produce a QA-passing website iteration',
+        goal='Orchestrate agents to build a startup-VC matching platform that connects startups with investors',
         backstory=backstory,
         llm=llm or get_llm("coordinator"),
         tools=tools,
         verbose=True,
         allow_delegation=False,
         memory=True,
-        max_iter=20,
-    )
-
-
-def create_data_strategist(
-    llm: LLM = None,
-    prompt_override: Optional[str] = None,
-    extra_tools: Optional[list] = None,
-) -> Agent:
-    """Create the Data Strategy Expert agent.
-
-    This agent identifies data gaps and coordinates data collection efforts.
-
-    Args:
-        llm: LLM instance to use
-
-    Returns:
-        Data Strategist agent
-    """
-    backstory = _with_prompt_override(
-        '''You are an expert in data quality, coverage analysis, and gap identification.
-        You can quickly spot where data is missing or outdated by comparing current coverage
-        against VC investment preferences and market trends.
-
-        Your expertise:
-        - Identifying data gaps by analyzing VC interests vs. startup coverage
-        - Searching the web to find and collect startup and VC data
-        - Prioritizing collection efforts based on business impact
-        - Ensuring data quality through validation
-        - Tracking data freshness and completeness metrics
-
-        You use web search tools to find startups and VCs, save them to the database,
-        and validate data quality. Your workflow:
-        1. Check database stats to understand current coverage
-        2. Search web for startups/VCs in underrepresented sectors
-        3. Save found data to database
-        4. Validate data quality
-        ''',
-        prompt_override,
-    )
-
-    tools = [
-        run_data_collection,
-        web_search_startups,
-        web_search_vcs,
-        fetch_webpage,
-        save_startup,
-        save_vc,
-        get_startups_tool,
-        get_vcs_tool,
-        get_database_stats,
-        data_validator_tool,
-        make_share_insight("data_strategist"),
-        get_team_insights,
-    ]
-    if extra_tools:
-        tools.extend(extra_tools)
-
-    return Agent(
-        role='Data Strategy Expert',
-        goal='Maintain comprehensive, high-quality startup and VC data with zero critical gaps',
-        backstory=backstory,
-        tools=tools,
-        llm=llm or get_llm("data"),
-        verbose=True,
-        allow_delegation=True,
-        memory=True,
-        max_iter=10,
+        max_iter=25,
     )
 
 
@@ -422,17 +447,25 @@ def create_developer_agent(
         Developer agent
     """
     backstory = _with_prompt_override(
-        '''You are a web developer building a startup-VC matching website.
-        Read the build spec from team insights, then implement it as HTML/CSS/JS
-        files in workspace/ using write_workspace_file. Each iteration must produce
-        at least one new or improved file.
-        ''',
+        '''You are an autonomous web developer responsible for a startup-VC matching website.
+You own the workspace — read files, write files, fix bugs, add features, refactor, whatever you judge is most impactful right now.
+You have tools to inspect team insights, read/write workspace files, run SQL queries, run HTTP checks, and share what you did.
+
+Tech stack: Python Flask backend (app.py), Jinja2 HTML templates (templates/), static assets (static/css/, static/js/), SQLite databases (.db files).
+- app.py: Flask routes, database logic, form handling. Must read host/port from FLASK_RUN_HOST/FLASK_RUN_PORT env vars with sensible defaults.
+- templates/: Jinja2 HTML templates. Use template inheritance (base.html) for shared layout.
+- static/: CSS and JS files referenced from templates.
+- Use run_workspace_sql to create tables and seed data in SQLite .db files.
+
+Always act through tool calls. When something needs fixing, fix it — don't just report it.
+IMPORTANT: Call ONE tool at a time, never multiple tools in parallel. After each tool result, decide your next step.''',
         prompt_override,
     )
 
     tools = [
         make_share_insight("developer"),
         get_team_insights,
+        get_cycle_history,
     ]
     if extra_tools:
         tools.extend(extra_tools)
@@ -446,7 +479,7 @@ def create_developer_agent(
         verbose=True,
         allow_delegation=False,
         memory=True,
-        max_iter=10,
+        max_iter=25,
     )
 
 
@@ -467,10 +500,7 @@ def create_product_strategist(
         Product Strategist agent
     """
     backstory = _with_prompt_override(
-        '''You are a product manager for a startup-VC matching website.
-        Inspect the workspace to see what exists, identify the highest-priority
-        missing page, and write a clear build spec. Hand off specs via share_insight.
-        ''',
+        '''You are the product architect for a startup-VC matching website built with Flask + SQLite + Jinja templates. You have tools to inspect the workspace, read team insights, and share your plans. Explore what exists, decide what the product needs (routes, database tables, templates, features), and publish your architecture plan via share_insight so other agents can act on it. Always act through tool calls, not text-only responses.''',
         prompt_override,
     )
 
@@ -478,6 +508,7 @@ def create_product_strategist(
         get_database_stats,
         make_share_insight("product_strategist"),
         get_team_insights,
+        get_cycle_history,
     ]
     if extra_tools:
         tools.extend(extra_tools)
@@ -513,9 +544,7 @@ def create_reviewer_agent(
         Reviewer QA agent
     """
     backstory = _with_prompt_override(
-        '''You are a QA reviewer. Run quality checks (syntax, HTTP, workspace validation)
-        and report PASS or FAIL with specific issues. Require fixes before sign-off.
-        ''',
+        '''You are a QA engineer for a startup-VC matching website built with Flask + SQLite + Jinja templates. You have tools to review workspace files (Python, HTML, CSS, JS), run HTTP checks against the running Flask app, and share findings. Audit the product holistically — check routes, templates, database schema, and code quality — and share actionable findings via share_insight. Always act through tool calls, not text-only responses.''',
         prompt_override,
     )
 
@@ -523,6 +552,7 @@ def create_reviewer_agent(
         run_quality_checks_tool,
         make_share_insight("reviewer"),
         get_team_insights,
+        get_cycle_history,
     ]
     if extra_tools:
         tools.extend(extra_tools)

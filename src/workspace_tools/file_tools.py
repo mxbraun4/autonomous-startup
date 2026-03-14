@@ -59,7 +59,7 @@ def _read_impl(file_path: str) -> dict:
     try:
         resolved = _resolve_safe_path(file_path)
     except ValueError:
-        return {"status": "denied", "reason": "path_escape"}
+        return {"status": "denied", "reason": "Path escapes workspace. Use relative paths like 'index.html' or 'backend/main.py', not absolute or '../' paths."}
     except RuntimeError as exc:
         return {"status": "error", "reason": str(exc)}
 
@@ -75,7 +75,7 @@ def _write_impl(file_path: str, content: str) -> dict:
     try:
         resolved = _resolve_safe_path(file_path)
     except ValueError:
-        return {"status": "denied", "reason": "path_escape"}
+        return {"status": "denied", "reason": "Path escapes workspace. Use relative paths like 'index.html' or 'backend/main.py', not absolute or '../' paths."}
     except RuntimeError as exc:
         return {"status": "error", "reason": str(exc)}
 
@@ -92,7 +92,7 @@ def _list_impl(subdirectory: str = "") -> dict:
     try:
         resolved = _resolve_safe_path(subdirectory) if subdirectory else _resolve_safe_path(".")
     except ValueError:
-        return {"status": "denied", "reason": "path_escape"}
+        return {"status": "denied", "reason": "Path escapes workspace. Use relative paths like 'index.html' or 'backend/main.py', not absolute or '../' paths."}
     except RuntimeError as exc:
         return {"status": "error", "reason": str(exc)}
 
@@ -159,7 +159,7 @@ def _run_sql_impl(db_name: str, query: str, params: str = "[]") -> dict:
     try:
         resolved = _resolve_safe_path(db_name)
     except ValueError:
-        return {"status": "denied", "reason": "path_escape"}
+        return {"status": "denied", "reason": "Path escapes workspace. Use relative paths like 'index.html' or 'backend/main.py', not absolute or '../' paths."}
     except RuntimeError as exc:
         return {"status": "error", "reason": str(exc)}
 
@@ -212,87 +212,47 @@ def _run_sql_impl(db_name: str, query: str, params: str = "[]") -> dict:
 def _check_http_impl(pages: str = "") -> dict:
     """Start a temporary server, run HTTP checks, and return results.
 
+    If the workspace contains ``app.py`` (Flask app), launches it as a
+    subprocess via :class:`FlaskAppServer`.  Otherwise falls back to the
+    static-file :class:`WorkspaceServer`.
+
     Parameters
     ----------
     pages:
-        Comma-separated list of pages to check (e.g. ``"index.html,about.html"``).
-        If empty, runs the full standard check suite (landing, navigation).
+        Comma-separated list of routes/pages to check (e.g.
+        ``"/,/startups,/investors"`` for Flask or ``"index.html"`` for static).
+        If empty, runs the full standard check suite.
     """
     if _workspace_root is None:
         return {"status": "error", "reason": "Workspace root is not configured. Call configure_workspace_root first."}
 
     # Lazy imports to avoid circular dependencies
-    from src.workspace_tools.server import WorkspaceServer
+    from src.workspace_tools.server import FlaskAppServer, WorkspaceServer
     from src.simulation.http_checks import WorkspaceHTTPChecker
 
-    server = WorkspaceServer(str(_workspace_root), port=0)
+    # Prefer Flask app if workspace/app.py exists
+    flask_server = FlaskAppServer(str(_workspace_root), port=0)
+    use_flask = flask_server.has_flask_app()
+
+    server = flask_server if use_flask else WorkspaceServer(str(_workspace_root), port=0)
     try:
         base_url = server.start()
         checker = WorkspaceHTTPChecker(base_url)
 
         if pages.strip():
-            # Check specific pages
+            # Check specific pages/routes
             results: dict = {}
             for page in [p.strip() for p in pages.split(",") if p.strip()]:
                 results[page] = checker.check_page_loads(page)
             return {"status": "ok", "pages": results}
         else:
             # Full standard suite
-            all_checks = checker.run_all_checks()
+            all_checks = checker.run_all_checks(workspace_root=str(_workspace_root))
             return {"status": "ok", **all_checks}
     except Exception as exc:
         return {"status": "error", "reason": str(exc)}
     finally:
         server.stop()
-
-
-# ---------------------------------------------------------------------------
-# Workspace versioning helpers
-# ---------------------------------------------------------------------------
-
-
-def _snapshot_impl(cycle_id: int) -> dict:
-    """Take a versioned snapshot of the workspace."""
-    if _workspace_root is None:
-        return {"status": "error", "reason": "Workspace root is not configured. Call configure_workspace_root first."}
-
-    from src.workspace_tools.versioning import WorkspaceVersioning
-
-    try:
-        v = WorkspaceVersioning(_workspace_root)
-        result = v.snapshot(cycle_id)
-        return {"status": "ok", **result}
-    except Exception as exc:
-        return {"status": "error", "reason": str(exc)}
-
-
-def _restore_impl(cycle_id: int) -> dict:
-    """Restore the workspace from a snapshot."""
-    if _workspace_root is None:
-        return {"status": "error", "reason": "Workspace root is not configured. Call configure_workspace_root first."}
-
-    from src.workspace_tools.versioning import WorkspaceVersioning
-
-    try:
-        v = WorkspaceVersioning(_workspace_root)
-        return v.restore(cycle_id)
-    except Exception as exc:
-        return {"status": "error", "reason": str(exc)}
-
-
-def _list_snapshots_impl() -> dict:
-    """List all workspace snapshots."""
-    if _workspace_root is None:
-        return {"status": "error", "reason": "Workspace root is not configured. Call configure_workspace_root first."}
-
-    from src.workspace_tools.versioning import WorkspaceVersioning
-
-    try:
-        v = WorkspaceVersioning(_workspace_root)
-        snapshots = v.list_snapshots()
-        return {"status": "ok", "snapshots": snapshots}
-    except Exception as exc:
-        return {"status": "error", "reason": str(exc)}
 
 
 # ---------------------------------------------------------------------------
@@ -302,10 +262,49 @@ def _list_snapshots_impl() -> dict:
 _VALID_FEEDBACK_TYPES = {"bug", "friction", "feature_request", "praise"}
 
 
-def _submit_feedback_impl(page: str, feedback_type: str, message: str) -> dict:
-    """Insert a test feedback entry into workspace/feedback.db.
+def _ensure_feedback_schema() -> dict:
+    """Ensure the feedback table exists with the latest schema (including cycle_id, status).
 
-    Creates the feedback table if it does not exist.
+    Handles migration from the old schema (no cycle_id/status columns) by
+    adding missing columns via ALTER TABLE.
+    """
+    create_result = _run_sql_impl(
+        "feedback.db",
+        "CREATE TABLE IF NOT EXISTS feedback ("
+        "  id TEXT PRIMARY KEY,"
+        "  timestamp TEXT NOT NULL,"
+        "  page TEXT NOT NULL,"
+        "  feedback_type TEXT NOT NULL,"
+        "  message TEXT NOT NULL,"
+        "  cycle_id INTEGER DEFAULT 0,"
+        "  status TEXT DEFAULT 'open'"
+        ")",
+    )
+    if create_result.get("status") != "ok":
+        return create_result
+
+    # Migrate old tables missing the new columns
+    for col, col_def in [("cycle_id", "INTEGER DEFAULT 0"), ("status", "TEXT DEFAULT 'open'")]:
+        _run_sql_impl(
+            "feedback.db",
+            f"ALTER TABLE feedback ADD COLUMN {col} {col_def}",
+        )
+        # ALTER TABLE will fail silently if column already exists — that's fine
+
+    return {"status": "ok"}
+
+
+def _submit_feedback_impl(
+    page: str,
+    feedback_type: str,
+    message: str,
+    cycle_id: int = 0,
+) -> dict:
+    """Insert a feedback entry into workspace/feedback.db.
+
+    Creates the feedback table if it does not exist.  Each entry is tagged
+    with ``cycle_id`` so feedback persists across cycles and can be queried
+    by iteration.
     """
     if feedback_type not in _VALID_FEEDBACK_TYPES:
         return {
@@ -315,28 +314,18 @@ def _submit_feedback_impl(page: str, feedback_type: str, message: str) -> dict:
     if not page or not message:
         return {"status": "error", "reason": "page and message are required"}
 
-    # Create table if needed
-    create_result = _run_sql_impl(
-        "feedback.db",
-        "CREATE TABLE IF NOT EXISTS feedback ("
-        "  id TEXT PRIMARY KEY,"
-        "  timestamp TEXT NOT NULL,"
-        "  page TEXT NOT NULL,"
-        "  feedback_type TEXT NOT NULL,"
-        "  message TEXT NOT NULL"
-        ")",
-    )
-    if create_result.get("status") != "ok":
-        return create_result
+    schema_result = _ensure_feedback_schema()
+    if schema_result.get("status") != "ok":
+        return schema_result
 
     feedback_id = uuid.uuid4().hex[:16]
     timestamp = datetime.now(timezone.utc).isoformat()
 
     insert_result = _run_sql_impl(
         "feedback.db",
-        "INSERT INTO feedback (id, timestamp, page, feedback_type, message) "
-        "VALUES (?, ?, ?, ?, ?)",
-        json.dumps([feedback_id, timestamp, page, feedback_type, message]),
+        "INSERT INTO feedback (id, timestamp, page, feedback_type, message, cycle_id, status) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        json.dumps([feedback_id, timestamp, page, feedback_type, message, cycle_id, "open"]),
     )
     if insert_result.get("status") != "ok":
         return insert_result
@@ -345,7 +334,73 @@ def _submit_feedback_impl(page: str, feedback_type: str, message: str) -> dict:
         "status": "ok",
         "feedback_id": feedback_id,
         "timestamp": timestamp,
+        "cycle_id": cycle_id,
     }
+
+
+def _get_open_feedback(exclude_cycle: int = 0) -> list:
+    """Return all feedback entries with status='open' from prior cycles.
+
+    Args:
+        exclude_cycle: Cycle to exclude (typically the current one, whose
+            feedback hasn't been generated yet).
+
+    Returns:
+        List of feedback dicts with id, cycle_id, page, feedback_type, message.
+    """
+    import sqlite3 as _sqlite3
+
+    if _workspace_root is None:
+        return []
+
+    db_path = _workspace_root / "feedback.db"
+    if not db_path.exists():
+        return []
+
+    try:
+        with _sqlite3.connect(str(db_path)) as conn:
+            conn.row_factory = _sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, cycle_id, page, feedback_type, message "
+                "FROM feedback WHERE status = 'open' AND cycle_id != ? "
+                "ORDER BY cycle_id, feedback_type",
+                (exclude_cycle,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def _mark_feedback_addressed(feedback_ids: list, addressed_in_cycle: int) -> int:
+    """Mark specific feedback entries as addressed.
+
+    Args:
+        feedback_ids: List of feedback id strings to mark.
+        addressed_in_cycle: The cycle that addressed these items.
+
+    Returns:
+        Number of rows updated.
+    """
+    import sqlite3 as _sqlite3
+
+    if not feedback_ids or _workspace_root is None:
+        return 0
+
+    db_path = _workspace_root / "feedback.db"
+    if not db_path.exists():
+        return 0
+
+    try:
+        placeholders = ",".join("?" for _ in feedback_ids)
+        with _sqlite3.connect(str(db_path)) as conn:
+            cur = conn.execute(
+                f"UPDATE feedback SET status = 'addressed' "
+                f"WHERE id IN ({placeholders})",
+                feedback_ids,
+            )
+            return cur.rowcount
+    except Exception:
+        return 0
 
 
 # ---------------------------------------------------------------------------
@@ -354,43 +409,66 @@ def _submit_feedback_impl(page: str, feedback_type: str, message: str) -> dict:
 
 @tool
 def read_workspace_file(file_path: str) -> str:
-    """Read a file from the workspace directory."""
+    """Read a file from the workspace directory.
+
+    Args:
+        file_path: Relative path to the file, e.g. "index.html" or "css/styles.css"
+
+    Returns:
+        JSON with the file content
+    """
     return json.dumps(_read_impl(file_path))
 
 
 @tool
 def write_workspace_file(file_path: str, content: str) -> str:
-    """Write (or overwrite) a file inside the workspace directory."""
+    """Write or overwrite a file inside the workspace directory.
+
+    Args:
+        file_path: Relative path to write, e.g. "index.html" or "styles.css"
+        content: The full file content to write
+
+    Returns:
+        JSON confirmation with the written path
+    """
     return json.dumps(_write_impl(file_path, content))
 
 
 @tool
 def list_workspace_files(subdirectory: str = "") -> str:
-    """Recursively list all files in the workspace (excluding .versions/)."""
+    """Recursively list all files in the workspace (excluding .versions/).
+
+    Args:
+        subdirectory: Optional subdirectory to list, e.g. "css". Empty string lists all files.
+
+    Returns:
+        JSON with a list of file paths
+    """
     return json.dumps(_list_impl(subdirectory))
 
 
 @tool
 def review_workspace_files() -> str:
-    """List all workspace files and read every HTML file in one call.
+    """List all workspace files and read every source file (.py, .html, .css, .js) in one call.
 
-    Returns a JSON object with ``files`` (full listing) and ``html_contents``
-    (a dict mapping each ``.html`` filename to its content).  Use this for QA
+    Returns a JSON object with ``files`` (full listing) and ``source_contents``
+    (a dict mapping each source filename to its content).  Use this for QA
     review so you can inspect everything in a single tool call.
     """
     listing = _list_impl("")
     if listing.get("status") != "ok":
         return json.dumps(listing)
-    html_contents: dict[str, str] = {}
+    _SOURCE_EXTS = {".py", ".html", ".css", ".js", ".json"}
+    source_contents: dict[str, str] = {}
     for fname in listing.get("files", []):
-        if fname.endswith(".html"):
+        if any(fname.endswith(ext) for ext in _SOURCE_EXTS):
             result = _read_impl(fname)
             if result.get("status") == "ok":
-                html_contents[fname] = result["content"]
+                source_contents[fname] = result["content"]
     return json.dumps({
         "status": "ok",
         "files": listing["files"],
-        "html_contents": html_contents,
+        "source_contents": source_contents,
     })
 
 
@@ -419,43 +497,17 @@ def run_workspace_sql(db_name: str, query: str, params: str = "[]") -> str:
 
 @tool("Check Workspace HTTP")
 def check_workspace_http(pages: str = "") -> str:
-    """Serve the workspace over HTTP and run validation checks.
+    """Start the Flask app (or static server) and run HTTP validation checks.
 
     With no arguments, runs the full check suite: landing page load
-    and navigation link verification.
-    Pass a comma-separated list of pages (e.g. ``"index.html,about.html"``)
-    to check only those specific pages.
+    and navigation link verification against discovered Flask routes.
+    Pass a comma-separated list of routes (e.g. ``"/,/startups,/investors"``)
+    to check only those specific routes.
 
     Returns JSON with scores: ``http_landing_score``,
     ``http_navigation_score`` (each 0.0–1.0).
     """
     return json.dumps(_check_http_impl(pages))
-
-
-@tool("Snapshot Workspace")
-def snapshot_workspace(cycle_id: int) -> str:
-    """Save a versioned snapshot of the entire workspace.
-
-    Use this before making risky changes so you can restore later.
-    Pass the current iteration number as ``cycle_id``.
-    """
-    return json.dumps(_snapshot_impl(cycle_id))
-
-
-@tool("Restore Workspace")
-def restore_workspace(cycle_id: int) -> str:
-    """Restore the workspace from a previously saved snapshot.
-
-    Pass the ``cycle_id`` of the snapshot to restore.  This replaces all
-    current workspace files with the snapshot contents.
-    """
-    return json.dumps(_restore_impl(cycle_id))
-
-
-@tool("List Workspace Snapshots")
-def list_workspace_snapshots() -> str:
-    """List all available workspace snapshots with their cycle IDs and file counts."""
-    return json.dumps(_list_snapshots_impl())
 
 
 @tool("Submit Test Feedback")
@@ -474,7 +526,4 @@ list_workspace_files.cache_function = _NO_CACHE
 review_workspace_files.cache_function = _NO_CACHE
 run_workspace_sql.cache_function = _NO_CACHE
 check_workspace_http.cache_function = _NO_CACHE
-snapshot_workspace.cache_function = _NO_CACHE
-restore_workspace.cache_function = _NO_CACHE
-list_workspace_snapshots.cache_function = _NO_CACHE
 submit_test_feedback.cache_function = _NO_CACHE

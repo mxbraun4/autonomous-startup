@@ -225,9 +225,6 @@ class UnifiedStore(MemoryStoreProtocol):
     async def proc_get_history(self, task_type: str) -> List[Procedure]:
         return await self._procedural.proc_get_history(task_type)
 
-    async def proc_rollback(self, task_type: str, target_version: int) -> Optional[Procedure]:
-        return await self._procedural.proc_rollback(task_type, target_version)
-
     async def proc_list_types(self) -> List[str]:
         return await self._procedural.proc_list_types()
 

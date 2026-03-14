@@ -1,12 +1,12 @@
 # Autonomous Startup Multi-Agent System
 
-A multi-agent system built with **CrewAI** that autonomously runs Build-Measure-Learn cycles for a startup-VC marketplace. Agents build a real website, validate it via HTTP, and iterate based on user feedback.
+A multi-agent system built with **CrewAI** that autonomously runs Build-Measure-Learn cycles for a startup-VC marketplace. Agents build a real **Flask + SQLite + Jinja** web application, validate it via HTTP, collect LLM-powered customer feedback, and iterate.
 
 - Hierarchical multi-agent coordination (coordinator dispatches to specialists)
-- Product-building workspace (agents write HTML/CSS/JS + FastAPI backend, HTTP validation loop)
-- Serper.dev web search for real startup/VC data collection
-- Framework guardrails (failover, loop detection, bounded delegation)
-- Adaptive autonomy (self-heal, policy tuning, diagnostics)
+- Product-building workspace (agents write a Flask app with SQLite backend and Jinja templates)
+- LLM-powered customer testing (3 personas give structured feedback each cycle)
+- Consensus memory (agents share insights via a shared board)
+- CrewAI native function calling with monkey-patched text-response handling
 - Live observability dashboard and workspace preview
 - Deterministic mock-mode execution
 
@@ -19,7 +19,7 @@ python scripts/seed_memory.py
 python scripts/run_simulation.py
 ```
 
-Set `MOCK_MODE=true` in `.env` to run without API keys -- fully deterministic and fast.
+Set `MOCK_MODE=true` in `.env` to run without API keys — fully deterministic and fast.
 
 ## Run Modes
 
@@ -29,22 +29,16 @@ python scripts/run_simulation.py
 python scripts/run_simulation.py --iterations 5 --verbose 2
 python scripts/run_simulation.py --no-workspace
 
-# Generic entrypoint (multiple modes)
+# Generic entrypoint
 python scripts/run.py
 python scripts/run.py --mode crewai --iterations 5 --verbose 2
-python scripts/run.py --mode web --iterations 3 --target-url http://localhost:3000
-python scripts/run.py --mode scheduler --cron "*/30 * * * *"
 python scripts/run.py --mode dashboard --events-path data/memory/web_autonomy_events.ndjson
 python scripts/run.py --mode preview --port 3000 --open-browser
-
-# Framework simulation (alternative orchestration path)
-python scripts/run_framework_simulation.py --iterations 3
-python scripts/run_framework_simulation.py --no-workspace
 
 # Live dashboard (standalone)
 python scripts/live_dashboard.py --open-browser
 
-# Workspace preview (standalone, auto-refreshes on file changes)
+# Workspace preview (launches Flask app if app.py exists, otherwise serves static files)
 python scripts/serve_workspace.py --open-browser
 
 # Clean all runtime data for a fresh run
@@ -62,53 +56,57 @@ pytest tests/ -v
 ```
 Strategic Coordinator (learn phase — analyzes results, extracts insights)
 BUILD Coordinator (build phase — dispatches to specialists via tool calls)
-    |-> Product Strategy Expert (inspects workspace, writes build specs)
-    |-> Developer Agent (implements HTML/CSS/JS + Python backend)
-    |-> Reviewer (QA) Agent (syntax checks, HTTP validation, PASS/FAIL)
+    |-> Product Strategy Expert (inspects workspace, plans routes/features/tables)
+    |-> Developer Agent (implements Flask app, Jinja templates, SQLite schemas)
+    |-> Reviewer (QA) Agent (syntax checks, HTTP route validation, code review)
 Data Strategy Expert (data collection — web search, database population)
 ```
 
-### Execution Paths
+### Tech Stack (Agent-Built Product)
 
-- **CrewAI simulation:** `src/crewai_agents/` + `scripts/run_simulation.py`
-- **Framework simulation:** `src/framework/` + `scripts/run_framework_simulation.py`
-- Both paths share the same agent definitions and workspace tools.
+Agents build a Flask web application in `workspace/`:
 
-### Workspace Build Loop
+- **`app.py`** — Flask routes, database logic, form handling (reads `FLASK_RUN_HOST`/`FLASK_RUN_PORT` from env)
+- **`templates/`** — Jinja2 HTML templates with template inheritance (`base.html`)
+- **`static/`** — CSS and JS assets referenced from templates
+- **`.db` files** — SQLite databases for startups, investors, users, etc.
 
-Agents write to `workspace/` (HTML, CSS, JS, Python files). Each cycle:
+### Build-Measure-Learn Cycle
 
-1. Product strategist surveys workspace and writes a build spec.
-2. Developer implements the spec as workspace files.
-3. Reviewer runs QA checks (syntax, HTTP validation, content quality).
-4. If QA fails, coordinator dispatches developer for fixes, then re-reviews.
-5. User feedback from `workspace/feedback.db` is fed into the next iteration.
-6. Versioning snapshots are stored at `workspace/.versions/cycle_N/`.
+Each iteration runs:
+
+1. **BUILD** — Coordinator dispatches product strategist (plan), developer (implement), reviewer (QA).
+2. **Quality Gate** — Syntax check, workspace content inventory, Flask route HTTP validation.
+3. **Customer Testing** — 3 LLM personas (Founder, VC Partner, Journalist) review rendered pages and submit structured feedback.
+4. **EVALUATE** — Evaluator scores the cycle, recommends continue/pause/rollback.
+5. **LEARN** — Procedure and policy updaters extract insights for the next iteration.
+
+### CrewAI Patches
+
+Two monkey-patches address CrewAI 1.9.x limitations:
+
+- **`patch_crewai.py`** — Nudges short text responses (< 200 chars) back to tool usage for up to 50% of `max_iter`, preventing agents from exiting after "thinking aloud."
+- **Single tool call awareness** — All agent backstories instruct "call ONE tool at a time" since CrewAI's native handler only processes the first tool call.
 
 ## Project Structure
 
 ```
 autonomous-startup/
 ├── src/
-│   ├── crewai_agents/     # Agent definitions, tools, crews, dispatch
-│   ├── framework/         # Runtime, orchestration, safety, storage, eval, learning
-│   │   ├── adapters/      # Domain adapters (startup_vc, web_product)
-│   │   ├── autonomy/      # Run controller, loop, checkpointing, scheduler
+│   ├── crewai_agents/     # Agent definitions, tools, crews, dispatch, CrewAI patches
+│   ├── framework/         # Storage, eval, learning, observability
 │   │   ├── eval/          # Evaluator, scorecard, gates
 │   │   ├── learning/      # Procedure/policy updaters
-│   │   ├── observability/ # Events, timeline, replay
-│   │   ├── orchestration/ # Executor, task graph, delegation
-│   │   ├── runtime/       # Agent runtime, capability registry, task router
-│   │   ├── safety/        # Policy engine, budget manager, action guard
+│   │   ├── observability/ # Event logger
 │   │   └── storage/       # Unified store, episodic/semantic/procedural backends
-│   ├── simulation/        # HTTP checks
-│   ├── workspace_tools/   # File tools, HTTP server, versioning
+│   ├── simulation/        # HTTP checks, customer testing (LLM personas)
+│   ├── workspace_tools/   # File tools, Flask/static HTTP server, versioning
 │   ├── database/          # Database layer
 │   ├── llm/               # LLM client
 │   └── utils/             # Config, logging
-├── workspace/             # Agent-built marketplace website
+├── workspace/             # Agent-built Flask app (app.py, templates/, static/)
 ├── scripts/               # Entrypoints (run_simulation, clean, dashboard, etc.)
-├── tests/                 # 566 tests
+├── tests/                 # Test suite
 ├── data/seed/             # Seed data (templates)
 └── docs/                  # Product vision, next steps
 ```
@@ -125,10 +123,11 @@ OPENAI_API_KEY=your_key        # optional fallback
 SERPER_API_KEY=your_key        # optional; web search degrades gracefully without it
 
 # Per-role models (OpenRouter via LiteLLM)
-COORDINATOR_MODEL=openrouter/moonshotai/kimi-k2.5
-PRODUCT_MODEL=openrouter/deepseek/deepseek-v3.2
-DEVELOPER_MODEL=openrouter/qwen/qwen3-coder-next
-REVIEWER_MODEL=openrouter/qwen/qwen3-coder-next
+COORDINATOR_MODEL=openrouter/minimax/minimax-m2.5
+PRODUCT_MODEL=openrouter/minimax/minimax-m2.5
+DEVELOPER_MODEL=openrouter/minimax/minimax-m2.5
+REVIEWER_MODEL=openrouter/minimax/minimax-m2.5
+CUSTOMER_MODEL=openrouter/minimax/minimax-m2.5
 
 # Mock Mode
 MOCK_MODE=true
@@ -143,10 +142,6 @@ GENERATED_TOOLS_RETENTION_DAYS=30
 CREWAI_LOCAL_APPDATA_DIR=data/crewai_local
 CREWAI_DB_STORAGE_DIR=data/crewai_storage
 ```
-
-Framework runtime policies (`RunConfig.policies`) control guardrail behavior:
-`tool_loop_window`, `max_children_per_parent`, `max_self_heal_attempts`,
-`adaptive_policy_enabled`, `diagnostics_enabled`, `exploratory_task_limit`, etc.
 
 ## Documentation
 
@@ -165,19 +160,9 @@ pytest tests/ --cov=src --cov-report=html
 
 ## Troubleshooting
 
-**Seed data not loading**
-```bash
-python scripts/seed_memory.py
-```
-
 **Import errors**
 ```bash
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
-```
-
-**Tests failing**
-```bash
-pip install pytest pytest-cov
 ```
 
 **Start fresh (wipe workspace, databases, memory)**

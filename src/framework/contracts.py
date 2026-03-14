@@ -162,21 +162,6 @@ class RunConfig(BaseMemoryEntity):
     max_delegation_depth: int = 3
 
 
-class RunContext(BaseModel):
-    """Live mutable state threaded through execution. NOT a BaseMemoryEntity."""
-
-    model_config = {"arbitrary_types_allowed": True}
-
-    run_id: str
-    cycle_id: int = 0
-    step_count: int = 0
-    budget_remaining_seconds: Optional[float] = None
-    budget_remaining_tokens: Optional[int] = None
-    rng: Any = None  # seeded random.Random instance
-    active_agent_id: Optional[str] = None
-    store: Any = None  # reference to SyncUnifiedStore
-
-
 class TaskSpec(BaseMemoryEntity):
     """Typed description of work to be done by an agent."""
 
@@ -266,19 +251,3 @@ class EvaluationResult(BaseMemoryEntity):
     recommended_action: str = "continue"
 
 
-class Checkpoint(BaseMemoryEntity):
-    """Serializable snapshot of full run state for pause/resume."""
-
-    model_config = {"arbitrary_types_allowed": True}
-
-    run_id: str = ""
-    cycle_id: int = 0
-    step_count: int = 0
-    seed: int = 42
-    rng_state: Any = None  # result of random.getstate()
-    working_memory_path: str = ""
-    store_data_dir: str = ""
-    pending_tasks: List[str] = Field(default_factory=list)
-    completed_tasks: List[str] = Field(default_factory=list)
-    budget_remaining_seconds: Optional[float] = None
-    budget_remaining_tokens: Optional[int] = None
