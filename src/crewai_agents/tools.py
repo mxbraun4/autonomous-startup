@@ -1061,12 +1061,11 @@ def _share_insight_impl(key: str, value: str, evidence: str, *, source_agent: st
 
     el = get_event_logger()
     if el is not None:
-        val_summary = value[:200] + "..." if len(value) > 200 else value
         el.emit("agent_exchange", {
             "exchange_type": "share_insight",
             "from_agent": source_agent,
             "key": key,
-            "value_summary": val_summary,
+            "value_summary": value,
             "cycle_id": _current_cycle_id,
         })
 
@@ -1139,11 +1138,14 @@ def get_team_insights(topic: str = "") -> str:
 
     el = get_event_logger()
     if el is not None:
+        # Include actual insight keys so the dashboard shows meaningful content
+        insight_keys = [i["key"] for i in insights]
         el.emit("agent_exchange", {
             "exchange_type": "get_insights",
             "from_agent": "crewai_agent",
             "topic": topic or "all",
             "count": len(insights),
+            "value_summary": f"Retrieved {len(insights)} insights: {', '.join(insight_keys)}" if insights else "No insights found",
             "cycle_id": _current_cycle_id,
         })
 
@@ -1205,6 +1207,7 @@ def get_cycle_history(limit: int = 10) -> str:
             "exchange_type": "get_cycle_history",
             "from_agent": "crewai_agent",
             "count": len(cycles),
+            "value_summary": f"Retrieved {len(cycles)} cycle(s)" if cycles else "No cycle history",
             "cycle_id": _current_cycle_id,
         })
 
@@ -1250,16 +1253,19 @@ def make_dispatch_task_tool(
 
     _ROLE_INSTRUCTIONS = {
         "developer": (
-            "Tools: write_workspace_file, read_workspace_file, "
-            "check_workspace_http, list_workspace_files, get_cycle_history.\n"
+            "You own the workspace. Your job is to WRITE code, not just read it.\n"
+            "Tech stack: Flask (app.py), Jinja2 templates (templates/), static files (static/), SQLite (.db).\n"
+            "Call ONE tool at a time. After reading context, start writing files immediately.\n"
+            "Do NOT loop on reading — if the workspace is empty, start building from scratch.\n"
+            "Use run_workspace_sql to create/seed SQLite tables. app.py must read host/port from env vars.\n"
         ),
         "reviewer": (
-            "Tools: review_workspace_files, check_workspace_http, "
-            "run_quality_checks_tool, get_cycle_history.\n"
+            "You have tools to review workspace files (Python, HTML, CSS, JS), run HTTP checks, and share findings.\n"
+            "The app is Flask-based: check app.py for routes, templates/ for HTML, static/ for assets.\n"
         ),
         "product_strategist": (
-            "Tools: list_workspace_files, read_workspace_file, share_insight, get_cycle_history.\n"
-            "Note: other agents can only see insights you share, not your raw output.\n"
+            "You have tools to inspect workspace files, read team insights, and share your plan.\n"
+            "The product is a Flask web app: plan routes, database tables, templates, and features.\n"
         ),
     }
 
@@ -1290,17 +1296,16 @@ def make_dispatch_task_tool(
         except Exception:
             pass
 
-        # Prepend standing instructions + extra_context
+        # Prepend role context + extra_context
         original_task_description = task_description
-        preamble = (
-            "You can call get_team_insights to read shared context "
-            "from prior dispatches and previous iterations.\n\n"
-        )
+        preamble = "Act through tool calls, not text-only responses.\n\n"
         role_instructions = _ROLE_INSTRUCTIONS.get(agent_role, "")
         if role_instructions:
             preamble += role_instructions + "\n"
         if extra_context:
-            preamble += f"[Context from prior iterations]\n{extra_context}\n\n"
+            # Cap extra_context to avoid prompt bloat
+            ctx = extra_context[:1500]
+            preamble += f"[Prior context]\n{ctx}\n\n"
         task_description = preamble + task_description
 
         # Create temporary agent from registry
@@ -1316,7 +1321,7 @@ def make_dispatch_task_tool(
         single_task = _Task(
             description=task_description,
             agent=agent,
-            expected_output="Complete result of the assigned task.",
+            expected_output="Summary of actions taken and their outcomes.",
         )
 
         mini_crew = _Crew(
@@ -1338,7 +1343,7 @@ def make_dispatch_task_tool(
                 retry_task = _Task(
                     description=task_description,
                     agent=agent,
-                    expected_output="Complete result of the assigned task.",
+                    expected_output="Summary of actions taken and their outcomes.",
                 )
                 retry_crew = _Crew(
                     agents=[agent],
@@ -1353,6 +1358,10 @@ def make_dispatch_task_tool(
             except Exception as retry_exc:
                 result_text = f"[dispatch error after retry] {retry_exc}"
 
+        # Detect empty/trivial results
+        stripped = result_text.strip()
+        is_empty = len(stripped) < 20 or stripped.lower() in ("", "none", "n/a", "final answer")
+
         # Truncate
         truncated = len(result_text) > result_truncation
         result_text = result_text[:result_truncation]
@@ -1364,6 +1373,7 @@ def make_dispatch_task_tool(
             "task_summary": original_task_description[:120],
             "result_snippet": result_text[:200],
             "truncated": truncated,
+            "empty_result": is_empty,
         })
 
         # Emit result event
@@ -1372,20 +1382,29 @@ def make_dispatch_task_tool(
                 "exchange_type": "dispatch_result",
                 "from_agent": agent_role,
                 "to_agent": "BUILD Coordinator",
-                "result_snippet": result_text[:200],
+                "value_summary": result_text,
                 "dispatch_number": dispatch_number,
                 "truncated": truncated,
             })
         except Exception:
             pass
 
-        return {
+        result_dict = {
             "status": "success",
             "agent_role": agent_role,
             "result": result_text,
             "truncated": truncated,
             "dispatch_number": dispatch_number,
         }
+
+        if is_empty:
+            result_dict["warning"] = (
+                f"Agent '{agent_role}' returned an empty or trivial result. "
+                f"Do NOT retry the same task — the agent could not produce output. "
+                f"Try a different approach or skip this agent."
+            )
+
+        return result_dict
 
     # ------------------------------------------------------------------
     # Sequential dispatch tool (existing behaviour, refactored)

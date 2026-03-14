@@ -34,7 +34,7 @@ class StartupDatabase:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self._create_tables()
-        logger.info(f"Database initialized at {self.db_path}")
+        logger.debug(f"Database initialized at {self.db_path}")
 
     # -- context-manager & cleanup ------------------------------------------
 

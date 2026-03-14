@@ -102,11 +102,17 @@ def ensure_litellm_tracing() -> None:
 
             model = str(kwargs.get("model", ""))
             messages = kwargs.get("messages") or (args[1] if len(args) > 1 else [])
+            # Capture all message content for full exchange visibility
             if isinstance(messages, list) and messages:
-                last_msg = str(messages[-1].get("content", ""))
+                msg_parts = []
+                for m in messages:
+                    role = m.get("role", "?")
+                    content = str(m.get("content", ""))
+                    if content:
+                        msg_parts.append(f"[{role}] {content}")
+                msg_summary = "\n\n".join(msg_parts)
             else:
-                last_msg = ""
-            msg_summary = last_msg
+                msg_summary = ""
 
             resp_text = ""
             if hasattr(result, "choices") and result.choices:
@@ -123,7 +129,7 @@ def ensure_litellm_tracing() -> None:
                                 tc_name = getattr(tc_name, "name", str(tc_name))
                             tc_args = ""
                             if hasattr(tc, "function") and hasattr(tc.function, "arguments"):
-                                tc_args = str(tc.function.arguments or "")[:100]
+                                tc_args = str(tc.function.arguments or "")
                             resp_text = f"[tool_call] {tc_name}({tc_args})"
             resp_summary = resp_text
 
@@ -142,6 +148,22 @@ def ensure_litellm_tracing() -> None:
                 payload["cycle_id"] = _current_cycle_id
 
             el.emit("llm_call", payload)
+
+            # Emit tool_called events for every tool the model invoked
+            if hasattr(result, "choices") and result.choices:
+                tc_list = getattr(result.choices[0].message, "tool_calls", None) or []
+                for tc in tc_list:
+                    tc_fn = getattr(tc, "function", None)
+                    tc_name = getattr(tc_fn, "name", "") if tc_fn else ""
+                    tc_args = getattr(tc_fn, "arguments", "") if tc_fn else ""
+                    tc_payload: dict[str, Any] = {
+                        "tool_name": tc_name,
+                        "arguments": str(tc_args),
+                        "agent": agent_name,
+                    }
+                    if _current_cycle_id is not None:
+                        tc_payload["cycle_id"] = _current_cycle_id
+                    el.emit("tool_called", tc_payload)
         except Exception:
             pass
 
@@ -299,18 +321,8 @@ def create_master_coordinator(
     Returns:
         Master Coordinator agent
     """
-    workspace_note = ""
-    if extra_tools:
-        workspace_note = (
-            "\n\n        You also have workspace file tools that let you read and list "
-            "files in a product workspace directory. Use these to inspect the current "
-            "state of the website before deciding what to delegate."
-        )
     backstory = _with_prompt_override(
-        '''You are a startup ecosystem coordinator. Analyze build results, extract
-        learnings, and formulate recommendations for the next iteration.
-        '''
-        + workspace_note,
+        '''You are a startup ecosystem coordinator. You analyze build results, extract learnings, and formulate recommendations for the next iteration. Use your tools to gather context and share your findings. Always act through tool calls, not text-only responses. Call ONE tool at a time, never multiple tools in parallel.''',
         prompt_override,
     )
 
@@ -351,16 +363,21 @@ def create_build_coordinator(
         BUILD Coordinator agent
     """
     backstory = _with_prompt_override(
-        '''You are a BUILD phase coordinator. You dispatch tasks to specialist agents
-        (product_strategist, developer, reviewer) and read their results.
-        You do NOT write code or specs yourself — you act by calling dispatch tools.
+        '''You coordinate the BUILD phase of a startup-VC matching platform.
 
-        You have two dispatch tools:
-        - dispatch_task_to_agent: dispatch one task at a time (sequential)
-        - dispatch_parallel_tasks: dispatch multiple independent tasks concurrently
+Tech stack: Python Flask backend (app.py), Jinja2 HTML templates (templates/), static assets (static/css, static/js), SQLite databases (.db files). The app runs via "python app.py".
 
-        Always call your tools to take action. Never just describe what you would do.
-        ''',
+Workflow: Read context (workspace files, team insights, feedback) to understand the current state, then dispatch specific tasks to agents.
+
+Agent roles:
+- product_strategist: Analyzes feedback, defines product direction, and proposes what to build. Dispatch this agent first to get ideas and a plan, then use its output to give the developer specific tasks.
+- developer: Builds and fixes code. Give it concrete tasks like "Add a /startups route to app.py that queries the SQLite database and renders a startups.html template" or "Create the base.html Jinja layout with nav bar and footer." The developer reads files on its own and writes code.
+- reviewer: Reviews code quality, runs QA checks, identifies bugs.
+
+Rules:
+- Read context first, then dispatch. Keep context-gathering to 2-3 tool calls max before dispatching.
+- Developer tasks must be BUILD or FIX tasks — never "read and report back."
+- Call ONE tool at a time, never multiple tools in parallel.''',
         prompt_override,
     )
 
@@ -377,7 +394,7 @@ def create_build_coordinator(
         verbose=True,
         allow_delegation=False,
         memory=True,
-        max_iter=20,
+        max_iter=25,
     )
 
 
@@ -452,11 +469,18 @@ def create_developer_agent(
         Developer agent
     """
     backstory = _with_prompt_override(
-        '''You are a web developer building a startup-VC matching website.
-        Read the build spec from team insights, then implement it as HTML/CSS/JS
-        files using write_workspace_file. Use relative paths like "index.html" or
-        "backend/main.py" — the workspace directory is already set as root.
-        ''',
+        '''You are an autonomous web developer responsible for a startup-VC matching website.
+You own the workspace — read files, write files, fix bugs, add features, refactor, whatever you judge is most impactful right now.
+You have tools to inspect team insights, read/write workspace files, run SQL queries, run HTTP checks, and share what you did.
+
+Tech stack: Python Flask backend (app.py), Jinja2 HTML templates (templates/), static assets (static/css/, static/js/), SQLite databases (.db files).
+- app.py: Flask routes, database logic, form handling. Must read host/port from FLASK_RUN_HOST/FLASK_RUN_PORT env vars with sensible defaults.
+- templates/: Jinja2 HTML templates. Use template inheritance (base.html) for shared layout.
+- static/: CSS and JS files referenced from templates.
+- Use run_workspace_sql to create tables and seed data in SQLite .db files.
+
+Always act through tool calls. When something needs fixing, fix it — don't just report it.
+IMPORTANT: Call ONE tool at a time, never multiple tools in parallel. After each tool result, decide your next step.''',
         prompt_override,
     )
 
@@ -498,14 +522,7 @@ def create_product_strategist(
         Product Strategist agent
     """
     backstory = _with_prompt_override(
-        '''You are a product manager for a startup-VC matching website.
-        Inspect the workspace to see what exists, identify the highest-priority
-        missing page, and write a clear build spec.
-
-        IMPORTANT: Always call share_insight to publish your spec so the developer
-        can read it from team insights. Do not just return the spec as text —
-        the developer cannot see your raw output, only shared insights.
-        ''',
+        '''You are the product architect for a startup-VC matching website built with Flask + SQLite + Jinja templates. You have tools to inspect the workspace, read team insights, and share your plans. Explore what exists, decide what the product needs (routes, database tables, templates, features), and publish your architecture plan via share_insight so other agents can act on it. Always act through tool calls, not text-only responses.''',
         prompt_override,
     )
 
@@ -549,9 +566,7 @@ def create_reviewer_agent(
         Reviewer QA agent
     """
     backstory = _with_prompt_override(
-        '''You are a QA reviewer. Run quality checks (syntax, HTTP, workspace validation)
-        and report PASS or FAIL with specific issues. Require fixes before sign-off.
-        ''',
+        '''You are a QA engineer for a startup-VC matching website built with Flask + SQLite + Jinja templates. You have tools to review workspace files (Python, HTML, CSS, JS), run HTTP checks against the running Flask app, and share findings. Audit the product holistically — check routes, templates, database schema, and code quality — and share actionable findings via share_insight. Always act through tool calls, not text-only responses.''',
         prompt_override,
     )
 

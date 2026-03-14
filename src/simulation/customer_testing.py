@@ -54,15 +54,6 @@ PERSONAS: List[Dict[str, str]] = [
 # Valid feedback types accepted by _submit_feedback_impl
 _VALID_TYPES = {"bug", "friction", "feature_request", "praise"}
 
-# Common HTML page names to try if link discovery finds nothing extra
-_FALLBACK_PAGES = [
-    "index.html",
-    "founders.html",
-    "investors.html",
-    "fit-score.html",
-    "how-it-works.html",
-    "about.html",
-]
 
 # Maximum characters of page HTML to include in the LLM prompt
 _MAX_PAGE_CHARS = 6000
@@ -83,40 +74,43 @@ def _fetch_page(base_url: str, path: str, timeout: int = 10) -> Optional[str]:
         return None
 
 
-def _discover_html_pages(base_url: str) -> Dict[str, str]:
-    """Discover HTML pages: fetch index.html, follow links, try fallbacks.
+def _discover_pages(base_url: str, workspace_root: str = "") -> Dict[str, str]:
+    """Discover pages dynamically from the workspace.
 
-    Returns a dict mapping page path to its HTML content.
+    If ``app.py`` exists (Flask app), extracts routes from ``@app.route``
+    decorators and fetches each.  Otherwise scans for ``.html`` files.
+    Returns a dict mapping route/path to its rendered HTML content.
     """
+    from pathlib import Path
+    from src.simulation.http_checks import _discover_flask_routes
+
     pages: Dict[str, str] = {}
 
-    # 1. Fetch index.html and extract links
-    index_body = _fetch_page(base_url, "index.html")
-    if index_body is not None:
-        pages["index.html"] = index_body
+    if workspace_root:
+        ws = Path(workspace_root)
 
-        # Extract internal .html links
-        hrefs = re.findall(
-            r'<a[^>]+href\s*=\s*["\']([^"\'#][^"\']*\.html)',
-            index_body,
-            re.IGNORECASE,
-        )
-        for href in hrefs:
-            # Skip external links
-            if href.startswith(("http://", "https://", "mailto:")):
-                continue
-            clean = href.lstrip("/")
-            if clean not in pages:
-                body = _fetch_page(base_url, clean)
+        # Prefer Flask route discovery
+        if (ws / "app.py").is_file():
+            routes = _discover_flask_routes(workspace_root)
+            for route in routes:
+                body = _fetch_page(base_url, route)
                 if body is not None:
-                    pages[clean] = body
+                    pages[route] = body
+        else:
+            # Fallback: scan for .html files
+            if ws.is_dir():
+                for html_file in sorted(ws.rglob("*.html")):
+                    rel_path = str(html_file.relative_to(ws)).replace("\\", "/")
+                    if rel_path not in pages:
+                        body = _fetch_page(base_url, rel_path)
+                        if body is not None:
+                            pages[rel_path] = body
 
-    # 2. Try fallback page names
-    for fallback in _FALLBACK_PAGES:
-        if fallback not in pages:
-            body = _fetch_page(base_url, fallback)
-            if body is not None:
-                pages[fallback] = body
+    # Fallback: at least try the root
+    if not pages:
+        index_body = _fetch_page(base_url, "/")
+        if index_body is not None:
+            pages["/"] = index_body
 
     return pages
 
@@ -266,7 +260,7 @@ Each entry must have these fields:
 - "feedback_type": one of "bug", "friction", "feature_request", "praise"
 - "message": your specific, actionable feedback
 
-Return 2-5 entries as a JSON array. Be specific and constructive.
+Return 1-2 entries as a JSON array. Focus on the single most important issue you found. Be specific and constructive.
 
 {pages_text}"""
 
@@ -370,8 +364,8 @@ def run_customer_testing(
         _emit("customer_testing_end", {"feedback_count": submitted, "mock": True})
         return {"status": "ok", "feedback_count": submitted, "personas_tested": 3}
 
-    # Discover pages
-    pages = _discover_html_pages(base_url)
+    # Discover pages dynamically from workspace directory
+    pages = _discover_pages(base_url, workspace_root)
     if not pages:
         logger.info("Customer testing: no pages discovered, skipping.")
         _emit("customer_testing_end", {"feedback_count": 0, "reason": "no_pages"})
