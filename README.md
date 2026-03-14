@@ -4,22 +4,23 @@ A multi-agent system built with **CrewAI** that autonomously runs Build-Measure-
 
 - Hierarchical multi-agent coordination (coordinator dispatches to specialists)
 - Product-building workspace (agents write a Flask app with SQLite backend and Jinja templates)
+- Parallel and sequential agent dispatch via native tool calls
 - LLM-powered customer testing (3 personas give structured feedback each cycle)
 - Consensus memory (agents share insights via a shared board)
+- Episodic and procedural memory for cross-cycle learning
 - CrewAI native function calling with monkey-patched text-response handling
-- Live observability dashboard and workspace preview
+- Live observability dashboard and workspace preview server
 - Deterministic mock-mode execution
 
 ## Quick Start
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env
 python scripts/seed_memory.py
 python scripts/run_simulation.py
 ```
 
-Set `MOCK_MODE=true` in `.env` to run without API keys — fully deterministic and fast.
+Set `MOCK_MODE=true` to run without API keys — fully deterministic and fast.
 
 ## Run Modes
 
@@ -59,8 +60,29 @@ BUILD Coordinator (build phase — dispatches to specialists via tool calls)
     |-> Product Strategy Expert (inspects workspace, plans routes/features/tables)
     |-> Developer Agent (implements Flask app, Jinja templates, SQLite schemas)
     |-> Reviewer (QA) Agent (syntax checks, HTTP route validation, code review)
-Data Strategy Expert (data collection — web search, database population)
 ```
+
+### Agent Tools
+
+Agents interact with the system through CrewAI `@tool` decorated functions:
+
+| Tool | Purpose |
+|------|---------|
+| `dispatch_task` | Coordinator dispatches a task to a specialist agent |
+| `dispatch_parallel` | Dispatch 2-3 agent tasks in parallel |
+| `share_insight` | Write findings to consensus memory board |
+| `get_team_insights` | Read insights shared by other agents |
+| `get_cycle_history` | Access episodic memory from prior cycles |
+| `get_database_stats` | Query startup/VC database statistics |
+| `run_quality_checks_tool` | Run Python syntax checks and pytest |
+| `mark_feedback_addressed_tool` | Close addressed customer feedback items |
+| `read_workspace_file` | Read files from the workspace |
+| `write_workspace_file` | Write/create files in the workspace |
+| `list_workspace_files` | List workspace directory contents |
+| `workspace_file_diff` | Show diff of workspace file changes |
+| `run_workspace_sql` | Execute SQL against workspace SQLite databases |
+| `check_workspace_http` | Start Flask/static server and validate HTTP endpoints |
+| `submit_test_feedback` | Inject test feedback into the feedback database |
 
 ### Tech Stack (Agent-Built Product)
 
@@ -75,11 +97,21 @@ Agents build a Flask web application in `workspace/`:
 
 Each iteration runs:
 
-1. **BUILD** — Coordinator dispatches product strategist (plan), developer (implement), reviewer (QA).
+1. **BUILD** — Coordinator dispatches product strategist (plan), developer (implement), reviewer (QA). Supports both sequential and parallel dispatch.
 2. **Quality Gate** — Syntax check, workspace content inventory, Flask route HTTP validation.
 3. **Customer Testing** — 3 LLM personas (Founder, VC Partner, Journalist) review rendered pages and submit structured feedback.
-4. **EVALUATE** — Evaluator scores the cycle, recommends continue/pause/rollback.
-5. **LEARN** — Procedure and policy updaters extract insights for the next iteration.
+4. **EVALUATE** — Evaluator scores the cycle via reliability, stability, learning, safety, and efficiency gates.
+5. **LEARN** — Procedure and policy updaters extract insights; prompt overrides refine agent behavior for the next iteration.
+
+### Memory System
+
+| Type | Purpose |
+|------|---------|
+| **Consensus** | Shared knowledge board — agents post and read insights |
+| **Episodic** | Per-cycle action/outcome records for cross-cycle learning |
+| **Procedural** | Versioned workflows that improve over iterations |
+| **Semantic** | Vector-backed document store for similarity search |
+| **Working** | Per-agent active context (short-lived) |
 
 ### CrewAI Patches
 
@@ -97,11 +129,11 @@ autonomous-startup/
 │   ├── framework/         # Storage, eval, learning, observability
 │   │   ├── eval/          # Evaluator, scorecard, gates
 │   │   ├── learning/      # Procedure/policy updaters
-│   │   ├── observability/ # Event logger
+│   │   ├── observability/ # Event logger, dashboard helpers
 │   │   └── storage/       # Unified store, episodic/semantic/procedural backends
 │   ├── simulation/        # HTTP checks, customer testing (LLM personas)
-│   ├── workspace_tools/   # File tools, Flask/static HTTP server, versioning
-│   ├── database/          # Database layer
+│   ├── workspace_tools/   # File tools, Flask/static HTTP server
+│   ├── database/          # Startup/VC database layer
 │   ├── llm/               # LLM client
 │   └── utils/             # Config, logging
 ├── workspace/             # Agent-built Flask app (app.py, templates/, static/)
@@ -113,14 +145,13 @@ autonomous-startup/
 
 ## Configuration
 
-Settings are managed via `.env` and `src/utils/config.py`:
+Settings are managed via environment variables and `src/utils/config.py`:
 
 ```bash
 # API Keys
 OPENROUTER_API_KEY=your_key
 ANTHROPIC_API_KEY=your_key     # optional fallback
 OPENAI_API_KEY=your_key        # optional fallback
-SERPER_API_KEY=your_key        # optional; web search degrades gracefully without it
 
 # Per-role models (OpenRouter via LiteLLM)
 COORDINATOR_MODEL=openrouter/minimax/minimax-m2.5
@@ -137,8 +168,6 @@ LOG_LEVEL=INFO
 
 # Paths (auto-configured, override if needed)
 MEMORY_DATA_DIR=data/memory
-GENERATED_TOOLS_DIR=data/generated_tools
-GENERATED_TOOLS_RETENTION_DAYS=30
 CREWAI_LOCAL_APPDATA_DIR=data/crewai_local
 CREWAI_DB_STORAGE_DIR=data/crewai_storage
 ```
