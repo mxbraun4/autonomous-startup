@@ -358,6 +358,7 @@ def run_customer_testing(
         for entry in entries:
             result = _submit_feedback_impl(
                 entry["page"], entry["feedback_type"], entry["message"],
+                cycle_id=cycle_id,
             )
             if result.get("status") == "ok":
                 submitted += 1
@@ -388,6 +389,7 @@ def run_customer_testing(
             for entry in entries:
                 result = _submit_feedback_impl(
                     entry["page"], entry["feedback_type"], entry["message"],
+                    cycle_id=cycle_id,
                 )
                 if result.get("status") == "ok":
                     total_submitted += 1

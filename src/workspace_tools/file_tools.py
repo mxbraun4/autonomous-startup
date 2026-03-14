@@ -262,10 +262,49 @@ def _check_http_impl(pages: str = "") -> dict:
 _VALID_FEEDBACK_TYPES = {"bug", "friction", "feature_request", "praise"}
 
 
-def _submit_feedback_impl(page: str, feedback_type: str, message: str) -> dict:
-    """Insert a test feedback entry into workspace/feedback.db.
+def _ensure_feedback_schema() -> dict:
+    """Ensure the feedback table exists with the latest schema (including cycle_id, status).
 
-    Creates the feedback table if it does not exist.
+    Handles migration from the old schema (no cycle_id/status columns) by
+    adding missing columns via ALTER TABLE.
+    """
+    create_result = _run_sql_impl(
+        "feedback.db",
+        "CREATE TABLE IF NOT EXISTS feedback ("
+        "  id TEXT PRIMARY KEY,"
+        "  timestamp TEXT NOT NULL,"
+        "  page TEXT NOT NULL,"
+        "  feedback_type TEXT NOT NULL,"
+        "  message TEXT NOT NULL,"
+        "  cycle_id INTEGER DEFAULT 0,"
+        "  status TEXT DEFAULT 'open'"
+        ")",
+    )
+    if create_result.get("status") != "ok":
+        return create_result
+
+    # Migrate old tables missing the new columns
+    for col, col_def in [("cycle_id", "INTEGER DEFAULT 0"), ("status", "TEXT DEFAULT 'open'")]:
+        _run_sql_impl(
+            "feedback.db",
+            f"ALTER TABLE feedback ADD COLUMN {col} {col_def}",
+        )
+        # ALTER TABLE will fail silently if column already exists — that's fine
+
+    return {"status": "ok"}
+
+
+def _submit_feedback_impl(
+    page: str,
+    feedback_type: str,
+    message: str,
+    cycle_id: int = 0,
+) -> dict:
+    """Insert a feedback entry into workspace/feedback.db.
+
+    Creates the feedback table if it does not exist.  Each entry is tagged
+    with ``cycle_id`` so feedback persists across cycles and can be queried
+    by iteration.
     """
     if feedback_type not in _VALID_FEEDBACK_TYPES:
         return {
@@ -275,28 +314,18 @@ def _submit_feedback_impl(page: str, feedback_type: str, message: str) -> dict:
     if not page or not message:
         return {"status": "error", "reason": "page and message are required"}
 
-    # Create table if needed
-    create_result = _run_sql_impl(
-        "feedback.db",
-        "CREATE TABLE IF NOT EXISTS feedback ("
-        "  id TEXT PRIMARY KEY,"
-        "  timestamp TEXT NOT NULL,"
-        "  page TEXT NOT NULL,"
-        "  feedback_type TEXT NOT NULL,"
-        "  message TEXT NOT NULL"
-        ")",
-    )
-    if create_result.get("status") != "ok":
-        return create_result
+    schema_result = _ensure_feedback_schema()
+    if schema_result.get("status") != "ok":
+        return schema_result
 
     feedback_id = uuid.uuid4().hex[:16]
     timestamp = datetime.now(timezone.utc).isoformat()
 
     insert_result = _run_sql_impl(
         "feedback.db",
-        "INSERT INTO feedback (id, timestamp, page, feedback_type, message) "
-        "VALUES (?, ?, ?, ?, ?)",
-        json.dumps([feedback_id, timestamp, page, feedback_type, message]),
+        "INSERT INTO feedback (id, timestamp, page, feedback_type, message, cycle_id, status) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        json.dumps([feedback_id, timestamp, page, feedback_type, message, cycle_id, "open"]),
     )
     if insert_result.get("status") != "ok":
         return insert_result
@@ -305,7 +334,73 @@ def _submit_feedback_impl(page: str, feedback_type: str, message: str) -> dict:
         "status": "ok",
         "feedback_id": feedback_id,
         "timestamp": timestamp,
+        "cycle_id": cycle_id,
     }
+
+
+def _get_open_feedback(exclude_cycle: int = 0) -> list:
+    """Return all feedback entries with status='open' from prior cycles.
+
+    Args:
+        exclude_cycle: Cycle to exclude (typically the current one, whose
+            feedback hasn't been generated yet).
+
+    Returns:
+        List of feedback dicts with id, cycle_id, page, feedback_type, message.
+    """
+    import sqlite3 as _sqlite3
+
+    if _workspace_root is None:
+        return []
+
+    db_path = _workspace_root / "feedback.db"
+    if not db_path.exists():
+        return []
+
+    try:
+        with _sqlite3.connect(str(db_path)) as conn:
+            conn.row_factory = _sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, cycle_id, page, feedback_type, message "
+                "FROM feedback WHERE status = 'open' AND cycle_id != ? "
+                "ORDER BY cycle_id, feedback_type",
+                (exclude_cycle,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def _mark_feedback_addressed(feedback_ids: list, addressed_in_cycle: int) -> int:
+    """Mark specific feedback entries as addressed.
+
+    Args:
+        feedback_ids: List of feedback id strings to mark.
+        addressed_in_cycle: The cycle that addressed these items.
+
+    Returns:
+        Number of rows updated.
+    """
+    import sqlite3 as _sqlite3
+
+    if not feedback_ids or _workspace_root is None:
+        return 0
+
+    db_path = _workspace_root / "feedback.db"
+    if not db_path.exists():
+        return 0
+
+    try:
+        placeholders = ",".join("?" for _ in feedback_ids)
+        with _sqlite3.connect(str(db_path)) as conn:
+            cur = conn.execute(
+                f"UPDATE feedback SET status = 'addressed' "
+                f"WHERE id IN ({placeholders})",
+                feedback_ids,
+            )
+            return cur.rowcount
+    except Exception:
+        return 0
 
 
 # ---------------------------------------------------------------------------

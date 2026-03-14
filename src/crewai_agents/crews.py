@@ -34,6 +34,7 @@ from src.crewai_agents.agents import (
 from src.crewai_agents.tools import (
     set_current_cycle_id as _set_tools_cycle_id,
     make_dispatch_task_tool,
+    mark_feedback_addressed_tool,
 )
 from src.utils.logging import get_logger
 
@@ -534,28 +535,92 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         except Exception as exc:
             logger.warning("Customer testing skipped: %s", exc)
 
-    def _clear_feedback_db(self) -> None:
-        """Delete all rows from feedback.db so each iteration starts fresh."""
-        import sqlite3 as _sqlite3
-        from src.workspace_tools.file_tools import _workspace_root
+    def _take_workspace_snapshot(self) -> str:
+        """Read all workspace files once and return a combined snapshot string.
 
+        This avoids redundant read_workspace_file calls by agents during
+        the BUILD phase.  The snapshot is injected into the coordinator
+        task description so agents already have full context.
+        """
         try:
-            if _workspace_root is None:
-                return
-            db_path = _workspace_root / "feedback.db"
-            if not db_path.exists():
-                return
-            with _sqlite3.connect(str(db_path)) as conn:
-                conn.execute("DELETE FROM feedback")
-            logger.debug("Cleared feedback.db for new iteration")
+            from src.workspace_tools.file_tools import _list_impl, _read_impl
+
+            listing = _list_impl()
+            files = listing.get("files", [])
+            if not files:
+                return "[Workspace is empty — no files yet]"
+
+            # Skip binary/compiled files that waste tokens
+            _SKIP_EXTS = {".pyc", ".pyo", ".db", ".sqlite", ".sqlite3",
+                          ".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2"}
+            readable_files = [
+                f for f in files
+                if not any(f.lower().endswith(ext) for ext in _SKIP_EXTS)
+                and "__pycache__" not in f
+            ]
+
+            sections: List[str] = []
+            total_chars = 0
+            _MAX_SNAPSHOT_CHARS = 20_000  # cap total snapshot size
+
+            for fpath in sorted(readable_files):
+                if total_chars >= _MAX_SNAPSHOT_CHARS:
+                    sections.append(f"\n--- {fpath} ---\n[truncated: snapshot size limit reached]")
+                    break
+                result = _read_impl(fpath)
+                if result.get("status") != "ok":
+                    continue
+                content = result.get("content", "")
+                remaining = _MAX_SNAPSHOT_CHARS - total_chars
+                if len(content) > remaining:
+                    content = content[:remaining] + "\n[... truncated]"
+                sections.append(f"--- {fpath} ---\n{content}")
+                total_chars += len(content)
+
+            return "\n\n".join(sections)
+        except Exception as exc:
+            logger.warning("Workspace snapshot failed: %s", exc)
+            return "[Workspace snapshot unavailable]"
+
+    def _get_unresolved_feedback(self) -> str:
+        """Collect open feedback from prior cycles as a formatted summary.
+
+        Returns a string listing unresolved feedback items with their IDs
+        so the BUILD coordinator can address them and mark them resolved
+        via the mark_feedback_addressed tool.
+        """
+        try:
+            from src.workspace_tools.file_tools import _get_open_feedback
+
+            open_items = _get_open_feedback(exclude_cycle=self.state.iteration)
+            if not open_items:
+                return ""
+
+            lines = [
+                f"UNRESOLVED FEEDBACK FROM PRIOR CYCLES ({len(open_items)} items):",
+                "After fixing these issues, call mark_feedback_addressed with the IDs.",
+            ]
+            for item in open_items[:10]:  # cap to avoid prompt bloat
+                fid = item.get("id", "?")
+                cycle = item.get("cycle_id", "?")
+                ftype = item.get("feedback_type", "?")
+                msg = item.get("message", "")
+                lines.append(f"  [{fid}] [cycle {cycle}][{ftype}] {msg}")
+
+            if len(open_items) > 10:
+                lines.append(f"  ... and {len(open_items) - 10} more")
+
+            return "\n".join(lines)
         except Exception:
-            pass  # table may not exist yet
+            return ""
 
     def _collect_user_feedback(self) -> str:
-        """Collect real user feedback from workspace/feedback.db (SQLite).
+        """Collect user feedback from workspace/feedback.db (SQLite).
 
-        Queries the feedback table, stores entries in
-        ``self.state.user_feedback``, and returns a formatted summary.
+        Queries feedback for the current cycle, stores entries in
+        ``self.state.user_feedback``, and returns a formatted summary
+        that includes both current-cycle feedback and a count of open
+        items from prior cycles.
         """
         import sqlite3 as _sqlite3
         from src.workspace_tools.file_tools import _workspace_root
@@ -570,11 +635,34 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 self.state.user_feedback = {}
                 return "  No user feedback received this iteration."
 
+            current_cycle = self.state.iteration
+
             with _sqlite3.connect(str(db_path)) as conn:
                 conn.row_factory = _sqlite3.Row
-                rows = conn.execute(
-                    "SELECT id, timestamp, page, feedback_type, message FROM feedback"
-                ).fetchall()
+
+                # Current cycle's feedback
+                try:
+                    rows = conn.execute(
+                        "SELECT id, timestamp, page, feedback_type, message, cycle_id "
+                        "FROM feedback WHERE cycle_id = ?",
+                        (current_cycle,),
+                    ).fetchall()
+                except _sqlite3.OperationalError:
+                    # Fallback for old schema without cycle_id column
+                    rows = conn.execute(
+                        "SELECT id, timestamp, page, feedback_type, message FROM feedback"
+                    ).fetchall()
+
+                # Count of open items from prior cycles
+                try:
+                    prior_open = conn.execute(
+                        "SELECT COUNT(*) as cnt FROM feedback "
+                        "WHERE status = 'open' AND cycle_id < ?",
+                        (current_cycle,),
+                    ).fetchone()
+                    prior_open_count = prior_open["cnt"] if prior_open else 0
+                except _sqlite3.OperationalError:
+                    prior_open_count = 0
 
             if not rows:
                 self.state.user_feedback = {}
@@ -593,7 +681,9 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
 
             # Cap to top 6 entries to keep coordinator context focused
             _MAX_FEEDBACK_ENTRIES = 6
-            lines = [f"  Total feedback entries: {len(entries)}"]
+            lines = [f"  Cycle {current_cycle} feedback: {len(entries)} entries"]
+            if prior_open_count > 0:
+                lines.append(f"  Open items from prior cycles: {prior_open_count}")
             shown = 0
             for ftype, messages in grouped.items():
                 if shown >= _MAX_FEEDBACK_ENTRIES:
@@ -606,7 +696,8 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 shown += len(display)
 
             summary = "\n".join(lines)
-            logger.info("USER FEEDBACK: Collected %d entries.", len(entries))
+            logger.info("USER FEEDBACK: Collected %d entries for cycle %d (%d prior open).",
+                        len(entries), current_cycle, prior_open_count)
             return summary
         except Exception as exc:
             logger.warning("USER FEEDBACK: Failed to collect: %s", exc)
@@ -938,6 +1029,16 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         # Collect learning context from prior iterations
         extra_context = self._build_extra_context()
 
+        # Workspace snapshot: read all files once to avoid redundant reads
+        if self.state.workspace_enabled:
+            snapshot = self._take_workspace_snapshot()
+            extra_context += f"\n\n[Current workspace snapshot]\n{snapshot}\n"
+
+        # Unresolved feedback from prior cycles
+        unresolved = self._get_unresolved_feedback()
+        if unresolved:
+            extra_context += f"\n\n{unresolved}\n"
+
         # Build agent registry for dispatch tool
         agent_registry = {
             "product_strategist": {
@@ -970,7 +1071,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         build_coordinator = create_build_coordinator(
             coordinator_llm,
             prompt_override=self._prompt_override("coordinator"),
-            extra_tools=[dispatch_tool, dispatch_parallel_tool] + (ws_product_tools or []),
+            extra_tools=[dispatch_tool, dispatch_parallel_tool, mark_feedback_addressed_tool] + (ws_product_tools or []),
         )
 
         # Create coordinator task
@@ -1054,15 +1155,11 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             self.state.qa_result = self._run_quality_gate()
             self.state.qa_passed = self._qa_passed()
 
-        # Clear stale feedback from prior iterations before running new tests
-        if self.state.workspace_enabled:
-            self._clear_feedback_db()
-
         # LLM-powered customer testing (after remediation, so personas see real content)
         if self.state.workspace_enabled:
             self._run_customer_testing()
 
-        # Collect real user feedback from feedback.db
+        # Collect current cycle's feedback from feedback.db
         if self.state.workspace_enabled:
             feedback_summary = self._collect_user_feedback()
             if feedback_summary and "No user feedback" not in feedback_summary:

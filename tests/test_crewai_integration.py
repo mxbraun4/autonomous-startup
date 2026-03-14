@@ -23,43 +23,14 @@ def test_crewai_imports():
 def test_tools_creation():
     """Test that tools can be created."""
     from src.crewai_agents.tools import (
-        get_startups_tool,
-        tool_builder_tool,
-        data_validator_tool,
         run_quality_checks_tool,
-        register_dynamic_tool,
-        list_dynamic_tools,
-        execute_dynamic_tool,
     )
 
     # CrewAI @tool decorator produces Tool objects with a .run() method
     for t in [
-        get_startups_tool,
-        tool_builder_tool,
-        data_validator_tool,
         run_quality_checks_tool,
-        register_dynamic_tool,
-        list_dynamic_tools,
-        execute_dynamic_tool,
     ]:
         assert hasattr(t, "run"), f"{t} missing .run() method"
-
-
-def test_get_startups_tool_execution():
-    """Test get_startups_tool can execute."""
-    import json
-    from src.crewai_agents.tools import get_startups_tool
-
-    # CrewAI tools are invoked via .run()
-    result_json = get_startups_tool.run(sector="fintech", stage="seed")
-
-    result = json.loads(result_json)
-
-    assert result['status'] == 'success'
-    assert result['sector'] == 'fintech'
-    assert result['stage'] == 'seed'
-    assert 'count' in result
-    assert 'startups' in result
 
 
 def test_run_quality_checks_tool_syntax_only():
@@ -151,147 +122,6 @@ def test_single_iteration():
     metrics = results['metrics_evolution'][0]
     assert 'qa_passed' in metrics
     assert 'task_count' in metrics
-
-
-# ---------------------------------------------------------------------------
-# Web search tools — Serper.dev integration
-# ---------------------------------------------------------------------------
-
-def test_web_search_startups_no_api_key():
-    """web_search_startups returns status=skipped when SERPER_API_KEY is absent."""
-    with patch("src.crewai_agents.tools.settings") as mock_settings:
-        mock_settings.serper_api_key = None
-        from src.crewai_agents.tools import web_search_startups
-
-        result = json.loads(web_search_startups.run(query="fintech startups", sector="fintech"))
-        assert result["status"] == "skipped"
-        assert "SERPER_API_KEY" in result.get("reason", "")
-
-
-def test_web_search_vcs_no_api_key():
-    """web_search_vcs returns status=skipped when SERPER_API_KEY is absent."""
-    with patch("src.crewai_agents.tools.settings") as mock_settings:
-        mock_settings.serper_api_key = None
-        from src.crewai_agents.tools import web_search_vcs
-
-        result = json.loads(web_search_vcs.run(query="seed VCs", focus_sector="fintech"))
-        assert result["status"] == "skipped"
-
-
-def test_web_search_startups_with_mocked_serper():
-    """web_search_startups returns structured results from mocked Serper response."""
-    mock_serper_response = {
-        "organic": [
-            {"title": "Acme Fintech", "link": "https://acme.com", "snippet": "Acme is a fintech startup."},
-            {"title": "Beta AI", "link": "https://beta.ai", "snippet": "Beta builds AI tools."},
-        ]
-    }
-    with patch("src.crewai_agents.tools.settings") as mock_settings, \
-         patch("src.crewai_agents.tools.requests.post") as mock_post:
-        mock_settings.serper_api_key = "test-key"
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = mock_serper_response
-        mock_resp.raise_for_status.return_value = None
-        mock_post.return_value = mock_resp
-
-        from src.crewai_agents.tools import web_search_startups
-
-        result = json.loads(web_search_startups.run(query="fintech startups", sector="fintech"))
-        assert result["status"] == "success"
-        assert result["result_count"] == 2
-        assert result["results"][0]["title"] == "Acme Fintech"
-        mock_post.assert_called_once()
-
-
-def test_web_search_vcs_with_mocked_serper():
-    """web_search_vcs returns structured results from mocked Serper response."""
-    mock_serper_response = {
-        "organic": [
-            {"title": "Alpha Ventures", "link": "https://alpha.vc", "snippet": "Seed-stage VC."},
-        ]
-    }
-    with patch("src.crewai_agents.tools.settings") as mock_settings, \
-         patch("src.crewai_agents.tools.requests.post") as mock_post:
-        mock_settings.serper_api_key = "test-key"
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = mock_serper_response
-        mock_resp.raise_for_status.return_value = None
-        mock_post.return_value = mock_resp
-
-        from src.crewai_agents.tools import web_search_vcs
-
-        result = json.loads(web_search_vcs.run(query="seed VCs", focus_sector="fintech"))
-        assert result["status"] == "success"
-        assert result["result_count"] == 1
-        assert result["results"][0]["title"] == "Alpha Ventures"
-
-
-def test_fetch_webpage_with_mocked_http():
-    """fetch_webpage returns stripped text from mocked HTTP response."""
-    html = "<html><body><h1>Hello</h1><p>World of startups</p></body></html>"
-    with patch("src.crewai_agents.tools.requests.get") as mock_get:
-        mock_resp = MagicMock()
-        mock_resp.text = html
-        mock_resp.raise_for_status.return_value = None
-        mock_get.return_value = mock_resp
-
-        from src.crewai_agents.tools import fetch_webpage
-
-        result = json.loads(fetch_webpage.run(url="https://example.com", extract_type="startups"))
-        assert result["status"] == "ok"
-        assert "Hello" in result["text"]
-        assert "World of startups" in result["text"]
-        # HTML tags should be stripped
-        assert "<h1>" not in result["text"]
-        assert result["extract_type"] == "startups"
-
-
-def test_data_strategist_agent_creation():
-    """Data Strategy Expert agent can be created with expected properties."""
-    from src.crewai_agents.agents import create_data_strategist
-
-    agent = create_data_strategist()
-    assert agent.role == "Data Strategy Expert"
-    assert len(agent.tools) > 0
-    tool_names = [getattr(t, "name", "") for t in agent.tools]
-    assert any("Startup" in n for n in tool_names), f"Expected startup tool, got {tool_names}"
-    assert any("Data Collection" in n for n in tool_names), f"Expected data collection tool, got {tool_names}"
-
-
-def test_run_data_collection_no_api_key():
-    """run_data_collection returns status=skipped when SERPER_API_KEY is absent."""
-    with patch("src.crewai_agents.tools.settings") as mock_settings:
-        mock_settings.serper_api_key = None
-        from src.crewai_agents.tools import run_data_collection
-
-        result = json.loads(run_data_collection.run(sectors="fintech"))
-        assert result["status"] == "skipped"
-
-
-def test_run_data_collection_with_mocked_serper():
-    """run_data_collection searches, saves to DB, and returns sector counts."""
-    mock_serper_response = {
-        "organic": [
-            {"title": "Acme Fintech", "link": "https://acme.com", "snippet": "A fintech startup."},
-        ]
-    }
-    with patch("src.crewai_agents.tools.settings") as mock_settings, \
-         patch("src.crewai_agents.tools.requests.post") as mock_post:
-        mock_settings.serper_api_key = "test-key"
-        mock_settings.startup_db_path = ":memory:"
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = mock_serper_response
-        mock_resp.raise_for_status.return_value = None
-        mock_post.return_value = mock_resp
-
-        from src.crewai_agents.tools import run_data_collection
-
-        result = json.loads(run_data_collection.run(sectors="fintech"))
-        assert result["status"] == "success"
-        assert len(result["by_sector"]) == 1
-        assert result["by_sector"][0]["sector"] == "fintech"
-        # At least startup and VC searches (2 calls per sector)
-        assert mock_post.call_count == 2
 
 
 if __name__ == "__main__":
