@@ -1,4 +1,4 @@
-"""Framework - Production-grade five-tier memory system and agent runtime."""
+"""Framework - Storage, evaluation, learning, and observability."""
 
 from src.framework.types import (
     ConsensusStatus,
@@ -10,24 +10,9 @@ from src.framework.types import (
     TaskStatus,
     ToolCallStatus,
 )
-from src.framework.errors import (
-    AgentRuntimeError,
-    BudgetExhaustedError,
-    CapabilityNotFoundError,
-    CycleDetectedError,
-    DeadlockError,
-    EntityNotFoundError,
-    MemoryStoreError,
-    OrchestrationError,
-    PolicyViolationError,
-    StoreConnectionError,
-    TaskRoutingError,
-    ValidationError,
-)
 from src.framework.contracts import (
     AgentDecision,
     BaseMemoryEntity,
-    Checkpoint,
     ConsensusEntry,
     CycleMetrics,
     Episode,
@@ -36,24 +21,11 @@ from src.framework.contracts import (
     Procedure,
     ProcedureVersion,
     RunConfig,
-    RunContext,
     SemanticDocument,
     TaskResult,
     TaskSpec,
     ToolCall,
     WorkingMemoryItem,
-)
-from src.framework.adapters import BaseDomainAdapter, StartupVCAdapter, WebProductAdapter
-from src.framework.autonomy import (
-    AutonomyLoop,
-    CheckpointManager,
-    CycleOutcome,
-    LoopResult,
-    RunController,
-    RunControllerResult,
-    TerminationDecision,
-    TerminationPolicy,
-    TerminationState,
 )
 from src.framework.eval import Evaluator, GateThresholds, Scorecard, build_scorecard
 from src.framework.learning import (
@@ -66,21 +38,8 @@ from src.framework.observability import (
     EVENT_TYPES_REQUIRED,
     EventLogger,
     ObservabilityEvent,
-    ReplayDiff,
-    ReplayEngine,
-    ReplayResult,
-    Timeline,
-    TimelineBuilder,
     create_event,
 )
-from src.framework.runtime import (
-    LocalhostAutonomyToolset,
-    list_edit_templates,
-    register_web_agents,
-    register_web_capabilities,
-    resolve_edit_template,
-)
-from src.framework.safety import build_web_domain_policy_hook
 
 __all__ = [
     # Types / Enums
@@ -92,23 +51,9 @@ __all__ = [
     "MemoryType",
     "TaskStatus",
     "ToolCallStatus",
-    # Errors
-    "AgentRuntimeError",
-    "BudgetExhaustedError",
-    "CapabilityNotFoundError",
-    "CycleDetectedError",
-    "DeadlockError",
-    "EntityNotFoundError",
-    "MemoryStoreError",
-    "OrchestrationError",
-    "PolicyViolationError",
-    "StoreConnectionError",
-    "TaskRoutingError",
-    "ValidationError",
     # Contracts
     "AgentDecision",
     "BaseMemoryEntity",
-    "Checkpoint",
     "ConsensusEntry",
     "CycleMetrics",
     "Episode",
@@ -117,50 +62,24 @@ __all__ = [
     "Procedure",
     "ProcedureVersion",
     "RunConfig",
-    "RunContext",
     "SemanticDocument",
     "TaskResult",
     "TaskSpec",
     "ToolCall",
     "WorkingMemoryItem",
-    # Layer I
-    "BaseDomainAdapter",
-    "StartupVCAdapter",
-    "WebProductAdapter",
-    # Layer E
-    "AutonomyLoop",
-    "CheckpointManager",
-    "CycleOutcome",
-    "LoopResult",
-    "RunController",
-    "RunControllerResult",
-    "TerminationDecision",
-    "TerminationPolicy",
-    "TerminationState",
-    # Layer G
+    # Eval
     "Evaluator",
     "GateThresholds",
     "Scorecard",
     "build_scorecard",
+    # Learning
     "PolicyPatch",
     "PolicyUpdater",
     "ProcedureUpdateProposal",
     "ProcedureUpdater",
-    # Layer H
+    # Observability
     "EVENT_TYPES_REQUIRED",
     "EventLogger",
     "ObservabilityEvent",
-    "ReplayDiff",
-    "ReplayEngine",
-    "ReplayResult",
-    "Timeline",
-    "TimelineBuilder",
     "create_event",
-    # Web autonomy helpers
-    "LocalhostAutonomyToolset",
-    "list_edit_templates",
-    "register_web_agents",
-    "register_web_capabilities",
-    "resolve_edit_template",
-    "build_web_domain_policy_hook",
 ]

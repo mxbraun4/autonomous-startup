@@ -74,32 +74,43 @@ def _fetch_page(base_url: str, path: str, timeout: int = 10) -> Optional[str]:
         return None
 
 
-def _discover_html_pages(base_url: str, workspace_root: str = "") -> Dict[str, str]:
-    """Discover HTML pages dynamically from the workspace directory.
+def _discover_pages(base_url: str, workspace_root: str = "") -> Dict[str, str]:
+    """Discover pages dynamically from the workspace.
 
-    Scans the workspace for all .html files and fetches each via HTTP.
-    Returns a dict mapping page path to its HTML content.
+    If ``app.py`` exists (Flask app), extracts routes from ``@app.route``
+    decorators and fetches each.  Otherwise scans for ``.html`` files.
+    Returns a dict mapping route/path to its rendered HTML content.
     """
     from pathlib import Path
+    from src.simulation.http_checks import _discover_flask_routes
 
     pages: Dict[str, str] = {}
 
-    # Scan workspace directory for all .html files
     if workspace_root:
         ws = Path(workspace_root)
-        if ws.is_dir():
-            for html_file in sorted(ws.rglob("*.html")):
-                rel_path = str(html_file.relative_to(ws)).replace("\\", "/")
-                if rel_path not in pages:
-                    body = _fetch_page(base_url, rel_path)
-                    if body is not None:
-                        pages[rel_path] = body
 
-    # Fallback: if no workspace_root or no files found, at least try index.html
+        # Prefer Flask route discovery
+        if (ws / "app.py").is_file():
+            routes = _discover_flask_routes(workspace_root)
+            for route in routes:
+                body = _fetch_page(base_url, route)
+                if body is not None:
+                    pages[route] = body
+        else:
+            # Fallback: scan for .html files
+            if ws.is_dir():
+                for html_file in sorted(ws.rglob("*.html")):
+                    rel_path = str(html_file.relative_to(ws)).replace("\\", "/")
+                    if rel_path not in pages:
+                        body = _fetch_page(base_url, rel_path)
+                        if body is not None:
+                            pages[rel_path] = body
+
+    # Fallback: at least try the root
     if not pages:
-        index_body = _fetch_page(base_url, "index.html")
+        index_body = _fetch_page(base_url, "/")
         if index_body is not None:
-            pages["index.html"] = index_body
+            pages["/"] = index_body
 
     return pages
 
@@ -354,7 +365,7 @@ def run_customer_testing(
         return {"status": "ok", "feedback_count": submitted, "personas_tested": 3}
 
     # Discover pages dynamically from workspace directory
-    pages = _discover_html_pages(base_url, workspace_root)
+    pages = _discover_pages(base_url, workspace_root)
     if not pages:
         logger.info("Customer testing: no pages discovered, skipping.")
         _emit("customer_testing_end", {"feedback_count": 0, "reason": "no_pages"})

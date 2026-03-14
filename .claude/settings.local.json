@@ -9,7 +9,9 @@
       "Bash(grep:*)",
       "Bash(sort:*)",
       "Bash(head:*)",
-      "Bash(tail:*)"
+      "Bash(tail:*)",
+      "Bash(cd /c/Users/Maxi\\\\ Braun/Dropbox\\\\ \\\\\\(Old\\\\\\)/PC/Desktop/autonomous-startup && wc -l src/**/*.py | tail -1)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

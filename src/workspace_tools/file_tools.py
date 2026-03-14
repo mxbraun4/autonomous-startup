@@ -212,26 +212,35 @@ def _run_sql_impl(db_name: str, query: str, params: str = "[]") -> dict:
 def _check_http_impl(pages: str = "") -> dict:
     """Start a temporary server, run HTTP checks, and return results.
 
+    If the workspace contains ``app.py`` (Flask app), launches it as a
+    subprocess via :class:`FlaskAppServer`.  Otherwise falls back to the
+    static-file :class:`WorkspaceServer`.
+
     Parameters
     ----------
     pages:
-        Comma-separated list of pages to check (e.g. ``"index.html,about.html"``).
-        If empty, runs the full standard check suite (landing, navigation).
+        Comma-separated list of routes/pages to check (e.g.
+        ``"/,/startups,/investors"`` for Flask or ``"index.html"`` for static).
+        If empty, runs the full standard check suite.
     """
     if _workspace_root is None:
         return {"status": "error", "reason": "Workspace root is not configured. Call configure_workspace_root first."}
 
     # Lazy imports to avoid circular dependencies
-    from src.workspace_tools.server import WorkspaceServer
+    from src.workspace_tools.server import FlaskAppServer, WorkspaceServer
     from src.simulation.http_checks import WorkspaceHTTPChecker
 
-    server = WorkspaceServer(str(_workspace_root), port=0)
+    # Prefer Flask app if workspace/app.py exists
+    flask_server = FlaskAppServer(str(_workspace_root), port=0)
+    use_flask = flask_server.has_flask_app()
+
+    server = flask_server if use_flask else WorkspaceServer(str(_workspace_root), port=0)
     try:
         base_url = server.start()
         checker = WorkspaceHTTPChecker(base_url)
 
         if pages.strip():
-            # Check specific pages
+            # Check specific pages/routes
             results: dict = {}
             for page in [p.strip() for p in pages.split(",") if p.strip()]:
                 results[page] = checker.check_page_loads(page)
@@ -305,43 +314,66 @@ def _submit_feedback_impl(page: str, feedback_type: str, message: str) -> dict:
 
 @tool
 def read_workspace_file(file_path: str) -> str:
-    """Read a file from the workspace directory."""
+    """Read a file from the workspace directory.
+
+    Args:
+        file_path: Relative path to the file, e.g. "index.html" or "css/styles.css"
+
+    Returns:
+        JSON with the file content
+    """
     return json.dumps(_read_impl(file_path))
 
 
 @tool
 def write_workspace_file(file_path: str, content: str) -> str:
-    """Write (or overwrite) a file inside the workspace directory."""
+    """Write or overwrite a file inside the workspace directory.
+
+    Args:
+        file_path: Relative path to write, e.g. "index.html" or "styles.css"
+        content: The full file content to write
+
+    Returns:
+        JSON confirmation with the written path
+    """
     return json.dumps(_write_impl(file_path, content))
 
 
 @tool
 def list_workspace_files(subdirectory: str = "") -> str:
-    """Recursively list all files in the workspace (excluding .versions/)."""
+    """Recursively list all files in the workspace (excluding .versions/).
+
+    Args:
+        subdirectory: Optional subdirectory to list, e.g. "css". Empty string lists all files.
+
+    Returns:
+        JSON with a list of file paths
+    """
     return json.dumps(_list_impl(subdirectory))
 
 
 @tool
 def review_workspace_files() -> str:
-    """List all workspace files and read every HTML file in one call.
+    """List all workspace files and read every source file (.py, .html, .css, .js) in one call.
 
-    Returns a JSON object with ``files`` (full listing) and ``html_contents``
-    (a dict mapping each ``.html`` filename to its content).  Use this for QA
+    Returns a JSON object with ``files`` (full listing) and ``source_contents``
+    (a dict mapping each source filename to its content).  Use this for QA
     review so you can inspect everything in a single tool call.
     """
     listing = _list_impl("")
     if listing.get("status") != "ok":
         return json.dumps(listing)
-    html_contents: dict[str, str] = {}
+    _SOURCE_EXTS = {".py", ".html", ".css", ".js", ".json"}
+    source_contents: dict[str, str] = {}
     for fname in listing.get("files", []):
-        if fname.endswith(".html"):
+        if any(fname.endswith(ext) for ext in _SOURCE_EXTS):
             result = _read_impl(fname)
             if result.get("status") == "ok":
-                html_contents[fname] = result["content"]
+                source_contents[fname] = result["content"]
     return json.dumps({
         "status": "ok",
         "files": listing["files"],
-        "html_contents": html_contents,
+        "source_contents": source_contents,
     })
 
 
@@ -370,12 +402,12 @@ def run_workspace_sql(db_name: str, query: str, params: str = "[]") -> str:
 
 @tool("Check Workspace HTTP")
 def check_workspace_http(pages: str = "") -> str:
-    """Serve the workspace over HTTP and run validation checks.
+    """Start the Flask app (or static server) and run HTTP validation checks.
 
     With no arguments, runs the full check suite: landing page load
-    and navigation link verification.
-    Pass a comma-separated list of pages (e.g. ``"index.html,about.html"``)
-    to check only those specific pages.
+    and navigation link verification against discovered Flask routes.
+    Pass a comma-separated list of routes (e.g. ``"/,/startups,/investors"``)
+    to check only those specific routes.
 
     Returns JSON with scores: ``http_landing_score``,
     ``http_navigation_score`` (each 0.0–1.0).

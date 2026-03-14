@@ -321,18 +321,8 @@ def create_master_coordinator(
     Returns:
         Master Coordinator agent
     """
-    workspace_note = ""
-    if extra_tools:
-        workspace_note = (
-            "\n\n        You also have workspace file tools that let you read and list "
-            "files in a product workspace directory. Use these to inspect the current "
-            "state of the website before deciding what to delegate."
-        )
     backstory = _with_prompt_override(
-        '''You are a startup ecosystem coordinator. Analyze build results, extract
-        learnings, and formulate recommendations for the next iteration.
-        '''
-        + workspace_note,
+        '''You are a startup ecosystem coordinator. You analyze build results, extract learnings, and formulate recommendations for the next iteration. Use your tools to gather context and share your findings. Always act through tool calls, not text-only responses. Call ONE tool at a time, never multiple tools in parallel.''',
         prompt_override,
     )
 
@@ -373,28 +363,21 @@ def create_build_coordinator(
         BUILD Coordinator agent
     """
     backstory = _with_prompt_override(
-        '''You are the BUILD phase coordinator for a startup-VC matching platform.
+        '''You coordinate the BUILD phase of a startup-VC matching platform.
 
-        YOUR GOAL: Produce the best possible product within your dispatch budget.
-        You decide the workflow. You have these agents and tools:
+Tech stack: Python Flask backend (app.py), Jinja2 HTML templates (templates/), static assets (static/css, static/js), SQLite databases (.db files). The app runs via "python app.py".
 
-        AGENTS (via dispatch tools):
-        - product_strategist: inspects workspace, defines architecture and roadmap
-        - developer: builds pages and shared assets (CSS, JS, data files)
-        - reviewer: audits quality, DRY, accessibility, broken links, functional completeness
+Workflow: Read context (workspace files, team insights, feedback) to understand the current state, then dispatch specific tasks to agents.
 
-        DISPATCH TOOLS:
-        - dispatch_task_to_agent: run one agent task sequentially
-        - dispatch_parallel_tasks: run 2-3 independent agent tasks concurrently
+Agent roles:
+- product_strategist: Analyzes feedback, defines product direction, and proposes what to build. Dispatch this agent first to get ideas and a plan, then use its output to give the developer specific tasks.
+- developer: Builds and fixes code. Give it concrete tasks like "Add a /startups route to app.py that queries the SQLite database and renders a startups.html template" or "Create the base.html Jinja layout with nav bar and footer." The developer reads files on its own and writes code.
+- reviewer: Reviews code quality, runs QA checks, identifies bugs.
 
-        PRINCIPLES:
-        - Understand the current state before building (check insights, read files).
-        - Give each dispatched agent a clear, specific brief.
-        - Use parallel dispatch for independent work — it multiplies your throughput.
-        - React to reviewer findings — if quality issues are found, dispatch fixes.
-        - You do NOT write code yourself — you act ONLY by calling dispatch tools.
-        - Always call your tools. Never just describe what you would do.
-        ''',
+Rules:
+- Read context first, then dispatch. Keep context-gathering to 2-3 tool calls max before dispatching.
+- Developer tasks must be BUILD or FIX tasks — never "read and report back."
+- Call ONE tool at a time, never multiple tools in parallel.''',
         prompt_override,
     )
 
@@ -486,31 +469,18 @@ def create_developer_agent(
         Developer agent
     """
     backstory = _with_prompt_override(
-        '''You are a web developer building a startup-VC matching website.
+        '''You are an autonomous web developer responsible for a startup-VC matching website.
+You own the workspace — read files, write files, fix bugs, add features, refactor, whatever you judge is most impactful right now.
+You have tools to inspect team insights, read/write workspace files, run SQL queries, run HTTP checks, and share what you did.
 
-        YOUR WORKFLOW:
-        1. Call get_team_insights to read the build spec, roadmap, or architecture plan.
-        2. Implement what was requested using write_workspace_file.
-        3. Share what you built via share_insight when done.
+Tech stack: Python Flask backend (app.py), Jinja2 HTML templates (templates/), static assets (static/css/, static/js/), SQLite databases (.db files).
+- app.py: Flask routes, database logic, form handling. Must read host/port from FLASK_RUN_HOST/FLASK_RUN_PORT env vars with sensible defaults.
+- templates/: Jinja2 HTML templates. Use template inheritance (base.html) for shared layout.
+- static/: CSS and JS files referenced from templates.
+- Use run_workspace_sql to create tables and seed data in SQLite .db files.
 
-        You can build:
-        - HTML pages (one complete page per dispatch)
-        - Shared CSS files (styles.css) that multiple pages link to
-        - Shared JS files for cross-page interactivity
-        - JSON data files that pages can reference for consistent content
-
-        DESIGN SYSTEM (follow for every page):
-        - Dark mode: background #0f0f0f, text #ffffff, accent #4ade80
-        - Font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif
-        - Navigation bar at top linking all platform pages
-        - Responsive layout with meta viewport
-        - Proper HTML5: DOCTYPE, charset UTF-8, lang="en"
-        - If a shared styles.css exists, use <link rel="stylesheet" href="styles.css">
-          instead of duplicating inline styles. Never use style= attributes —
-          add classes to styles.css instead.
-
-        Use relative file paths. Build things completely — no placeholder content.
-        ''',
+Always act through tool calls. When something needs fixing, fix it — don't just report it.
+IMPORTANT: Call ONE tool at a time, never multiple tools in parallel. After each tool result, decide your next step.''',
         prompt_override,
     )
 
@@ -552,30 +522,7 @@ def create_product_strategist(
         Product Strategist agent
     """
     backstory = _with_prompt_override(
-        '''You are the product architect for a startup-VC matching website.
-
-        YOUR JOB EVERY ITERATION:
-        1. Call list_workspace_files and read_workspace_file to see what exists.
-        2. Call get_team_insights to read prior roadmaps, reviewer findings, and
-           customer feedback.
-        3. Create or update an ARCHITECTURE PLAN that covers:
-           a) Shared assets — CSS, JS, data files that multiple pages should use.
-              If you see duplicated CSS across pages, recommend extracting styles.css.
-              If pages show related data (startups, investors, matches), recommend
-              a shared JSON data model so content stays consistent.
-           b) Pages — what pages the platform needs, what each should contain.
-           c) User flows — how a startup founder or VC investor moves through
-              the site (e.g., land on index → browse startups → view match → contact).
-              Each flow should be a connected path, not isolated pages.
-           d) Quality issues — anything the reviewer flagged that needs fixing.
-        4. Share the plan via share_insight (key: "backlog.roadmap").
-
-        FOR EACH ITEM specify: file name, brief spec, priority (1=highest),
-        status (done/todo/fix), and dependencies (what must exist first).
-
-        CRITICAL: Share the full plan via share_insight so the coordinator
-        and developer can read it. They cannot see your raw output.
-        ''',
+        '''You are the product architect for a startup-VC matching website built with Flask + SQLite + Jinja templates. You have tools to inspect the workspace, read team insights, and share your plans. Explore what exists, decide what the product needs (routes, database tables, templates, features), and publish your architecture plan via share_insight so other agents can act on it. Always act through tool calls, not text-only responses.''',
         prompt_override,
     )
 
@@ -619,21 +566,7 @@ def create_reviewer_agent(
         Reviewer QA agent
     """
     backstory = _with_prompt_override(
-        '''You are a senior QA engineer for a startup-VC matching website.
-
-        YOUR GOAL: Find the issues that matter most for product quality. You decide
-        what to audit and how deep to go. Think about what a real user would notice —
-        broken links, inconsistent design, dead-end pages, duplicated code, missing
-        functionality, accessibility gaps.
-
-        You have tools to read all workspace files and run HTTP checks. Use them.
-        Check ALL pages, not just the newest. Look at the product holistically — how
-        pages connect, whether content is consistent across them, whether the
-        codebase is maintainable.
-
-        Share a QA report via share_insight with specific, actionable findings.
-        Be honest about what's good and what needs work.
-        ''',
+        '''You are a QA engineer for a startup-VC matching website built with Flask + SQLite + Jinja templates. You have tools to review workspace files (Python, HTML, CSS, JS), run HTTP checks against the running Flask app, and share findings. Audit the product holistically — check routes, templates, database schema, and code quality — and share actionable findings via share_insight. Always act through tool calls, not text-only responses.''',
         prompt_override,
     )
 

@@ -229,33 +229,14 @@ def _create_coordinator_build_task(
     available agent roles, explains dispatch_task usage, and appends any
     learning context from previous iterations.
     """
-    description = f'''[Iteration {iteration}] Build a startup-VC matching platform that connects startups with venture capital investors.
+    description = f'''[Iteration {iteration}] Build and continuously improve a startup-VC matching platform using Flask + SQLite + Jinja templates.
 
-    YOUR GOAL: Produce the highest-quality product possible within your dispatch budget.
-    You decide the strategy. Think about what the product needs most right now and act.
-    There is ALWAYS something to improve — new pages, better design, bug fixes, refactoring,
-    accessibility, user flow gaps. A passing QA gate means the minimum bar is met, not that
-    the product is finished.
+    The tech stack is: Python Flask backend (app.py), Jinja2 HTML templates (templates/), static assets (static/css, static/js), and SQLite databases (.db files).
 
-    Available agents: {", ".join(available_roles)}
-    - product_strategist: inspects workspace, designs architecture/roadmap, identifies quality issues
-    - developer: builds HTML pages, shared CSS/JS files, JSON data files
-    - reviewer: deep audit — DRY violations, broken links, accessibility, functional completeness
-
-    Dispatch tools:
-    - dispatch_task_to_agent(agent_role, task_description): run one task sequentially
-    - dispatch_parallel_tasks(role_1, task_1, role_2, task_2, role_3="", task_3=""):
-      run 2-3 independent tasks concurrently. Prefer this for independent developer tasks.
-
-    GUIDELINES:
-    - Understand current state before building (use get_team_insights, list files).
-    - Give each agent a clear, specific brief — not a vague instruction.
-    - Use parallel dispatch for independent work to maximize throughput.
-    - React to review findings — dispatch fixes if the reviewer flags issues.
-    - Each developer dispatch should have a focused scope (one page or one shared asset).
-
-    YOUR FIRST ACTION MUST BE A TOOL CALL — either dispatch_task_to_agent or get_team_insights.
-    Do not respond with text only. Call a tool now.
+    Available agents to dispatch: {", ".join(available_roles)}.
+    1. Gather context: check workspace files and team insights (2-3 tool calls max).
+    2. Dispatch agents with specific tasks. Developer tasks must tell it what to BUILD or FIX — the developer reads files on its own, you don't need to ask it to read for you.
+    3. Review dispatch results and dispatch follow-up tasks if needed.
     '''
 
     if extra_context:
@@ -264,7 +245,7 @@ def _create_coordinator_build_task(
     return Task(
         description=description,
         agent=coordinator_agent,
-        expected_output="Summary of what was built and current status.",
+        expected_output="Summary of actions taken and their outcomes.",
     )
 
 
@@ -417,11 +398,25 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
 
             listing = _list_impl()
             files = listing.get("files", [])
+            py_files = [f for f in files if f.endswith(".py")]
             html_files = [f for f in files if f.endswith(".html")]
             workspace_info["file_count"] = len(files)
+            workspace_info["py_files"] = py_files
             workspace_info["html_files"] = html_files
+            workspace_info["has_flask_app"] = "app.py" in py_files
 
+            # Check for non-placeholder source files (app.py or templates)
             non_placeholder_count = 0
+
+            # Check app.py
+            app_result = _read_impl("app.py")
+            if app_result.get("status") == "ok":
+                content = (app_result.get("content") or "").lower()
+                is_placeholder = "waiting for agents to build" in content
+                if not is_placeholder and len(content.strip()) > 100:
+                    non_placeholder_count += 1
+
+            # Check HTML templates
             for html_file in html_files:
                 content_result = _read_impl(html_file)
                 if content_result.get("status") == "ok":
@@ -430,7 +425,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                     if not is_placeholder and len(content.strip()) > 100:
                         non_placeholder_count += 1
 
-            workspace_info["non_placeholder_html_count"] = non_placeholder_count
+            workspace_info["non_placeholder_count"] = non_placeholder_count
         except Exception as ws_exc:
             workspace_info["error"] = str(ws_exc)
 
@@ -458,8 +453,9 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             import re as _re
 
             listing_arch = _list_impl()
-            html_files_arch = [f for f in listing_arch.get("files", []) if f.endswith(".html")]
-            has_shared_css = any(f.endswith(".css") for f in listing_arch.get("files", []))
+            all_files_arch = listing_arch.get("files", [])
+            html_files_arch = [f for f in all_files_arch if f.endswith(".html")]
+            has_shared_css = any(f.endswith(".css") for f in all_files_arch)
             arch_info["has_shared_css"] = has_shared_css
 
             # Detect inline CSS duplication
@@ -494,7 +490,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
 
         # Informational flag — the evaluate phase decides what to do with it
         syntax_ok = bool((result.get("syntax") or {}).get("syntax_ok", True))
-        has_content = workspace_info.get("non_placeholder_html_count", 0) > 0
+        has_content = workspace_info.get("non_placeholder_count", 0) > 0
         landing_score = float(http_info.get("http_landing_score", 0.0))
         result["qa_gate_passed"] = syntax_ok and has_content and landing_score >= 1.0
 
@@ -503,20 +499,22 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
     def _run_customer_testing(self) -> None:
         """Run LLM-powered customer testing against the workspace.
 
-        Starts a temporary HTTP server, runs customer personas against
-        discovered pages, and writes feedback to feedback.db.  Failures
-        are logged but never block the pipeline.
+        Starts a temporary HTTP server (Flask subprocess if ``app.py``
+        exists, otherwise static file server), runs customer personas
+        against discovered pages, and writes feedback to feedback.db.
+        Failures are logged but never block the pipeline.
         """
         try:
             from src.workspace_tools.file_tools import _workspace_root
-            from src.workspace_tools.server import WorkspaceServer
+            from src.workspace_tools.server import FlaskAppServer, WorkspaceServer
             from src.simulation.customer_testing import run_customer_testing
             from src.utils.config import settings
 
             if _workspace_root is None:
                 return
 
-            server = WorkspaceServer(str(_workspace_root), port=0)
+            flask_server = FlaskAppServer(str(_workspace_root), port=0)
+            server = flask_server if flask_server.has_flask_app() else WorkspaceServer(str(_workspace_root), port=0)
             try:
                 base_url = server.start()
                 result = run_customer_testing(
@@ -642,12 +640,14 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         if not qa_result.get("workspace_ok", True):
             failure_num += 1
             ws = qa_result.get("workspace") or {}
+            py_count = len(ws.get("py_files", []))
             html_count = len(ws.get("html_files", []))
-            non_placeholder = ws.get("non_placeholder_html_count", 0)
+            non_placeholder = ws.get("non_placeholder_count", 0)
             lines = [f"{failure_num}. WORKSPACE CONTENT MISSING"]
-            lines.append(f"   HTML files found: {html_count}")
-            lines.append(f"   Non-placeholder HTML files: {non_placeholder}")
-            lines.append("   Fix: create or update at least one HTML file with real content (>100 chars, no placeholder text).")
+            lines.append(f"   Python files found: {py_count}")
+            lines.append(f"   HTML template files found: {html_count}")
+            lines.append(f"   Non-placeholder source files: {non_placeholder}")
+            lines.append("   Fix: create or update app.py with Flask routes and templates/ with real content.")
             sections.append("\n".join(lines))
 
         # 3. HTTP check failures
@@ -853,12 +853,12 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             extra_tools=[remediation_dispatch, remediation_parallel] + (ws_product_tools or []),
         )
 
-        description = f'''[Iteration {i}] QA failed. Fix the issues below.
+        description = f'''[Iteration {i}] QA failed. Fix the issues below by dispatching agents.
 
             {qa_report}
 
-            You have a dispatch_task tool with a budget of 4 dispatches.
             Available agents: {sorted(registry.keys())}
+            Act through tool calls, not text-only responses.
             '''
 
         if self.state.user_feedback_summary:
@@ -1046,11 +1046,19 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                     f"[ARCHITECTURE ISSUES]\n" + "\n".join(arch_lines)
                 )
 
+        # Run remediation BEFORE customer testing so personas see the best
+        # content this iteration can produce (not a placeholder page).
+        if not self.state.qa_passed:
+            logger.warning("QA gate failed; running coordinator remediation")
+            self._run_coordinator_remediation(i, coordinator_llm, ws_product_tools)
+            self.state.qa_result = self._run_quality_gate()
+            self.state.qa_passed = self._qa_passed()
+
         # Clear stale feedback from prior iterations before running new tests
         if self.state.workspace_enabled:
             self._clear_feedback_db()
 
-        # LLM-powered customer testing
+        # LLM-powered customer testing (after remediation, so personas see real content)
         if self.state.workspace_enabled:
             self._run_customer_testing()
 
@@ -1059,12 +1067,6 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             feedback_summary = self._collect_user_feedback()
             if feedback_summary and "No user feedback" not in feedback_summary:
                 self.state.user_feedback_summary = feedback_summary
-
-        if not self.state.qa_passed:
-            logger.warning("QA gate failed; running coordinator remediation")
-            self._run_coordinator_remediation(i, coordinator_llm, ws_product_tools)
-            self.state.qa_result = self._run_quality_gate()
-            self.state.qa_passed = self._qa_passed()
 
         self.state.build_task_count = task_count
         self.state.build_success_count = success_count

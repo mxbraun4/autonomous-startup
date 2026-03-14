@@ -1253,27 +1253,19 @@ def make_dispatch_task_tool(
 
     _ROLE_INSTRUCTIONS = {
         "developer": (
-            "Tools: write_workspace_file, read_workspace_file, "
-            "check_workspace_http, list_workspace_files, get_team_insights, "
-            "share_insight, get_cycle_history.\n"
-            "Design: dark mode (#0f0f0f bg, #fff text, #4ade80 accent), "
-            "nav bar linking all pages, responsive, HTML5.\n"
-            "You can build HTML pages, shared CSS/JS files, or JSON data files.\n"
-            "If a shared styles.css exists, link to it instead of duplicating inline CSS.\n"
-            "Build completely — no placeholder content. Share what you built via share_insight.\n"
+            "You own the workspace. Your job is to WRITE code, not just read it.\n"
+            "Tech stack: Flask (app.py), Jinja2 templates (templates/), static files (static/), SQLite (.db).\n"
+            "Call ONE tool at a time. After reading context, start writing files immediately.\n"
+            "Do NOT loop on reading — if the workspace is empty, start building from scratch.\n"
+            "Use run_workspace_sql to create/seed SQLite tables. app.py must read host/port from env vars.\n"
         ),
         "reviewer": (
-            "Tools: review_workspace_files, check_workspace_http, "
-            "run_quality_checks_tool, share_insight, get_cycle_history.\n"
-            "Check ALL pages holistically. Focus on what matters most for product quality.\n"
-            "Share specific, actionable findings via share_insight.\n"
+            "You have tools to review workspace files (Python, HTML, CSS, JS), run HTTP checks, and share findings.\n"
+            "The app is Flask-based: check app.py for routes, templates/ for HTML, static/ for assets.\n"
         ),
         "product_strategist": (
-            "Tools: list_workspace_files, read_workspace_file, get_team_insights, "
-            "share_insight, get_cycle_history.\n"
-            "Create an architecture plan covering: shared assets (CSS, JS, data), "
-            "pages, user flows, and quality fixes. Share via share_insight.\n"
-            "Note: other agents can only see insights you share, not your raw output.\n"
+            "You have tools to inspect workspace files, read team insights, and share your plan.\n"
+            "The product is a Flask web app: plan routes, database tables, templates, and features.\n"
         ),
     }
 
@@ -1304,17 +1296,16 @@ def make_dispatch_task_tool(
         except Exception:
             pass
 
-        # Prepend standing instructions + extra_context
+        # Prepend role context + extra_context
         original_task_description = task_description
-        preamble = (
-            "You can call get_team_insights to read shared context "
-            "from prior dispatches and previous iterations.\n\n"
-        )
+        preamble = "Act through tool calls, not text-only responses.\n\n"
         role_instructions = _ROLE_INSTRUCTIONS.get(agent_role, "")
         if role_instructions:
             preamble += role_instructions + "\n"
         if extra_context:
-            preamble += f"[Context from prior iterations]\n{extra_context}\n\n"
+            # Cap extra_context to avoid prompt bloat
+            ctx = extra_context[:1500]
+            preamble += f"[Prior context]\n{ctx}\n\n"
         task_description = preamble + task_description
 
         # Create temporary agent from registry
@@ -1330,7 +1321,7 @@ def make_dispatch_task_tool(
         single_task = _Task(
             description=task_description,
             agent=agent,
-            expected_output="Complete result of the assigned task.",
+            expected_output="Summary of actions taken and their outcomes.",
         )
 
         mini_crew = _Crew(
@@ -1352,7 +1343,7 @@ def make_dispatch_task_tool(
                 retry_task = _Task(
                     description=task_description,
                     agent=agent,
-                    expected_output="Complete result of the assigned task.",
+                    expected_output="Summary of actions taken and their outcomes.",
                 )
                 retry_crew = _Crew(
                     agents=[agent],

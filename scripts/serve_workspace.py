@@ -178,6 +178,42 @@ def main() -> None:
         print(f"ERROR: workspace directory not found: {workspace}")
         raise SystemExit(1)
 
+    # If workspace has a Flask app.py, run it directly instead of static serving
+    if (workspace / "app.py").is_file():
+        from src.workspace_tools.server import FlaskAppServer
+
+        flask_server = FlaskAppServer(workspace, host=args.host, port=args.port)
+        try:
+            url = flask_server.start()
+        except Exception as exc:
+            print(f"ERROR: Failed to start Flask app: {exc}")
+            raise SystemExit(1)
+
+        print("=" * 64)
+        print("FLASK APP PREVIEW")
+        print("=" * 64)
+        print(f"URL:       {url}")
+        print(f"Workspace: {workspace}")
+        print("Press Ctrl+C to stop.")
+        print("=" * 64)
+
+        if args.open_browser:
+            try:
+                webbrowser.open(url, new=2)
+            except Exception:
+                pass
+
+        try:
+            import time
+            while flask_server.is_running:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\nStopping Flask app...")
+        finally:
+            flask_server.stop()
+        return
+
+    # Static file preview (fallback when no app.py exists)
     server = PreviewServer(
         (args.host, args.port),
         PreviewHandler,
