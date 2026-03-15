@@ -900,11 +900,13 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                     list_workspace_files,
                     review_workspace_files,
                     check_workspace_http,
+                    run_workspace_sql,
                 )
                 ws_dev_tools = [
                     read_workspace_file, write_workspace_file,
                     list_workspace_files,
                     check_workspace_http,
+                    run_workspace_sql,
                 ]
                 ws_product_tools = [
                     read_workspace_file, list_workspace_files,

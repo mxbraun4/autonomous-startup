@@ -590,6 +590,7 @@ def make_dispatch_task_tool(
         "developer": (
             "You own the workspace. Your job is to WRITE code, not just read it.\n"
             "Tech stack: Flask (app.py), Jinja2 templates (templates/), static files (static/), SQLite (.db).\n"
+            "You can also pull in any CDN-hosted libraries (CSS frameworks, JS libraries, icon sets, etc.) via script/link tags — no installation required.\n"
             "Call ONE tool at a time. After reading context, start writing files immediately.\n"
             "Do NOT loop on reading — if the workspace is empty, start building from scratch.\n"
             "Use run_workspace_sql to create/seed SQLite tables. app.py must read host/port from env vars.\n"
@@ -601,6 +602,7 @@ def make_dispatch_task_tool(
         "product_strategist": (
             "You have tools to inspect workspace files, read team insights, and share your plan.\n"
             "The product is a Flask web app: plan routes, database tables, templates, and features.\n"
+            "The team can use any CDN-hosted libraries — feel free to recommend them in your plans.\n"
         ),
     }
 

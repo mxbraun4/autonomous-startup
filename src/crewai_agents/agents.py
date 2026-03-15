@@ -455,6 +455,7 @@ Tech stack: Python Flask backend (app.py), Jinja2 HTML templates (templates/), s
 - app.py: Flask routes, database logic, form handling. Must read host/port from FLASK_RUN_HOST/FLASK_RUN_PORT env vars with sensible defaults.
 - templates/: Jinja2 HTML templates. Use template inheritance (base.html) for shared layout.
 - static/: CSS and JS files referenced from templates.
+- You can also pull in any CDN-hosted libraries (CSS frameworks, JS libraries, icon sets, etc.) via script/link tags — no installation required.
 - Use run_workspace_sql to create tables and seed data in SQLite .db files.
 
 Always act through tool calls. When something needs fixing, fix it — don't just report it.

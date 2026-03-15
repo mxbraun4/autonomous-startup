@@ -11,7 +11,8 @@
       "Bash(head:*)",
       "Bash(tail:*)",
       "Bash(cd /c/Users/Maxi\\\\ Braun/Dropbox\\\\ \\\\\\(Old\\\\\\)/PC/Desktop/autonomous-startup && wc -l src/**/*.py | tail -1)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(ls:*)"
     ]
   }
 }
