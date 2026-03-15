@@ -110,7 +110,7 @@ HTML_TEMPLATE = """<!doctype html>
     }
     .cards {
       display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 10px;
     }
     .card {
@@ -125,7 +125,6 @@ HTML_TEMPLATE = """<!doctype html>
     .card:nth-child(3) { animation-delay: 120ms; }
     .card:nth-child(4) { animation-delay: 180ms; }
     .card:nth-child(5) { animation-delay: 240ms; }
-    .card:nth-child(6) { animation-delay: 300ms; }
     .label {
       font-size: 11px;
       text-transform: uppercase;
@@ -413,11 +412,6 @@ HTML_TEMPLATE = """<!doctype html>
         <div class="value" id="toolsValue">0</div>
         <div class="meta" id="toolsMeta">&nbsp;</div>
       </article>
-      <article class="card">
-        <div class="label">DB Records</div>
-        <div class="value" id="dbRecordsValue">0</div>
-        <div class="meta" id="dbRecordsMeta">&nbsp;</div>
-      </article>
     </section>
 
     <section class="panel" id="treePanel">
@@ -462,22 +456,6 @@ HTML_TEMPLATE = """<!doctype html>
 
     <section class="grid">
       <section class="panel">
-        <h2>Iteration History</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Iteration</th>
-              <th>Tasks</th>
-              <th>Completed</th>
-              <th>Failed</th>
-              <th>QA</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody id="iterationHistoryBody"></tbody>
-        </table>
-      </section>
-      <section class="panel">
         <h2>Current Activity</h2>
         <table>
           <thead>
@@ -490,9 +468,6 @@ HTML_TEMPLATE = """<!doctype html>
           <tbody id="currentActivityBody"></tbody>
         </table>
       </section>
-    </section>
-
-    <section class="grid">
       <section class="panel">
         <h2>Tool Usage</h2>
         <table>
@@ -504,12 +479,6 @@ HTML_TEMPLATE = """<!doctype html>
           </thead>
           <tbody id="toolUsageBody"></tbody>
         </table>
-      </section>
-      <section class="panel">
-        <h2>Collected Data</h2>
-        <div id="dbStatsContent" style="padding: 14px;">
-          <p style="color: var(--ink-soft); font-size: 13px;">Loading...</p>
-        </div>
       </section>
     </section>
 
@@ -529,10 +498,6 @@ HTML_TEMPLATE = """<!doctype html>
       <p id="errorBox" class="error"></p>
     </section>
 
-    <section class="panel">
-      <h2>Event Breakdown</h2>
-      <div id="eventChips" class="chips"></div>
-    </section>
   </main>
 
   <script>
@@ -771,21 +736,6 @@ HTML_TEMPLATE = """<!doctype html>
         "No agent reasoning yet"
       );
 
-      // Iteration History (was Cycle Outcomes)
-      renderRows(
-        "iterationHistoryBody",
-        (snapshot.cycles || []).map((item) => ({
-          cycle_id: item.cycle_id,
-          total_tasks: item.total_tasks ?? item.tasks_started ?? "-",
-          completed_count: item.completed_count ?? item.tasks_completed ?? 0,
-          failed_count: item.failed_count ?? item.tasks_failed ?? 0,
-          evaluation_status: item.evaluation_status || "-",
-          termination_action: item.termination_action || "-",
-        })),
-        ["cycle_id", "total_tasks", "completed_count", "failed_count", "evaluation_status", "termination_action"],
-        "No iterations yet"
-      );
-
       // Current Activity (was Active Tasks)
       renderRows(
         "currentActivityBody",
@@ -845,8 +795,6 @@ HTML_TEMPLATE = """<!doctype html>
         "No learnings yet"
       );
 
-      // Event Breakdown chips
-      renderChips("eventChips", snapshot.event_counts || {});
     }
 
     async function fetchSnapshot() {
@@ -862,52 +810,10 @@ HTML_TEMPLATE = """<!doctype html>
       return response.json();
     }
 
-    async function fetchDbStats() {
-      try {
-        const response = await fetch("/api/db-stats", { cache: "no-store" });
-        if (!response.ok) return null;
-        return await response.json();
-      } catch { return null; }
-    }
-
-    function renderDbStats(stats) {
-      if (!stats) {
-        setText("dbRecordsValue", "0");
-        setText("dbRecordsMeta", "no database");
-        const content = document.getElementById("dbStatsContent");
-        if (content) content.innerHTML = `<p style="color: var(--ink-soft); font-size: 13px;">Database unavailable</p>`;
-        return;
-      }
-      const total = (stats.total_startups || 0) + (stats.total_vcs || 0);
-      setText("dbRecordsValue", total);
-      const sectors = stats.sectors || [];
-      setText("dbRecordsMeta", `${sectors.length} sector${sectors.length !== 1 ? "s" : ""}`);
-
-      const content = document.getElementById("dbStatsContent");
-      if (!content) return;
-      const startups = stats.total_startups || 0;
-      const vcs = stats.total_vcs || 0;
-      let html = `<div style="display: flex; gap: 20px; margin-bottom: 12px;">`;
-      html += `<div><span style="font-size: 22px; font-weight: 700;">${startups}</span><div class="label">Startups</div></div>`;
-      html += `<div><span style="font-size: 22px; font-weight: 700;">${vcs}</span><div class="label">VCs</div></div>`;
-      html += `</div>`;
-      if (sectors.length > 0) {
-        html += `<div style="display: flex; flex-wrap: wrap; gap: 6px;">`;
-        sectors.forEach(s => {
-          html += `<span class="chip">${escapeHtml(s)}</span>`;
-        });
-        html += `</div>`;
-      } else {
-        html += `<p style="color: var(--ink-soft); font-size: 13px;">No sectors collected yet</p>`;
-      }
-      content.innerHTML = html;
-    }
-
     async function refreshDashboard() {
       try {
-        const [snapshot, dbStats] = await Promise.all([fetchSnapshot(), fetchDbStats()]);
+        const snapshot = await fetchSnapshot();
         renderSnapshot(snapshot);
-        renderDbStats(dbStats);
         errorBox.style.display = "none";
       } catch (error) {
         errorBox.textContent = error instanceof Error ? error.message : String(error);
@@ -999,9 +905,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/snapshot":
             self._serve_snapshot(parsed.query)
             return
-        if parsed.path == "/api/db-stats":
-            self._serve_db_stats()
-            return
         if parsed.path == "/healthz":
             self._send_json({"status": "ok"})
             return
@@ -1013,26 +916,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args: Any) -> None:
         del fmt, args
-
-    def _serve_db_stats(self) -> None:
-        """Return database statistics as JSON.
-
-        Opens a fresh DB connection each time so we see writes from the
-        simulation process (which runs in a separate process).
-        """
-        try:
-            from src.database.database import StartupDatabase
-
-            db = StartupDatabase()
-            try:
-                stats = db.get_stats()
-            finally:
-                db.close()
-            self._send_json(stats)
-        except Exception as exc:
-            self._send_json(
-                {"total_startups": 0, "total_vcs": 0, "total_outreach": 0, "sectors": [], "error": str(exc)},
-            )
 
     def _serve_index(self) -> None:
         html = HTML_TEMPLATE.replace("__REFRESH_MS__", str(self.server.refresh_ms))
