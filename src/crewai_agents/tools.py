@@ -283,6 +283,34 @@ def run_quality_checks_tool(
 
 
 # =============================================================================
+# ENVIRONMENT TOOLS
+# =============================================================================
+
+@tool("List Installed Packages")
+def list_installed_packages() -> str:
+    """List all Python packages available in the environment.
+
+    Use this to check what you can import before writing code.
+    You CANNOT install new packages — only use what is already listed here.
+
+    Returns:
+        JSON list of installed package names
+    """
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pip", "list", "--format=json"],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        if proc.returncode == 0:
+            pkgs = [p["name"] for p in json.loads(proc.stdout)]
+        else:
+            pkgs = ["(could not list packages)"]
+    except Exception as exc:
+        pkgs = [f"(error: {exc})"]
+    return json.dumps({"installed_packages": pkgs, "note": "You CANNOT install new packages. Only use what is listed here. Do NOT create requirements.txt or install_deps.py."})
+
+
+# =============================================================================
 # DATA RETRIEVAL TOOLS
 # =============================================================================
 

@@ -749,7 +749,18 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             for key in ("http_landing_score", "http_navigation_score"):
                 if key in http:
                     lines.append(f"   - {key}: {http[key]}")
-            lines.append("   Fix: ensure the landing page loads correctly over HTTP (score >= 1.0).")
+            # Show which routes failed and which succeeded
+            page_results = http.get("page_results") or {}
+            failed_routes = [p for p, r in page_results.items() if not r.get("loaded")]
+            ok_routes = [p for p, r in page_results.items() if r.get("loaded")]
+            if ok_routes:
+                lines.append(f"   Routes OK ({len(ok_routes)}): {', '.join(ok_routes)}")
+            if failed_routes:
+                lines.append(f"   Routes FAILED ({len(failed_routes)}): {', '.join(failed_routes)}")
+            broken = http.get("broken_links") or []
+            if broken:
+                lines.append(f"   Broken navigation links: {', '.join(broken[:10])}")
+            lines.append("   Fix: ensure ALL routes return HTTP 200. Check that parameterized routes (e.g. /startup/<int:id>) work with real database IDs. Seed data if needed.")
             sections.append("\n".join(lines))
 
         if not sections:
@@ -785,18 +796,16 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                     _latest = _proc.versions[-1]
                     wf = _latest.workflow or {}
                     parts = []
-                    if wf.get("insights"):
-                        parts.append("Past insights: " + "; ".join(str(x) for x in wf["insights"]))
+                    if wf.get("failures"):
+                        parts.append("AVOID (failed before): " + "; ".join(str(x) for x in wf["failures"]))
+                    if wf.get("successes"):
+                        parts.append("REPEAT (worked before): " + "; ".join(str(x) for x in wf["successes"]))
                     if wf.get("recommendations"):
                         for _team, _rec in wf["recommendations"].items():
-                            parts.append(f"  {_team}: {_rec}")
-                    if wf.get("successes"):
-                        parts.append("What worked: " + "; ".join(str(x) for x in wf["successes"]))
-                    if wf.get("failures"):
-                        parts.append("What failed: " + "; ".join(str(x) for x in wf["failures"]))
+                            parts.append(f"ACTION for {_team}: {_rec}")
                     if parts:
                         extra_context += (
-                            f"\n\n[Procedural Memory — best workflow v{_latest.version}, "
+                            f"\n\n[Procedural Memory — v{_latest.version}, "
                             f"score {_latest.score:.0%}]\n"
                             + "\n".join(parts)
                             + "\n"
@@ -902,11 +911,13 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                     check_workspace_http,
                     run_workspace_sql,
                 )
+                from src.crewai_agents.tools import list_installed_packages
                 ws_dev_tools = [
                     read_workspace_file, write_workspace_file,
                     list_workspace_files,
                     check_workspace_http,
                     run_workspace_sql,
+                    list_installed_packages,
                 ]
                 ws_product_tools = [
                     read_workspace_file, list_workspace_files,
@@ -936,7 +947,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             return
 
         remediation_dispatch, remediation_parallel, _get_remediation_count, _get_remediation_history = make_dispatch_task_tool(
-            registry, self._emit, max_dispatches=6, result_truncation=4000,
+            registry, self._emit, max_dispatches=12, result_truncation=4000,
             extra_context="",
         )
 
@@ -1295,6 +1306,19 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 summary=raw_text,
                 insights=insights,
                 recommendations=recommendations,
+            )
+
+        # Derive a real score from QA metrics when the LLM doesn't provide one
+        if self.state.learn_output.predicted_improvement == 0.0:
+            qa = self.state.qa_result or {}
+            http = qa.get("http_checks") or {}
+            landing = float(http.get("http_landing_score", 0.0))
+            nav = float(http.get("http_navigation_score", 0.0))
+            syntax_ok = float(bool((qa.get("syntax") or {}).get("syntax_ok", True)))
+            has_content = float(qa.get("workspace_ok", False))
+            # Weighted score: landing 50%, syntax 20%, navigation 20%, content 10%
+            self.state.learn_output.predicted_improvement = (
+                landing * 0.5 + syntax_ok * 0.2 + nav * 0.2 + has_content * 0.1
             )
 
         self._apply_learning_feedback()
