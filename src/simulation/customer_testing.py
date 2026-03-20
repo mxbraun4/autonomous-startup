@@ -55,8 +55,12 @@ PERSONAS: List[Dict[str, str]] = [
 _VALID_TYPES = {"bug", "friction", "feature_request", "praise"}
 
 
-# Maximum characters of page HTML to include in the LLM prompt
-_MAX_PAGE_CHARS = 6000
+# Maximum characters of page HTML to include in the LLM prompt.
+# Flask+Jinja rendered pages (base.html + child template) can easily exceed
+# 12k chars.  A low limit causes the LLM to see truncated HTML and report
+# "truncated page" bugs that are artifacts of the testing harness, not real
+# product issues.  16k keeps token usage reasonable while covering full pages.
+_MAX_PAGE_CHARS = 16_000
 
 
 # ---------------------------------------------------------------------------
@@ -248,8 +252,12 @@ def _call_llm_for_persona(
     # Build page content section
     page_sections = []
     for path, html in pages.items():
-        truncated = html[:_MAX_PAGE_CHARS]
-        page_sections.append(f"--- PAGE: {path} ---\n{truncated}\n")
+        page_html = html[:_MAX_PAGE_CHARS]
+        was_truncated = len(html) > _MAX_PAGE_CHARS
+        section = f"--- PAGE: {path} ---\n{page_html}\n"
+        if was_truncated:
+            section += "[NOTE: Page HTML was trimmed for review. Do NOT report this trimming as a bug.]\n"
+        page_sections.append(section)
 
     pages_text = "\n".join(page_sections)
 
@@ -259,6 +267,8 @@ Each entry must have these fields:
 - "page": the page filename (e.g. "index.html")
 - "feedback_type": one of "bug", "friction", "feature_request", "praise"
 - "message": your specific, actionable feedback
+
+IMPORTANT: The page HTML shown below may be trimmed for length. Do NOT report trimming/truncation of the review text itself as a bug. Only report issues that a real user would experience in a browser.
 
 Return 1-2 entries as a JSON array. Focus on the single most important issue you found. Be specific and constructive.
 

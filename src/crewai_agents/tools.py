@@ -938,6 +938,80 @@ def make_dispatch_task_tool(
 
 
 # ---------------------------------------------------------------------------
+# Standalone fallback dispatch — used by idle-cycle guardrail when the
+# coordinator fails to dispatch any agent on its own.
+# ---------------------------------------------------------------------------
+
+def _execute_dispatch_fallback(
+    agent_registry: Dict[str, Dict[str, Any]],
+    emit_fn,
+    agent_role: str,
+    task_description: str,
+    extra_context: str = "",
+) -> str:
+    """Run a single agent dispatch outside of the coordinator loop.
+
+    This is intentionally simple: one agent, one task, no budget tracking.
+    Used as a safety net when the coordinator completes without dispatching.
+    """
+    from crewai import Crew as _Crew, Task as _Task, Process as _Process
+
+    entry = agent_registry.get(agent_role)
+    if not entry:
+        logger.warning("Fallback dispatch: unknown role '%s'", agent_role)
+        return ""
+
+    factory = entry["factory"]
+    agent = factory(
+        llm=entry.get("llm"),
+        prompt_override=entry.get("prompt_override"),
+        extra_tools=entry.get("extra_tools"),
+    )
+
+    _ROLE_INSTRUCTIONS = {
+        "developer": (
+            "You own the workspace. Your job is to WRITE code, not just read it.\n"
+            "Tech stack: Flask (app.py), Jinja2 templates (templates/), static files (static/), SQLite (.db).\n"
+            "Call ONE tool at a time. After reading context, start writing files immediately.\n"
+        ),
+    }
+    preamble = "Act through tool calls, not text-only responses.\n\n"
+    role_instructions = _ROLE_INSTRUCTIONS.get(agent_role, "")
+    if role_instructions:
+        preamble += role_instructions + "\n"
+    if extra_context:
+        preamble += f"[Prior context]\n{extra_context[:1500]}\n\n"
+    full_desc = preamble + task_description
+
+    single_task = _Task(
+        description=full_desc,
+        agent=agent,
+        expected_output="Summary of actions taken and their outcomes.",
+    )
+    mini_crew = _Crew(
+        agents=[agent],
+        tasks=[single_task],
+        process=_Process.sequential,
+        verbose=False,
+        memory=False,
+        cache=False,
+    )
+
+    try:
+        emit_fn("agent_exchange", {
+            "exchange_type": "idle_cycle_fallback_dispatch",
+            "from_agent": "system",
+            "to_agent": agent_role,
+            "task_summary": task_description[:200],
+        })
+    except Exception:
+        pass
+
+    crew_output = mini_crew.kickoff()
+    return str(crew_output)
+
+
+# ---------------------------------------------------------------------------
 # Disable CrewAI's per-tool result cache for every tool whose output can
 # change between calls (file reads after writes, DB queries after inserts,
 # quality checks, team insights after new shares, etc.).

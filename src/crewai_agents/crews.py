@@ -238,6 +238,7 @@ def _create_coordinator_build_task(
     1. Gather context: check workspace files and team insights (2-3 tool calls max).
     2. Dispatch agents with specific tasks. Developer tasks must tell it what to BUILD or FIX — the developer reads files on its own, you don't need to ask it to read for you.
     3. Review dispatch results and dispatch follow-up tasks if needed.
+    4. After fixing issues from user feedback, call mark_feedback_addressed with the resolved IDs.
     '''
 
     if extra_context:
@@ -596,16 +597,25 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             if not open_items:
                 return ""
 
+            # Enrich signal: count by type, compute age, detect recurrence
+            from collections import Counter
+            type_counts = Counter(it.get("feedback_type", "?") for it in open_items)
+            oldest_cycle = min(it.get("cycle_id", self.state.iteration) for it in open_items)
+            age = self.state.iteration - oldest_cycle
+
+            summary_parts = [f"{c} {t}s" for t, c in type_counts.most_common()]
             lines = [
-                f"UNRESOLVED FEEDBACK FROM PRIOR CYCLES ({len(open_items)} items):",
-                "After fixing these issues, call mark_feedback_addressed with the IDs.",
+                f"UNRESOLVED USER FEEDBACK ({len(open_items)} open items: {', '.join(summary_parts)}; oldest from {age} cycles ago):",
+                "Use mark_feedback_addressed after resolving items.",
+                "",
             ]
             for item in open_items[:10]:  # cap to avoid prompt bloat
                 fid = item.get("id", "?")
                 cycle = item.get("cycle_id", "?")
                 ftype = item.get("feedback_type", "?")
                 msg = item.get("message", "")
-                lines.append(f"  [{fid}] [cycle {cycle}][{ftype}] {msg}")
+                item_age = self.state.iteration - (item.get("cycle_id") or self.state.iteration)
+                lines.append(f"  [{fid}] [cycle {cycle}, {item_age} iters open][{ftype}] {msg}")
 
             if len(open_items) > 10:
                 lines.append(f"  ... and {len(open_items) - 10} more")
@@ -613,6 +623,34 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             return "\n".join(lines)
         except Exception:
             return ""
+
+    def _build_idle_cycle_fallback_task(self) -> str:
+        """Build a developer task description for idle-cycle recovery.
+
+        Uses unresolved feedback if available; otherwise a generic
+        improvement task.
+        """
+        try:
+            from src.workspace_tools.file_tools import _get_open_feedback
+
+            open_items = _get_open_feedback(exclude_cycle=self.state.iteration)
+            if open_items:
+                bugs = [it for it in open_items if it.get("feedback_type") == "bug"]
+                target_items = bugs[:3] if bugs else open_items[:3]
+                lines = [
+                    "FIX the following open issues reported by users:\n",
+                ]
+                for it in target_items:
+                    lines.append(f"- [{it.get('feedback_type','bug')}] {it.get('page','?')}: {it.get('message','')[:200]}")
+                lines.append("\nRead the relevant files and apply fixes.")
+                return "\n".join(lines)
+        except Exception:
+            pass
+        return (
+            "Review the current workspace files and make one concrete improvement: "
+            "fix any broken HTML, add missing form submit buttons, or improve the homepage. "
+            "Read files first, then write fixes."
+        )
 
     def _collect_user_feedback(self) -> str:
         """Collect user feedback from workspace/feedback.db (SQLite).
@@ -1018,6 +1056,13 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         _set_agent_cycle_id(i)
         _set_tools_cycle_id(i)
         self._emit("cycle_start", {"cycle_id": i})
+
+        # Reset per-cycle read cache so agents start with fresh file data
+        try:
+            from src.workspace_tools.file_tools import reset_read_cache
+            reset_read_cache()
+        except Exception:
+            pass
         shared_llm = self.state.llm
         coordinator_llm = shared_llm or get_llm("coordinator")
         developer_llm = shared_llm or get_llm("developer")
@@ -1120,8 +1165,25 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             crew_output = build_crew.kickoff()
             success_count = 1
 
+            # -- Idle-cycle guardrail ------------------------------------------
+            # If the coordinator finished without dispatching any agent, it
+            # wasted the cycle.  Force a minimal developer dispatch so every
+            # iteration produces at least one code-level action.
             if _get_dispatch_count() == 0:
-                logger.info("Coordinator completed without dispatching any agents")
+                logger.warning(
+                    "IDLE CYCLE DETECTED (iter %d): coordinator dispatched 0 agents — "
+                    "forcing a developer dispatch to address open feedback or improve the product.",
+                    i,
+                )
+                # Build a fallback task from unresolved feedback or a generic improvement
+                fallback_desc = self._build_idle_cycle_fallback_task()
+                try:
+                    from src.crewai_agents.tools import _execute_dispatch_fallback
+                    _execute_dispatch_fallback(
+                        agent_registry, self._emit, "developer", fallback_desc, extra_context,
+                    )
+                except Exception as fb_exc:
+                    logger.warning("Idle-cycle fallback dispatch failed: %s", fb_exc)
 
         except Exception as exc:
             logger.error(f"BUILD coordinator failed: {exc}")
