@@ -283,6 +283,34 @@ def run_quality_checks_tool(
 
 
 # =============================================================================
+# ENVIRONMENT TOOLS
+# =============================================================================
+
+@tool("List Installed Packages")
+def list_installed_packages() -> str:
+    """List all Python packages available in the environment.
+
+    Use this to check what you can import before writing code.
+    You CANNOT install new packages — only use what is already listed here.
+
+    Returns:
+        JSON list of installed package names
+    """
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pip", "list", "--format=json"],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        if proc.returncode == 0:
+            pkgs = [p["name"] for p in json.loads(proc.stdout)]
+        else:
+            pkgs = ["(could not list packages)"]
+    except Exception as exc:
+        pkgs = [f"(error: {exc})"]
+    return json.dumps({"installed_packages": pkgs, "note": "You CANNOT install new packages. Only use what is listed here. Do NOT create requirements.txt or install_deps.py."})
+
+
+# =============================================================================
 # DATA RETRIEVAL TOOLS
 # =============================================================================
 
@@ -907,6 +935,80 @@ def make_dispatch_task_tool(
         return list(_dispatch_history)
 
     return dispatch_task, dispatch_parallel, _get_dispatch_count, _get_dispatch_history
+
+
+# ---------------------------------------------------------------------------
+# Standalone fallback dispatch — used by idle-cycle guardrail when the
+# coordinator fails to dispatch any agent on its own.
+# ---------------------------------------------------------------------------
+
+def _execute_dispatch_fallback(
+    agent_registry: Dict[str, Dict[str, Any]],
+    emit_fn,
+    agent_role: str,
+    task_description: str,
+    extra_context: str = "",
+) -> str:
+    """Run a single agent dispatch outside of the coordinator loop.
+
+    This is intentionally simple: one agent, one task, no budget tracking.
+    Used as a safety net when the coordinator completes without dispatching.
+    """
+    from crewai import Crew as _Crew, Task as _Task, Process as _Process
+
+    entry = agent_registry.get(agent_role)
+    if not entry:
+        logger.warning("Fallback dispatch: unknown role '%s'", agent_role)
+        return ""
+
+    factory = entry["factory"]
+    agent = factory(
+        llm=entry.get("llm"),
+        prompt_override=entry.get("prompt_override"),
+        extra_tools=entry.get("extra_tools"),
+    )
+
+    _ROLE_INSTRUCTIONS = {
+        "developer": (
+            "You own the workspace. Your job is to WRITE code, not just read it.\n"
+            "Tech stack: Flask (app.py), Jinja2 templates (templates/), static files (static/), SQLite (.db).\n"
+            "Call ONE tool at a time. After reading context, start writing files immediately.\n"
+        ),
+    }
+    preamble = "Act through tool calls, not text-only responses.\n\n"
+    role_instructions = _ROLE_INSTRUCTIONS.get(agent_role, "")
+    if role_instructions:
+        preamble += role_instructions + "\n"
+    if extra_context:
+        preamble += f"[Prior context]\n{extra_context[:1500]}\n\n"
+    full_desc = preamble + task_description
+
+    single_task = _Task(
+        description=full_desc,
+        agent=agent,
+        expected_output="Summary of actions taken and their outcomes.",
+    )
+    mini_crew = _Crew(
+        agents=[agent],
+        tasks=[single_task],
+        process=_Process.sequential,
+        verbose=False,
+        memory=False,
+        cache=False,
+    )
+
+    try:
+        emit_fn("agent_exchange", {
+            "exchange_type": "idle_cycle_fallback_dispatch",
+            "from_agent": "system",
+            "to_agent": agent_role,
+            "task_summary": task_description[:200],
+        })
+    except Exception:
+        pass
+
+    crew_output = mini_crew.kickoff()
+    return str(crew_output)
 
 
 # ---------------------------------------------------------------------------

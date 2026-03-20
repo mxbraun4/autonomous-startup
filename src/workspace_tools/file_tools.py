@@ -18,11 +18,34 @@ from crewai.tools import tool
 
 _workspace_root: Optional[Path] = None
 
+# ---------------------------------------------------------------------------
+# Per-cycle read cache — avoids redundant file reads by agents within a
+# single cycle.  The cache is keyed by relative file path and invalidated
+# per-file on writes.  Call ``reset_read_cache()`` at the start of each
+# cycle to ensure fresh data.
+# ---------------------------------------------------------------------------
+_read_cache: dict[str, dict] = {}
+_read_cache_enabled: bool = True
+_read_cache_hits: int = 0
+
+
+def reset_read_cache() -> None:
+    """Clear the read cache.  Call at the start of each cycle."""
+    global _read_cache, _read_cache_hits
+    _read_cache = {}
+    _read_cache_hits = 0
+
+
+def _invalidate_cache_entry(file_path: str) -> None:
+    """Remove a single file from the read cache (called after writes)."""
+    _read_cache.pop(file_path, None)
+
 
 def configure_workspace_root(path: Union[str, Path]) -> None:
     """Set the module-level workspace root directory."""
     global _workspace_root
     _workspace_root = Path(path).resolve()
+    reset_read_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -417,7 +440,20 @@ def read_workspace_file(file_path: str) -> str:
     Returns:
         JSON with the file content
     """
-    return json.dumps(_read_impl(file_path))
+    global _read_cache_hits
+    # Per-cycle cache: return cached result if this file was already read
+    # and not written to since.
+    if _read_cache_enabled and file_path in _read_cache:
+        _read_cache_hits += 1
+        return json.dumps(_read_cache[file_path])
+
+    result = _read_impl(file_path)
+
+    # Cache successful reads
+    if _read_cache_enabled and result.get("status") == "ok":
+        _read_cache[file_path] = result
+
+    return json.dumps(result)
 
 
 @tool
@@ -431,7 +467,11 @@ def write_workspace_file(file_path: str, content: str) -> str:
     Returns:
         JSON confirmation with the written path
     """
-    return json.dumps(_write_impl(file_path, content))
+    result = _write_impl(file_path, content)
+    # Invalidate the read cache for this file so subsequent reads see
+    # the new content instead of stale cached data.
+    _invalidate_cache_entry(file_path)
+    return json.dumps(result)
 
 
 @tool

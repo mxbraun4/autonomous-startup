@@ -401,13 +401,16 @@ Tech stack: Python Flask backend (app.py), Jinja2 HTML templates (templates/), s
 Workflow: Read context (workspace files, team insights, feedback) to understand the current state, then dispatch specific tasks to agents.
 
 Agent roles:
-- product_strategist: Analyzes feedback, defines product direction, and proposes what to build. Dispatch this agent first to get ideas and a plan, then use its output to give the developer specific tasks.
-- developer: Builds and fixes code. Give it concrete tasks like "Add a /startups route to app.py that queries the SQLite database and renders a startups.html template" or "Create the base.html Jinja layout with nav bar and footer." The developer reads files on its own and writes code.
+- product_strategist: Analyzes feedback, defines product direction, and proposes database schema, routes, and implementation plan. Dispatch this agent first.
+- developer: Builds and fixes code. Give it concrete tasks. The developer reads files on its own and writes code.
 - reviewer: Reviews code quality, runs QA checks, identifies bugs.
+
+CRITICAL: When dispatching the developer, you MUST include the product_strategist's recommendations in the task description. Example: "Following the product plan: [paste key points]. Now implement: [specific task]." Never dispatch the developer without referencing what the product_strategist recommended.
 
 Rules:
 - Read context first, then dispatch. Keep context-gathering to 2-3 tool calls max before dispatching.
 - Developer tasks must be BUILD or FIX tasks — never "read and report back."
+- NEVER ask agents to install dependencies or create requirements.txt/install_deps.py. All packages are pre-installed.
 - Call ONE tool at a time, never multiple tools in parallel.''',
         prompt_override,
     )
@@ -458,7 +461,10 @@ Tech stack: Python Flask backend (app.py), Jinja2 HTML templates (templates/), s
 - You can also pull in any CDN-hosted libraries (CSS frameworks, JS libraries, icon sets, etc.) via script/link tags — no installation required.
 - Use run_workspace_sql to create tables and seed data in SQLite .db files.
 
+DEPENDENCY RULE: You CANNOT install new packages. Do NOT create requirements.txt or install_deps.py. Use list_installed_packages to check what's available.
+
 Always act through tool calls. When something needs fixing, fix it — don't just report it.
+BEFORE finishing, run check_workspace_http to verify your changes actually work. If any routes fail, fix them immediately — do not declare "done" with broken routes.
 IMPORTANT: Call ONE tool at a time, never multiple tools in parallel. After each tool result, decide your next step.''',
         prompt_override,
     )
@@ -480,7 +486,7 @@ IMPORTANT: Call ONE tool at a time, never multiple tools in parallel. After each
         verbose=True,
         allow_delegation=False,
         memory=True,
-        max_iter=25,
+        max_iter=35,
     )
 
 
@@ -501,7 +507,9 @@ def create_product_strategist(
         Product Strategist agent
     """
     backstory = _with_prompt_override(
-        '''You are the product architect for a startup-VC matching website built with Flask + SQLite + Jinja templates. You have tools to inspect the workspace, read team insights, and share your plans. Explore what exists, decide what the product needs (routes, database tables, templates, features), and publish your architecture plan via share_insight so other agents can act on it. Always act through tool calls, not text-only responses.''',
+        '''You are the product architect for a startup-VC matching website built with Flask + SQLite + Jinja templates. You have tools to inspect the workspace, read team insights, and share your plans. Explore what exists, decide what the product needs (routes, database tables, templates, features), and publish your architecture plan via share_insight so other agents can act on it. Always act through tool calls, not text-only responses.
+
+Only plan features using pre-installed packages. No new packages can be installed.''',
         prompt_override,
     )
 

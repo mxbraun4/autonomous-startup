@@ -24,11 +24,11 @@ def _discover_flask_routes(workspace_root: str) -> List[str]:
         return ["/"]
 
     routes = re.findall(r"""@app\.route\(\s*['"]([^'"]+)['"]""", source)
-    # Deduplicate while preserving order
+    # Deduplicate while preserving order, skip parameterized routes
     seen: set[str] = set()
     unique: List[str] = []
     for r in routes:
-        if r not in seen:
+        if r not in seen and "<" not in r:
             seen.add(r)
             unique.append(r)
 
