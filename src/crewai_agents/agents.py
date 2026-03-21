@@ -470,7 +470,7 @@ Tech stack: Python Flask backend (app.py), Jinja2 HTML templates (templates/), s
 
 DEPENDENCY RULE: You CANNOT install new packages. Do NOT create requirements.txt or install_deps.py. Use list_installed_packages to check what's available.
 
-When something needs fixing, fix it — don't just report it. Call ONE tool at a time.''',
+When something needs fixing, fix it directly in app.py or the templates. Do NOT create test scripts, debug scripts, or diagnostic files (no test_*.py, debug_*.py, run_*.py). Only modify production code.''',
         prompt_override,
     )
 

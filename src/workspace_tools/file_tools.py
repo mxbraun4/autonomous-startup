@@ -461,6 +461,53 @@ def read_workspace_file(file_path: str) -> str:
 
 
 @tool
+def edit_workspace_file(file_path: str, start_line: int, end_line: int, new_content: str) -> str:
+    """Replace lines start_line through end_line (inclusive) with new_content.
+
+    Use read_workspace_file first to see line numbers, then edit the specific
+    lines that need changing. This avoids rewriting the entire file.
+
+    Args:
+        file_path: Relative path like "app.py".
+        start_line: First line to replace (1-based).
+        end_line: Last line to replace (1-based, inclusive).
+        new_content: The replacement text (replaces all lines from start to end).
+    """
+    if _workspace_root is None:
+        return json.dumps({"status": "error", "reason": "Workspace root is not configured."})
+
+    # Read current file
+    read_result = _read_impl(file_path)
+    if read_result.get("status") != "ok":
+        return json.dumps(read_result)
+
+    lines = read_result["content"].splitlines(keepends=True)
+    total = len(lines)
+
+    # Validate range
+    if start_line < 1 or end_line < start_line or start_line > total:
+        return json.dumps({
+            "status": "error",
+            "reason": f"Invalid line range {start_line}-{end_line}. File has {total} lines."
+        })
+    end_line = min(end_line, total)
+
+    # Ensure new_content ends with newline
+    if new_content and not new_content.endswith("\n"):
+        new_content += "\n"
+
+    # Splice
+    before = lines[:start_line - 1]
+    after = lines[end_line:]
+    new_file = "".join(before) + new_content + "".join(after)
+
+    result = _write_impl(file_path, new_file)
+    if result.get("status") == "ok":
+        result["edited_lines"] = f"{start_line}-{end_line}"
+    return json.dumps(result)
+
+
+@tool
 def write_workspace_file(file_path: str, content: str) -> str:
     """Write or overwrite a file in the workspace. Both arguments are required.
 
@@ -473,6 +520,34 @@ def write_workspace_file(file_path: str, content: str) -> str:
     # the new content instead of stale cached data.
     _invalidate_cache_entry(file_path)
     return json.dumps(result)
+
+
+@tool
+def delete_workspace_file(file_path: str) -> str:
+    """Delete a file from the workspace. Use this to remove outdated or unnecessary files.
+
+    Args:
+        file_path: Required. Relative path like "old_file.py" or "templates/unused.html".
+    """
+    if _workspace_root is None:
+        return json.dumps({"status": "error", "reason": "Workspace root is not configured."})
+
+    try:
+        resolved = _resolve_safe_path(file_path)
+    except ValueError:
+        return json.dumps({"status": "denied", "reason": "Path escapes workspace."})
+    except RuntimeError as exc:
+        return json.dumps({"status": "error", "reason": str(exc)})
+
+    if not resolved.is_file():
+        return json.dumps({"status": "error", "reason": f"File not found: {file_path}"})
+
+    try:
+        resolved.unlink()
+        _invalidate_cache_entry(file_path)
+        return json.dumps({"status": "ok", "deleted": file_path})
+    except Exception as exc:
+        return json.dumps({"status": "error", "reason": str(exc)})
 
 
 @tool
