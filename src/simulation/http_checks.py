@@ -53,6 +53,7 @@ def _discover_flask_routes(workspace_root: str) -> List[str]:
 # Fixed test credentials used across registration and login.
 _TEST_EMAIL = "qatest@example.com"
 _TEST_PASSWORD = "TestPass123!"
+_TEST_USERNAME = "qatest"
 
 
 def _llm_fill_form(
@@ -87,6 +88,7 @@ def _llm_fill_form(
 
 FORM PURPOSE: {form_purpose}
 FIXED CREDENTIALS (you MUST use these exact values):
+- For any username field: {_TEST_USERNAME}
 - For any email field: {_TEST_EMAIL}
 - For any password field: {_TEST_PASSWORD}
 
@@ -143,7 +145,8 @@ Return ONLY the JSON object, no markdown, no explanation."""
                         pass
 
         if isinstance(result, dict):
-            # Ensure email/password are always our fixed values
+            # Ensure credentials are always our fixed values so
+            # registration and login use the same username/email/password.
             for f in fields:
                 name = f["name"]
                 ftype = f["type"]
@@ -152,6 +155,8 @@ Return ONLY the JSON object, no markdown, no explanation."""
                     result[name] = _TEST_EMAIL
                 if ftype == "password" or "password" in lower or "passwd" in lower:
                     result[name] = _TEST_PASSWORD
+                if lower == "username" or (lower == "name" and ftype == "text"):
+                    result[name] = _TEST_USERNAME
                 # Preserve hidden field defaults
                 if ftype == "hidden" and f.get("value") and name not in result:
                     result[name] = f["value"]
@@ -359,8 +364,9 @@ def create_authenticated_opener(
         return opener.open(req, timeout=timeout)
 
     # --- Step 1: Try to register a test user ---
-    # The LLM fills the form dynamically.  We remember the credentials
-    # it chose (always _TEST_EMAIL / _TEST_PASSWORD) for login.
+    # The LLM fills the form dynamically.  We remember ALL the values
+    # it chose so we can reuse the same credentials for login.
+    reg_data: Dict[str, str] = {}
     registered = False
 
     for reg_route in register_routes:
@@ -377,14 +383,12 @@ def create_authenticated_opener(
                 form_purpose=f"User registration at {reg_route}",
                 page_html=html,
             )
+            reg_data = dict(post_data)  # remember for login
 
             resp = _post_form(url, post_data)
             body = resp.read().decode("utf-8", errors="replace")
             final_url = resp.url or ""
 
-            # Detect if registration succeeded: if we landed on the login
-            # page or a dashboard, it worked. If we're back on the same
-            # registration page with error text, it likely failed.
             back_on_register = reg_route.rstrip("/") in final_url.rstrip("/")
             has_error = any(kw in body.lower() for kw in (
                 "already exists", "already registered", "error", "invalid",
@@ -402,11 +406,12 @@ def create_authenticated_opener(
             continue
 
     if not registered:
-        logger.info("Auth session: registration did not succeed, trying login with defaults")
+        logger.info("Auth session: registration did not succeed, trying login with registration credentials")
 
     # --- Step 2: Log in ---
-    # The LLM fills the login form.  Email/password are always forced
-    # to _TEST_EMAIL / _TEST_PASSWORD to match what registration used.
+    # Reuse the EXACT values from registration (username, email, password)
+    # so credentials always match, even if the login form uses different
+    # field names than the registration form.
     for login_route in login_routes:
         try:
             url = f"{base}/{login_route.lstrip('/')}"
@@ -422,11 +427,32 @@ def create_authenticated_opener(
                 page_html=html,
             )
 
+            # Override login fields with registration values so they match.
+            # The login form might use "username" while registration used
+            # "username" too — reuse the exact same value.
+            if reg_data:
+                for field in fields:
+                    name = field["name"]
+                    lower = name.lower()
+                    ftype = field["type"]
+                    # Match by type or name pattern
+                    if ftype == "password" or "password" in lower:
+                        post_data[name] = reg_data.get(
+                            name, _TEST_PASSWORD)
+                    elif ftype == "email" or "email" in lower:
+                        post_data[name] = reg_data.get(
+                            name, _TEST_EMAIL)
+                    elif "user" in lower and "name" in lower or lower == "username":
+                        # Find the username from registration data
+                        for rk, rv in reg_data.items():
+                            rk_lower = rk.lower()
+                            if "user" in rk_lower and "name" in rk_lower or rk_lower == "username":
+                                post_data[name] = rv
+                                break
+
             resp = _post_form(url, post_data)
             resp.read()
 
-            # Check if login succeeded: cookies set, or we landed on a
-            # non-login page (e.g. dashboard).
             has_cookies = len(jar) > 0
             final_url = (resp.url or "").lower()
             landed_elsewhere = login_route.lower() not in final_url
