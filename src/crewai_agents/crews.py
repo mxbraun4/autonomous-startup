@@ -546,13 +546,16 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             logger.warning("Customer testing skipped: %s", exc)
 
     def _take_workspace_snapshot(self) -> str:
-        """Read all workspace files once and return a combined snapshot string.
+        """Build a structural summary of the workspace.
 
-        This avoids redundant read_workspace_file calls by agents during
-        the BUILD phase.  The snapshot is injected into the coordinator
-        task description so agents already have full context.
+        Instead of dumping full file contents (which can be 20K+ chars
+        and overwhelm the LLM), this produces a compact overview:
+        file listing with sizes, Flask routes, DB tables, and template
+        names.  Agents can use ``read_workspace_file`` to get full
+        contents when they need them.
         """
         try:
+            import re as _re_snap
             from src.workspace_tools.file_tools import _list_impl, _read_impl
 
             listing = _list_impl()
@@ -560,7 +563,6 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             if not files:
                 return "[Workspace is empty — no files yet]"
 
-            # Skip binary/compiled files that waste tokens
             _SKIP_EXTS = {".pyc", ".pyo", ".db", ".sqlite", ".sqlite3",
                           ".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2"}
             readable_files = [
@@ -569,25 +571,91 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 and "__pycache__" not in f
             ]
 
-            sections: List[str] = []
-            total_chars = 0
-            _MAX_SNAPSHOT_CHARS = 20_000  # cap total snapshot size
-
+            # --- File listing with sizes ---
+            file_lines = []
             for fpath in sorted(readable_files):
-                if total_chars >= _MAX_SNAPSHOT_CHARS:
-                    sections.append(f"\n--- {fpath} ---\n[truncated: snapshot size limit reached]")
-                    break
                 result = _read_impl(fpath)
                 if result.get("status") != "ok":
+                    file_lines.append(f"  {fpath} (unreadable)")
                     continue
                 content = result.get("content", "")
-                remaining = _MAX_SNAPSHOT_CHARS - total_chars
-                if len(content) > remaining:
-                    content = content[:remaining] + "\n[... truncated]"
-                sections.append(f"--- {fpath} ---\n{content}")
-                total_chars += len(content)
+                size = len(content)
+                file_lines.append(f"  {fpath} ({size:,} chars)")
 
-            return "\n\n".join(sections)
+            sections = [
+                f"Files ({len(readable_files)}):",
+                "\n".join(file_lines),
+            ]
+
+            # --- Flask routes from app.py ---
+            app_result = _read_impl("app.py")
+            if app_result.get("status") == "ok":
+                app_source = app_result.get("content", "")
+
+                # Extract routes with methods
+                route_matches = _re_snap.findall(
+                    r"@app\.route\(\s*['\"]([^'\"]+)['\"]"
+                    r"(?:\s*,\s*methods\s*=\s*\[([^\]]*)\])?\s*\)",
+                    app_source,
+                )
+                if route_matches:
+                    route_lines = []
+                    for path, methods in route_matches:
+                        methods_str = methods.strip().replace("'", "").replace('"', '') if methods else "GET"
+                        route_lines.append(f"  {path} [{methods_str}]")
+                    sections.append(f"\nFlask routes ({len(route_matches)}):")
+                    sections.append("\n".join(route_lines))
+
+                # Extract DB tables from CREATE TABLE statements
+                tables = _re_snap.findall(
+                    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\(([^)]+)\)",
+                    app_source, _re_snap.IGNORECASE,
+                )
+                if tables:
+                    table_lines = []
+                    for tname, cols_str in tables:
+                        # Extract column names
+                        col_names = []
+                        for col_def in cols_str.split(","):
+                            col_def = col_def.strip()
+                            if col_def:
+                                col_name = col_def.split()[0]
+                                if col_name.upper() not in ("PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "CONSTRAINT"):
+                                    col_names.append(col_name)
+                        table_lines.append(f"  {tname}: {', '.join(col_names)}")
+                    sections.append(f"\nDB tables ({len(tables)}):")
+                    sections.append("\n".join(table_lines))
+
+                # Extract key features: decorators, imports, auth patterns
+                features = []
+                if "login_required" in app_source:
+                    features.append("auth (login_required)")
+                if "session[" in app_source or "session.get(" in app_source:
+                    features.append("session management")
+                if "check_password_hash" in app_source or "generate_password_hash" in app_source:
+                    features.append("password hashing")
+                if "flash(" in app_source:
+                    features.append("flash messages")
+                if "render_template" in app_source:
+                    features.append("Jinja2 templates")
+                if features:
+                    sections.append(f"\nFeatures: {', '.join(features)}")
+
+            # --- Template list ---
+            template_files = [f for f in readable_files if "template" in f.lower() or f.endswith(".html")]
+            if template_files:
+                sections.append(f"\nTemplates ({len(template_files)}):")
+                sections.append("\n".join(f"  {t}" for t in sorted(template_files)))
+
+            # --- CSS/JS files ---
+            static_files = [f for f in readable_files if any(f.endswith(ext) for ext in (".css", ".js"))]
+            if static_files:
+                sections.append(f"\nStatic assets ({len(static_files)}):")
+                sections.append("\n".join(f"  {s}" for s in sorted(static_files)))
+
+            snapshot = "\n".join(sections)
+            snapshot += "\n\nNOTE: Use read_workspace_file to view full file contents when needed."
+            return snapshot
         except Exception as exc:
             logger.warning("Workspace snapshot failed: %s", exc)
             return "[Workspace snapshot unavailable]"
