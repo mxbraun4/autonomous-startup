@@ -153,6 +153,11 @@ def _start_preview_server(port: int = 8080, open_browser: bool = True) -> str | 
         last_hash = ""
 
         while True:
+            app_py = workspace / "app.py"
+            if not app_py.is_file():
+                time.sleep(2)
+                continue
+
             # Compute hash of workspace files
             parts = []
             for p in sorted(workspace.rglob("*")):
@@ -164,26 +169,25 @@ def _start_preview_server(port: int = 8080, open_browser: bool = True) -> str | 
                         continue
             current_hash = hashlib.md5("|".join(parts).encode()).hexdigest()
 
-            # Restart if files changed and app.py exists
             if current_hash != last_hash:
                 last_hash = current_hash
-                app_py = workspace / "app.py"
-                if app_py.is_file():
-                    # Stop old server
-                    if server is not None:
-                        try:
-                            server.stop()
-                        except Exception:
-                            pass
 
-                    # Start new server
+                # Stop old server
+                if server is not None:
                     try:
-                        server = FlaskAppServer(str(workspace), port=port)
-                        server.start(timeout=30)
-                        logger.info("Preview server (re)started at %s", url)
-                    except Exception as exc:
-                        logger.debug("Preview Flask start failed: %s", exc)
-                        server = None
+                        server.stop()
+                    except Exception:
+                        pass
+                    server = None
+
+                # Start new server
+                try:
+                    server = FlaskAppServer(str(workspace), port=port)
+                    server.start(timeout=30)
+                    logger.info("Preview server (re)started at %s", url)
+                except Exception as exc:
+                    logger.debug("Preview Flask start failed: %s", exc)
+                    server = None
 
             time.sleep(3)
 

@@ -265,6 +265,21 @@ class FlaskAppServer:
         if not app_py.exists():
             raise FileNotFoundError(f"No app.py in {self._workspace_root}")
 
+        # Pre-flight: check that app.py can be imported without errors.
+        # This catches syntax errors, missing imports, and other issues
+        # instantly instead of waiting 30s for a timeout.
+        preflight = subprocess.run(
+            [sys.executable, "-c", f"import ast; ast.parse(open({str(app_py)!r}).read()); "
+             f"exec(compile(open({str(app_py)!r}).read(), {str(app_py)!r}, 'exec'), "
+             f"{{'__name__': '__preflight__'}})"],
+            cwd=str(self._workspace_root),
+            capture_output=True,
+            timeout=10,
+        )
+        if preflight.returncode != 0:
+            stderr = preflight.stderr.decode(errors="replace")[:500]
+            raise RuntimeError(f"Flask app preflight failed: {stderr}")
+
         env = os.environ.copy()
         env["FLASK_RUN_HOST"] = self._host
         env["FLASK_RUN_PORT"] = str(self._port)
@@ -301,8 +316,25 @@ class FlaskAppServer:
             except (URLError, OSError):
                 time.sleep(0.3)
 
+        # Capture stderr before stopping so we know WHY it failed
+        stderr = ""
+        if self._process and self._process.stderr:
+            try:
+                # Non-blocking read of whatever stderr has so far
+                import selectors
+                sel = selectors.DefaultSelector()
+                sel.register(self._process.stderr, selectors.EVENT_READ)
+                while sel.select(timeout=0.1):
+                    chunk = self._process.stderr.read1(4096) if hasattr(self._process.stderr, 'read1') else b""
+                    if not chunk:
+                        break
+                    stderr += chunk.decode(errors="replace")
+                sel.close()
+            except Exception:
+                pass
         self.stop()
-        raise TimeoutError(f"Flask app did not start within {timeout}s")
+        detail = f" stderr: {stderr[:500]}" if stderr else ""
+        raise TimeoutError(f"Flask app did not start within {timeout}s.{detail}")
 
     def stop(self) -> None:
         """Terminate the Flask app subprocess."""
