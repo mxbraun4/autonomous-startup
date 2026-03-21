@@ -1,19 +1,16 @@
-"""Tests for UnifiedStore CRUD across all 5 memory types."""
+"""Tests for UnifiedStore CRUD across episodic, procedural, and consensus memory types."""
 
 import pytest
 
 from src.framework.contracts import (
     ConsensusEntry,
     Episode,
-    SemanticDocument,
-    WorkingMemoryItem,
 )
 from src.framework.storage.unified_store import UnifiedStore
 from src.framework.storage.sync_wrapper import SyncUnifiedStore
 from src.framework.types import (
     EntryType,
     EpisodeType,
-    ItemType,
 )
 
 
@@ -26,72 +23,6 @@ def store(tmp_path):
 @pytest.fixture
 def sync_store(store):
     return SyncUnifiedStore(store)
-
-
-# -----------------------------------------------------------------------
-# Working Memory
-# -----------------------------------------------------------------------
-
-class TestWorkingMemory:
-    def test_put_and_get(self, sync_store):
-        item = WorkingMemoryItem(
-            agent_id="agent_1",
-            item_type=ItemType.TASK_STATE,
-            content={"task": "research"},
-        )
-        eid = sync_store.wm_put(item)
-        result = sync_store.wm_get("agent_1", eid)
-        assert result is not None
-        assert result.content["task"] == "research"
-
-    def test_list_and_clear(self, sync_store):
-        sync_store.wm_put(WorkingMemoryItem(
-            agent_id="a1", item_type=ItemType.TASK_STATE, content={"a": 1},
-        ))
-        sync_store.wm_put(WorkingMemoryItem(
-            agent_id="a1", item_type=ItemType.RETRIEVED_FACT, content={"b": 2},
-        ))
-        assert len(sync_store.wm_list("a1")) == 2
-        count = sync_store.wm_clear("a1")
-        assert count == 2
-        assert len(sync_store.wm_list("a1")) == 0
-
-    def test_context_for_prompt(self, sync_store):
-        sync_store.wm_put(WorkingMemoryItem(
-            agent_id="a1", item_type=ItemType.TASK_STATE, content={"task": "do stuff"},
-        ))
-        prompt = sync_store.wm_get_context_for_prompt("a1")
-        assert "do stuff" in prompt
-
-
-# -----------------------------------------------------------------------
-# Semantic Memory
-# -----------------------------------------------------------------------
-
-class TestSemanticMemory:
-    def test_add_and_search(self, sync_store):
-        sync_store.sem_add(SemanticDocument(
-            text="Fintech startup in payments",
-            collection="semantic_default",
-            tags=["fintech"],
-        ))
-        sync_store.sem_add(SemanticDocument(
-            text="Healthcare AI diagnostics",
-            collection="semantic_default",
-            tags=["healthtech"],
-        ))
-        results = sync_store.sem_search("fintech payments", top_k=2)
-        assert len(results) > 0
-
-    def test_count(self, sync_store):
-        assert sync_store.sem_count() == 0
-        sync_store.sem_add(SemanticDocument(text="test doc"))
-        assert sync_store.sem_count() >= 1
-
-    def test_delete(self, sync_store):
-        doc = SemanticDocument(text="to delete")
-        eid = sync_store.sem_add(doc)
-        assert sync_store.sem_delete(eid) is True
 
 
 # -----------------------------------------------------------------------
@@ -223,22 +154,4 @@ class TestConsensusMemory:
 class TestLifecycle:
     def test_run_lifecycle(self, sync_store):
         sync_store.start_run("run_001")
-        item = WorkingMemoryItem(
-            agent_id="a1", item_type=ItemType.TASK_STATE, content={"x": 1},
-        )
-        sync_store.wm_put(item)
-        assert item.run_id == "run_001"
         sync_store.end_run("run_001")
-
-    def test_checkpoint(self, sync_store, tmp_path):
-        sync_store.wm_put(WorkingMemoryItem(
-            agent_id="a1", item_type=ItemType.TASK_STATE, content={"state": "running"},
-        ))
-        path = str(tmp_path / "cp.json")
-        sync_store.save_checkpoint("run_1", path)
-
-        # Clear and restore
-        sync_store.wm_clear("a1")
-        assert len(sync_store.wm_list("a1")) == 0
-        sync_store.load_checkpoint("run_1", path)
-        assert len(sync_store.wm_list("a1")) == 1

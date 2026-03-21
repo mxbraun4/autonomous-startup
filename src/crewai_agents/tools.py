@@ -342,18 +342,12 @@ def get_database_stats() -> str:
 
 @tool("Share Insight")
 def share_insight(key: str, value: str, evidence: str = "") -> str:
-    """Share a finding with other agents via consensus memory.
-
-    Use this tool to record insights, learnings, or facts so other agents
-    can access them in future iterations.
+    """Store an insight so other agents can access it in future iterations.
 
     Args:
-        key: A namespaced key (e.g., "product.top_feature_gap", "data.top_gap_sector")
-        value: The insight or fact to share
-        evidence: Supporting evidence or reasoning
-
-    Returns:
-        Confirmation that the insight was stored
+        key: Namespaced key (e.g. "product.plan", "data.top_gap")
+        value: The insight or finding to share
+        evidence: Supporting reasoning (optional)
     """
     return _share_insight_impl(key, value, evidence, source_agent="crewai_agent")
 
@@ -405,18 +399,12 @@ def make_share_insight(role: str):
 
     @tool(f"Share Insight ({role})")
     def _share_insight_for_role(key: str, value: str, evidence: str = "") -> str:
-        """Share a finding with other agents via consensus memory.
-
-        Use this tool to record insights, learnings, or facts so other agents
-        can access them in future iterations.
+        """Store an insight so other agents can access it in future iterations.
 
         Args:
-            key: A namespaced key (e.g., "product.top_feature_gap", "data.top_gap_sector")
-            value: The insight or fact to share
-            evidence: Supporting evidence or reasoning
-
-        Returns:
-            Confirmation that the insight was stored
+            key: Namespaced key (e.g. "product.plan", "data.top_gap")
+            value: The insight or finding to share
+            evidence: Supporting reasoning (optional)
         """
         return _share_insight_impl(key, value, evidence, source_agent=role)
 
@@ -425,16 +413,10 @@ def make_share_insight(role: str):
 
 @tool("Get Team Insights")
 def get_team_insights(topic: str = "") -> str:
-    """Read insights shared by other agents via consensus memory.
-
-    Use this tool to retrieve shared learnings and facts from past
-    iterations or other agents. Provide a topic prefix to filter results.
+    """Read insights shared by other agents from prior iterations.
 
     Args:
-        topic: Key prefix to filter (e.g., "product", "data"). Empty for all.
-
-    Returns:
-        JSON with matching insights
+        topic: Key prefix to filter (e.g. "product", "data"). Empty string returns all.
     """
     store = get_memory_store()
     if store is None:
@@ -478,17 +460,10 @@ def get_team_insights(topic: str = "") -> str:
 
 @tool("Get Cycle History")
 def get_cycle_history(limit: int = 10) -> str:
-    """Retrieve results from previous Build-Measure-Learn cycles.
-
-    Returns a summary of past iterations including QA pass/fail status,
-    task counts, and success rates. Use this to understand what worked
-    and what failed in prior iterations so you can avoid repeating mistakes.
+    """Get results from previous Build-Measure-Learn iterations, including what agents did and customer feedback.
 
     Args:
-        limit: Maximum number of past cycles to return (default 10)
-
-    Returns:
-        JSON with cycle history entries
+        limit: Max number of past cycles to return (default 10)
     """
     store = get_memory_store()
     if store is None:
@@ -542,17 +517,10 @@ get_cycle_history.cache_function = _NO_CACHE
 
 @tool("Mark Feedback Addressed")
 def mark_feedback_addressed_tool(feedback_ids: str) -> str:
-    """Mark customer feedback items as addressed after fixing them.
-
-    Call this after you have dispatched agents to fix issues raised in
-    the UNRESOLVED FEEDBACK section.  Pass the feedback IDs shown in
-    square brackets (e.g. "ab12,cd34,ef56").
+    """Mark customer feedback items as resolved after fixing them.
 
     Args:
-        feedback_ids: Comma-separated feedback IDs to mark as addressed
-
-    Returns:
-        JSON confirmation with count of items updated
+        feedback_ids: Comma-separated IDs from the feedback list (e.g. "ab12,cd34,ef56")
     """
     from src.workspace_tools.file_tools import _mark_feedback_addressed
 
@@ -661,17 +629,15 @@ def make_dispatch_task_tool(
         except Exception:
             pass
 
-        # Prepend role context + extra_context
+        # Prepend role-specific instructions + context from prior iterations.
+        # The extra_context has already been summarized by the strategist LLM
+        # at the coordinator level, so we pass it through as-is.
         original_task_description = task_description
-        preamble = "Act through tool calls, not text-only responses.\n\n"
         role_instructions = _ROLE_INSTRUCTIONS.get(agent_role, "")
         if role_instructions:
-            preamble += role_instructions + "\n"
+            task_description = role_instructions + "\n" + task_description
         if extra_context:
-            # Cap extra_context to avoid prompt bloat
-            ctx = extra_context[:1500]
-            preamble += f"[Prior context]\n{ctx}\n\n"
-        task_description = preamble + task_description
+            task_description += f"\n\n[Context from prior iterations]\n{extra_context}"
 
         # Create temporary agent from registry
         entry = agent_registry[agent_role]
@@ -776,14 +742,11 @@ def make_dispatch_task_tool(
     # ------------------------------------------------------------------
     @tool("Dispatch Task to Agent")
     def dispatch_task(agent_role: str, task_description: str) -> str:
-        """Dispatch a task to a specialist agent and return its result.
+        """Dispatch a task to a specialist agent and wait for its result.
 
         Args:
-            agent_role: Role key of the target agent (e.g. "product_strategist", "developer", "reviewer")
-            task_description: Full description of the task to execute
-
-        Returns:
-            JSON with status, result text, truncation flag, remaining budget, and dispatch history
+            agent_role: One of "product_strategist", "developer", "reviewer"
+            task_description: Detailed description of what the agent should do
         """
         available_roles = sorted(agent_registry.keys())
 
@@ -827,21 +790,12 @@ def make_dispatch_task_tool(
         role_3: str = "",
         task_3: str = "",
     ) -> str:
-        """Dispatch 2 or 3 tasks to agents in parallel. Maximum 3 slots.
-
-        Use for independent tasks only. For dependent work (e.g. reviewer
-        AFTER developer), use dispatch_task_to_agent sequentially instead.
+        """Dispatch 2-3 independent tasks to agents in parallel. Use dispatch_task_to_agent instead for sequential/dependent work.
 
         Args:
-            role_1: Agent role for first task (e.g. "developer")
-            task_1: Task description for first agent
-            role_2: Agent role for second task
-            task_2: Task description for second agent
-            role_3: Optional third agent role (leave empty to skip)
-            task_3: Optional third task description
-
-        Returns:
-            JSON with results from all dispatched agents.
+            role_1/task_1: First agent role and task
+            role_2/task_2: Second agent role and task
+            role_3/task_3: Optional third agent role and task
         """
         import concurrent.futures
 
@@ -975,13 +929,8 @@ def _execute_dispatch_fallback(
             "Call ONE tool at a time. After reading context, start writing files immediately.\n"
         ),
     }
-    preamble = "Act through tool calls, not text-only responses.\n\n"
     role_instructions = _ROLE_INSTRUCTIONS.get(agent_role, "")
-    if role_instructions:
-        preamble += role_instructions + "\n"
-    if extra_context:
-        preamble += f"[Prior context]\n{extra_context[:1500]}\n\n"
-    full_desc = preamble + task_description
+    full_desc = (role_instructions + "\n" + task_description) if role_instructions else task_description
 
     single_task = _Task(
         description=full_desc,

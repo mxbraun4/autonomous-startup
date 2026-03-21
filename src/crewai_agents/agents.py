@@ -353,24 +353,24 @@ def create_master_coordinator(
         Master Coordinator agent
     """
     backstory = _with_prompt_override(
-        '''You are a startup ecosystem coordinator. You analyze build results, extract learnings, and formulate recommendations for the next iteration. Use your tools to gather context and share your findings. Always act through tool calls, not text-only responses. Call ONE tool at a time, never multiple tools in parallel.''',
+        '''You are a startup ecosystem coordinator. You analyze build results, extract learnings, and formulate recommendations for the next iteration. Respond with a structured text analysis — do NOT call tools.''',
         prompt_override,
     )
 
-    tools = [make_share_insight("coordinator"), get_team_insights]
+    tools = []
     if extra_tools:
         tools.extend(extra_tools)
 
     return Agent(
         role='Strategic Coordinator',
-        goal='Execute Build-Evaluate-Learn cycles to continuously improve the startup-VC matching platform',
+        goal='Analyze iteration results and produce actionable insights for the next Build-Measure-Learn cycle',
         backstory=backstory,
         llm=llm or get_llm("coordinator"),
         tools=tools,
         verbose=True,
-        allow_delegation=True,
-        memory=True,
-        max_iter=15,
+        allow_delegation=False,
+        memory=False,
+        max_iter=5,
     )
 
 
@@ -398,7 +398,14 @@ def create_build_coordinator(
 
 Tech stack: Python Flask backend (app.py), Jinja2 HTML templates (templates/), static assets (static/css, static/js), SQLite databases (.db files). The app runs via "python app.py".
 
-Workflow: Read context (workspace files, team insights, feedback) to understand the current state, then dispatch specific tasks to agents.
+YOUR ONLY PURPOSE IS TO DISPATCH AGENTS VIA THE dispatch_task_to_agent TOOL.
+You must NEVER finish without calling dispatch_task_to_agent at least once.
+Do NOT write a plan as text — execute it by calling dispatch_task_to_agent.
+
+Workflow:
+1. Call list_workspace_files to see what files exist.
+2. Call read_workspace_file on app.py (and other key files) to understand the current state.
+3. Call dispatch_task_to_agent to assign work to agents. This is MANDATORY.
 
 Agent roles:
 - product_strategist: Analyzes feedback, defines product direction, and proposes database schema, routes, and implementation plan. Dispatch this agent first.
@@ -408,7 +415,7 @@ Agent roles:
 CRITICAL: When dispatching the developer, you MUST include the product_strategist's recommendations in the task description. Example: "Following the product plan: [paste key points]. Now implement: [specific task]." Never dispatch the developer without referencing what the product_strategist recommended.
 
 Rules:
-- Read context first, then dispatch. Keep context-gathering to 2-3 tool calls max before dispatching.
+- You MUST call dispatch_task_to_agent — do NOT give a Final Answer without dispatching.
 - Developer tasks must be BUILD or FIX tasks — never "read and report back."
 - NEVER ask agents to install dependencies or create requirements.txt/install_deps.py. All packages are pre-installed.
 - Call ONE tool at a time, never multiple tools in parallel.''',
@@ -463,9 +470,7 @@ Tech stack: Python Flask backend (app.py), Jinja2 HTML templates (templates/), s
 
 DEPENDENCY RULE: You CANNOT install new packages. Do NOT create requirements.txt or install_deps.py. Use list_installed_packages to check what's available.
 
-Always act through tool calls. When something needs fixing, fix it — don't just report it.
-BEFORE finishing, run check_workspace_http to verify your changes actually work. If any routes fail, fix them immediately — do not declare "done" with broken routes.
-IMPORTANT: Call ONE tool at a time, never multiple tools in parallel. After each tool result, decide your next step.''',
+When something needs fixing, fix it — don't just report it. Call ONE tool at a time.''',
         prompt_override,
     )
 

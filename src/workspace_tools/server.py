@@ -252,7 +252,7 @@ class FlaskAppServer:
         """Return True if workspace/app.py exists."""
         return (self._workspace_root / "app.py").is_file()
 
-    def start(self, timeout: float = 15.0) -> str:
+    def start(self, timeout: float = 30.0) -> str:
         """Start the Flask app subprocess. Returns the base URL.
 
         The app.py must honour ``FLASK_RUN_HOST`` / ``FLASK_RUN_PORT``
@@ -269,8 +269,17 @@ class FlaskAppServer:
         env["FLASK_RUN_HOST"] = self._host
         env["FLASK_RUN_PORT"] = str(self._port)
 
+        # Run with -c to inject debug=False override, preventing the
+        # werkzeug reloader from spawning a child process (slow on Windows).
+        bootstrap = (
+            f"import runpy, flask; "
+            f"flask.Flask.run = (lambda _orig: lambda self, *a, **kw: "
+            f"_orig(self, *a, **{{**kw, 'debug': False}}))(flask.Flask.run); "
+            f"runpy.run_path({str(app_py)!r}, run_name='__main__')"
+        )
+
         self._process = subprocess.Popen(
-            [sys.executable, str(app_py)],
+            [sys.executable, "-c", bootstrap],
             cwd=str(self._workspace_root),
             env=env,
             stdout=subprocess.PIPE,

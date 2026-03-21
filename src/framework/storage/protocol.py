@@ -1,8 +1,7 @@
 """Abstract protocol defining the unified memory store interface.
 
 All methods are async to future-proof for daemon mode.
-Method prefixes: wm_ (working), sem_ (semantic), ep_ (episodic),
-proc_ (procedural), cons_ (consensus).
+Method prefixes: ep_ (episodic), proc_ (procedural), cons_ (consensus).
 """
 
 from __future__ import annotations
@@ -14,10 +13,8 @@ from src.framework.contracts import (
     ConsensusEntry,
     Episode,
     Procedure,
-    SemanticDocument,
-    WorkingMemoryItem,
 )
-from src.framework.types import EntryType, EpisodeType, ItemType
+from src.framework.types import EntryType, EpisodeType
 
 
 class MemoryStoreProtocol(abc.ABC):
@@ -37,73 +34,6 @@ class MemoryStoreProtocol(abc.ABC):
     @abc.abstractmethod
     async def end_run(self, run_id: str) -> None:
         """Signal the end of an agent run / cycle."""
-
-    @abc.abstractmethod
-    async def save_checkpoint(self, run_id: str, path: str) -> None:
-        """Persist in-memory state (working memory) to disk."""
-
-    @abc.abstractmethod
-    async def load_checkpoint(self, run_id: str, path: str) -> None:
-        """Restore in-memory state from a checkpoint."""
-
-    # ------------------------------------------------------------------
-    # Working Memory (wm_*)
-    # ------------------------------------------------------------------
-
-    @abc.abstractmethod
-    async def wm_put(self, item: WorkingMemoryItem) -> str:
-        """Add or update an item in working memory. Returns entity_id."""
-
-    @abc.abstractmethod
-    async def wm_get(self, agent_id: str, entity_id: str) -> Optional[WorkingMemoryItem]:
-        """Retrieve a single working memory item."""
-
-    @abc.abstractmethod
-    async def wm_list(self, agent_id: str, item_type: Optional[ItemType] = None) -> List[WorkingMemoryItem]:
-        """List working memory items for an agent, optionally filtered by type."""
-
-    @abc.abstractmethod
-    async def wm_remove(self, agent_id: str, entity_id: str) -> bool:
-        """Remove an item from working memory. Returns True if found and removed."""
-
-    @abc.abstractmethod
-    async def wm_clear(self, agent_id: str) -> int:
-        """Clear all working memory for an agent. Returns count removed."""
-
-    @abc.abstractmethod
-    async def wm_get_context_for_prompt(self, agent_id: str, max_tokens: int = 4000) -> str:
-        """Pack the most relevant working memory items into a prompt string
-        that fits within the token budget."""
-
-    # ------------------------------------------------------------------
-    # Semantic Memory (sem_*)
-    # ------------------------------------------------------------------
-
-    @abc.abstractmethod
-    async def sem_add(self, doc: SemanticDocument) -> str:
-        """Add a document. Returns entity_id."""
-
-    @abc.abstractmethod
-    async def sem_search(
-        self,
-        query: str,
-        collection: str = "semantic_default",
-        top_k: int = 5,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[SemanticDocument]:
-        """Semantic similarity search."""
-
-    @abc.abstractmethod
-    async def sem_get(self, entity_id: str) -> Optional[SemanticDocument]:
-        """Retrieve a document by ID."""
-
-    @abc.abstractmethod
-    async def sem_delete(self, entity_id: str) -> bool:
-        """Delete a document. Returns True if found and deleted."""
-
-    @abc.abstractmethod
-    async def sem_count(self, collection: str = "semantic_default") -> int:
-        """Count documents in a collection."""
 
     # ------------------------------------------------------------------
     # Episodic Memory (ep_*)

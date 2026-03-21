@@ -50,71 +50,147 @@ def _discover_flask_routes(workspace_root: str) -> List[str]:
 # Dynamic authentication helper
 # ---------------------------------------------------------------------------
 
-# Common field-name patterns mapped to sensible test values.
-_FIELD_VALUE_MAP: Dict[str, str] = {
-    "email": "testuser@example.com",
-    "password": "TestPass123!",
-    "confirm_password": "TestPass123!",
-    "password_confirm": "TestPass123!",
-    "password2": "TestPass123!",
-    "confirm": "TestPass123!",
-    "username": "testuser",
-    "name": "Test User",
-    "full_name": "Test User",
-    "fullname": "Test User",
-    "first_name": "Test",
-    "last_name": "User",
-    "firstname": "Test",
-    "lastname": "User",
-    "company": "TestCo Inc.",
-    "company_name": "TestCo Inc.",
-    "startup_name": "TestCo Inc.",
-    "firm_name": "TestVC Capital",
-    "organization": "TestOrg",
-    "title": "CEO",
-    "job_title": "CEO",
-    "role": "founder",
-    "user_type": "startup",
-    "type": "startup",
-    "phone": "+1-555-0100",
-    "location": "San Francisco, CA",
-    "city": "San Francisco",
-    "country": "US",
-    "website": "https://testco.example.com",
-    "url": "https://testco.example.com",
-    "bio": "A test user for automated QA.",
-    "description": "An innovative startup disrupting the market.",
-    "pitch": "We build next-gen solutions for enterprise.",
-    "industry": "Technology",
-    "industries": "Technology",
-    "sector": "Technology",
-    "stage": "Seed",
-    "funding_stage": "Seed",
-    "funding_amount": "500000",
-    "investment_min": "100000",
-    "investment_max": "1000000",
-    "min_investment": "100000",
-    "max_investment": "1000000",
-    "founded": "2024",
-    "founded_year": "2024",
-    "team_size": "5",
-    "employees": "5",
-    "revenue": "100000",
-}
+# Fixed test credentials used across registration and login.
+_TEST_EMAIL = "qatest@example.com"
+_TEST_PASSWORD = "TestPass123!"
 
 
-def _guess_field_value(field_name: str) -> str:
-    """Return a plausible test value for *field_name* by fuzzy-matching."""
-    lower = field_name.lower().strip()
-    # Direct match
-    if lower in _FIELD_VALUE_MAP:
-        return _FIELD_VALUE_MAP[lower]
-    # Substring/partial match
-    for key, val in _FIELD_VALUE_MAP.items():
-        if key in lower or lower in key:
-            return val
-    # Fallback
-    return "test"
+def _llm_fill_form(
+    fields: List[Dict[str, str]],
+    form_purpose: str,
+    page_html: str = "",
+) -> Dict[str, str]:
+    """Use an LLM to generate plausible form field values.
+
+    The LLM sees the field names, types, any select options, and the
+    surrounding page HTML so it understands the context regardless of
+    app structure.  It always uses fixed email/password for consistency.
+    """
+    import json as _json
+
+    # Build a compact description of each field
+    field_descriptions = []
+    for f in fields:
+        desc = f"- name={f['name']}, type={f['type']}"
+        if f.get("value"):
+            desc += f", default={f['value']}"
+        if f.get("options"):
+            desc += f", options={f['options']}"
+        field_descriptions.append(desc)
+
+    fields_text = "\n".join(field_descriptions)
+
+    # Truncate page HTML to give the LLM context about what the form is for
+    context_html = page_html[:3000] if page_html else "(no page context)"
+
+    prompt = f"""You are filling out a web form for automated testing of a startup-VC matching platform.
+
+FORM PURPOSE: {form_purpose}
+FIXED CREDENTIALS (you MUST use these exact values):
+- For any email field: {_TEST_EMAIL}
+- For any password field: {_TEST_PASSWORD}
+
+FORM FIELDS:
+{fields_text}
+
+PAGE CONTEXT (truncated):
+{context_html}
+
+Return a JSON object mapping each field name to a plausible value.
+Rules:
+- Use the EXACT email and password shown above
+- For select/dropdown fields, pick one of the available options
+- For numeric fields (funding, revenue, etc.), use realistic numbers as strings
+- For text fields, use short realistic values appropriate to a startup-VC platform
+- For hidden fields, keep their default value
+- Every field must have a value — do not skip any
+
+Return ONLY the JSON object, no markdown, no explanation."""
+
+    try:
+        import litellm
+        from src.simulation.customer_testing import _build_litellm_kwargs, _resolve_customer_model
+
+        model = _resolve_customer_model()
+        extra_kwargs = _build_litellm_kwargs(model)
+
+        response = litellm.completion(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=800,
+            **extra_kwargs,
+        )
+        raw = response.choices[0].message.content or ""
+
+        # Parse JSON — try direct, then strip fences
+        result = None
+        try:
+            result = _json.loads(raw.strip())
+        except _json.JSONDecodeError:
+            # Strip markdown code fences
+            cleaned = re.sub(r"^```(?:json)?\s*\n?", "", raw.strip(), flags=re.MULTILINE)
+            cleaned = re.sub(r"\n?```\s*$", "", cleaned, flags=re.MULTILINE)
+            try:
+                result = _json.loads(cleaned.strip())
+            except _json.JSONDecodeError:
+                # Try to extract {...} block
+                m = re.search(r"\{.*\}", cleaned, re.DOTALL)
+                if m:
+                    try:
+                        result = _json.loads(m.group(0))
+                    except _json.JSONDecodeError:
+                        pass
+
+        if isinstance(result, dict):
+            # Ensure email/password are always our fixed values
+            for f in fields:
+                name = f["name"]
+                ftype = f["type"]
+                lower = name.lower()
+                if ftype == "email" or "email" in lower:
+                    result[name] = _TEST_EMAIL
+                if ftype == "password" or "password" in lower or "passwd" in lower:
+                    result[name] = _TEST_PASSWORD
+                # Preserve hidden field defaults
+                if ftype == "hidden" and f.get("value") and name not in result:
+                    result[name] = f["value"]
+
+            logger.info("LLM form fill (%s): %s", form_purpose, list(result.keys()))
+            return result
+
+    except Exception as exc:
+        logger.warning("LLM form fill failed: %s", exc)
+
+    # Fallback: basic type-driven fill
+    return _basic_fill_form(fields)
+
+
+def _basic_fill_form(fields: List[Dict[str, str]]) -> Dict[str, str]:
+    """Minimal type-driven form fill as fallback when LLM is unavailable."""
+    data: Dict[str, str] = {}
+    for f in fields:
+        name = f["name"]
+        ftype = f["type"]
+        lower = name.lower()
+
+        if ftype == "hidden" and f.get("value"):
+            data[name] = f["value"]
+        elif ftype == "select" and f.get("value"):
+            data[name] = f["value"]
+        elif ftype == "email" or "email" in lower:
+            data[name] = _TEST_EMAIL
+        elif ftype == "password" or "password" in lower:
+            data[name] = _TEST_PASSWORD
+        elif ftype in ("number", "range"):
+            data[name] = "500000"
+        elif ftype == "url" or "url" in lower:
+            data[name] = "https://example.com"
+        elif ftype == "tel":
+            data[name] = "+1-555-0100"
+        else:
+            data[name] = "Test"
+    return data
 
 
 def _extract_form_fields(html: str) -> List[Dict[str, str]]:
@@ -163,12 +239,13 @@ def _extract_form_fields(html: str) -> List[Dict[str, str]]:
         if name in seen_names:
             continue
         seen_names.add(name)
-        # Pick the first non-empty <option> value
+        # Collect all option values so the LLM knows valid choices
         options = re.findall(
             r'<option\b[^>]*value\s*=\s*["\']([^"\']+)', inner, re.IGNORECASE
         )
-        value = options[0] if options else _guess_field_value(name)
-        fields.append({"name": name, "type": "select", "value": value})
+        value = options[0] if options else ""
+        fields.append({"name": name, "type": "select", "value": value,
+                        "options": options})
 
     # <textarea> tags
     for m in re.finditer(
@@ -192,24 +269,26 @@ def _discover_auth_routes(source: str) -> Dict[str, List[str]]:
 
     Returns dict with keys ``login``, ``register``, ``logout`` each mapping
     to a list of route paths that look auth-related.
+
+    Only matches routes whose **path** contains auth keywords — does NOT
+    scan surrounding code context, which caused false positives (e.g.
+    ``/dashboard/startup`` matched because nearby code used ``session``).
     """
     auth_routes: Dict[str, List[str]] = {"login": [], "register": [], "logout": []}
 
-    # Find all @app.route blocks with the function name that follows
-    for m in re.finditer(
-        r"""@app\.route\(\s*['"]([^'"]+)['"]""", source
-    ):
-        route = m.group(1)
-        # Look at surrounding context (route path + next ~200 chars for function name)
-        start = m.start()
-        context = source[max(0, start - 20): start + 300].lower()
+    routes = re.findall(r"""@app\.route\(\s*['"]([^'"]+)['"]""", source)
+    for route in routes:
+        lower_route = route.lower()
+        # Skip parameterized routes
+        if "<" in route:
+            continue
 
-        if any(kw in route.lower() or kw in context for kw in ("login", "signin", "sign_in", "sign-in")):
-            if "logout" not in route.lower() and "signout" not in route.lower():
+        if any(kw in lower_route for kw in ("login", "signin", "sign_in", "sign-in")):
+            if "logout" not in lower_route and "signout" not in lower_route:
                 auth_routes["login"].append(route)
-        if any(kw in route.lower() or kw in context for kw in ("register", "signup", "sign_up", "sign-up")):
+        if any(kw in lower_route for kw in ("register", "signup", "sign_up", "sign-up")):
             auth_routes["register"].append(route)
-        if any(kw in route.lower() or kw in context for kw in ("logout", "signout", "sign_out", "sign-out")):
+        if any(kw in lower_route for kw in ("logout", "signout", "sign_out", "sign-out")):
             auth_routes["logout"].append(route)
 
     return auth_routes
@@ -272,83 +351,92 @@ def create_authenticated_opener(
         logger.info("Auth session: no login routes found, skipping")
         return opener, False
 
+    def _post_form(url: str, data: Dict[str, str]) -> Any:
+        """POST form data and return the response."""
+        encoded = urlencode(data).encode("utf-8")
+        req = Request(url, data=encoded, method="POST")
+        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+        return opener.open(req, timeout=timeout)
+
     # --- Step 1: Try to register a test user ---
+    # The LLM fills the form dynamically.  We remember the credentials
+    # it chose (always _TEST_EMAIL / _TEST_PASSWORD) for login.
     registered = False
+
     for reg_route in register_routes:
         try:
             url = f"{base}/{reg_route.lstrip('/')}"
-            # Fetch the registration page to discover form fields
             resp = opener.open(url, timeout=timeout)
             html = resp.read().decode("utf-8", errors="replace")
             fields = _extract_form_fields(html)
-
             if not fields:
-                logger.debug("Auth session: no form fields at %s", reg_route)
                 continue
 
-            # Build POST data from discovered fields
-            post_data: Dict[str, str] = {}
-            for field in fields:
-                name = field["name"]
-                if field["type"] == "hidden" and field["value"]:
-                    # Preserve hidden fields (CSRF tokens, etc.)
-                    post_data[name] = field["value"]
-                elif field["value"] and field["type"] == "select":
-                    post_data[name] = field["value"]
-                else:
-                    post_data[name] = _guess_field_value(name)
+            post_data = _llm_fill_form(
+                fields,
+                form_purpose=f"User registration at {reg_route}",
+                page_html=html,
+            )
 
-            encoded = urlencode(post_data).encode("utf-8")
-            req = Request(url, data=encoded, method="POST")
-            req.add_header("Content-Type", "application/x-www-form-urlencoded")
-            resp = opener.open(req, timeout=timeout)
-            resp.read()  # consume body
+            resp = _post_form(url, post_data)
+            body = resp.read().decode("utf-8", errors="replace")
+            final_url = resp.url or ""
+
+            # Detect if registration succeeded: if we landed on the login
+            # page or a dashboard, it worked. If we're back on the same
+            # registration page with error text, it likely failed.
+            back_on_register = reg_route.rstrip("/") in final_url.rstrip("/")
+            has_error = any(kw in body.lower() for kw in (
+                "already exists", "already registered", "error", "invalid",
+                "try again", "failed",
+            ))
+            if back_on_register and has_error:
+                logger.debug("Auth session: registration at %s likely failed (error in response)", reg_route)
+                continue
+
             registered = True
-            logger.info("Auth session: registered test user via %s (fields: %s)",
-                        reg_route, list(post_data.keys()))
+            logger.info("Auth session: registered test user via %s", reg_route)
             break
         except Exception as exc:
             logger.debug("Auth session: registration via %s failed: %s", reg_route, exc)
             continue
 
     if not registered:
-        logger.info("Auth session: no registration routes available, trying login directly")
+        logger.info("Auth session: registration did not succeed, trying login with defaults")
 
     # --- Step 2: Log in ---
+    # The LLM fills the login form.  Email/password are always forced
+    # to _TEST_EMAIL / _TEST_PASSWORD to match what registration used.
     for login_route in login_routes:
         try:
             url = f"{base}/{login_route.lstrip('/')}"
-            # Fetch login page to discover form fields
             resp = opener.open(url, timeout=timeout)
             html = resp.read().decode("utf-8", errors="replace")
             fields = _extract_form_fields(html)
-
             if not fields:
-                logger.debug("Auth session: no form fields at %s", login_route)
                 continue
 
-            post_data = {}
-            for field in fields:
-                name = field["name"]
-                if field["type"] == "hidden" and field["value"]:
-                    post_data[name] = field["value"]
-                else:
-                    post_data[name] = _guess_field_value(name)
+            post_data = _llm_fill_form(
+                fields,
+                form_purpose=f"User login at {login_route}",
+                page_html=html,
+            )
 
-            encoded = urlencode(post_data).encode("utf-8")
-            req = Request(url, data=encoded, method="POST")
-            req.add_header("Content-Type", "application/x-www-form-urlencoded")
-            resp = opener.open(req, timeout=timeout)
+            resp = _post_form(url, post_data)
             resp.read()
 
-            # Verify login succeeded by checking cookies or fetching a protected page
-            has_session = any("session" in c.name.lower() for c in jar)
-            if has_session or len(jar) > 0:
+            # Check if login succeeded: cookies set, or we landed on a
+            # non-login page (e.g. dashboard).
+            has_cookies = len(jar) > 0
+            final_url = (resp.url or "").lower()
+            landed_elsewhere = login_route.lower() not in final_url
+
+            if has_cookies or landed_elsewhere:
                 logger.info("Auth session: logged in via %s (cookies: %d)",
                             login_route, len(jar))
                 return opener, True
 
-            logger.debug("Auth session: login via %s produced no cookies", login_route)
+            logger.debug("Auth session: login via %s did not succeed", login_route)
         except Exception as exc:
             logger.debug("Auth session: login via %s failed: %s", login_route, exc)
             continue
