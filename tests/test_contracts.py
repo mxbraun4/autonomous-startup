@@ -9,15 +9,11 @@ from src.framework.contracts import (
     Episode,
     Procedure,
     ProcedureVersion,
-    SemanticDocument,
-    WorkingMemoryItem,
 )
 from src.framework.types import (
     ConsensusStatus,
     EntryType,
     EpisodeType,
-    ItemType,
-    MemoryType,
 )
 
 
@@ -36,51 +32,6 @@ class TestBaseMemoryEntity:
         restored = BaseMemoryEntity.model_validate(data)
         assert restored.run_id == "r1"
         assert restored.cycle_id == 3
-
-
-class TestWorkingMemoryItem:
-    def test_creation(self):
-        item = WorkingMemoryItem(
-            agent_id="agent_1",
-            item_type=ItemType.TASK_STATE,
-            content={"task": "research"},
-            relevance_score=0.9,
-        )
-        assert item.agent_id == "agent_1"
-        assert item.item_type == ItemType.TASK_STATE
-        assert item.relevance_score == 0.9
-        assert item.ttl_seconds is None
-        assert item.source_memory_type is None
-
-    def test_with_source_tracking(self):
-        item = WorkingMemoryItem(
-            agent_id="a1",
-            item_type=ItemType.RETRIEVED_FACT,
-            content={"fact": "x"},
-            source_memory_type=MemoryType.SEMANTIC,
-            source_entity_id="doc_123",
-        )
-        assert item.source_memory_type == MemoryType.SEMANTIC
-
-
-class TestSemanticDocument:
-    def test_defaults(self):
-        doc = SemanticDocument(text="hello world")
-        assert doc.collection == "semantic_default"
-        assert doc.document_type == "general"
-        assert doc.tags == []
-
-    def test_json_round_trip(self):
-        doc = SemanticDocument(
-            text="fintech startup data",
-            collection="semantic_startups",
-            tags=["fintech", "seed"],
-            source="web_scrape",
-        )
-        data = json.loads(doc.model_dump_json())
-        restored = SemanticDocument.model_validate(data)
-        assert restored.text == "fintech startup data"
-        assert "fintech" in restored.tags
 
 
 class TestEpisode:

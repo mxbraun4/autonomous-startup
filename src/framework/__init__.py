@@ -5,8 +5,6 @@ from src.framework.types import (
     EntryType,
     EpisodeType,
     ErrorCategory,
-    ItemType,
-    MemoryType,
     TaskStatus,
     ToolCallStatus,
 )
@@ -21,11 +19,9 @@ from src.framework.contracts import (
     Procedure,
     ProcedureVersion,
     RunConfig,
-    SemanticDocument,
     TaskResult,
     TaskSpec,
     ToolCall,
-    WorkingMemoryItem,
 )
 from src.framework.eval import Evaluator, GateThresholds, Scorecard, build_scorecard
 from src.framework.learning import (
@@ -47,8 +43,6 @@ __all__ = [
     "EntryType",
     "EpisodeType",
     "ErrorCategory",
-    "ItemType",
-    "MemoryType",
     "TaskStatus",
     "ToolCallStatus",
     # Contracts
@@ -62,11 +56,9 @@ __all__ = [
     "Procedure",
     "ProcedureVersion",
     "RunConfig",
-    "SemanticDocument",
     "TaskResult",
     "TaskSpec",
     "ToolCall",
-    "WorkingMemoryItem",
     # Eval
     "Evaluator",
     "GateThresholds",

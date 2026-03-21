@@ -1,6 +1,6 @@
 """UnifiedStore - in-process implementation of MemoryStoreProtocol.
 
-Composes all five memory backends and delegates each method group.
+Composes episodic, procedural, and consensus memory backends and delegates each method group.
 """
 
 from __future__ import annotations
@@ -12,12 +12,9 @@ from src.framework.contracts import (
     ConsensusEntry,
     Episode,
     Procedure,
-    SemanticDocument,
-    WorkingMemoryItem,
 )
-from src.framework.storage.backends.working_memory import WorkingMemoryBackend
 from src.framework.storage.protocol import MemoryStoreProtocol
-from src.framework.types import EntryType, EpisodeType, ItemType
+from src.framework.types import EntryType, EpisodeType
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -35,16 +32,6 @@ class UnifiedStore(MemoryStoreProtocol):
     def __init__(self, data_dir: str = "data/memory"):
         self._data_dir = data_dir
         self._current_run_id: Optional[str] = None
-
-        # Working memory is always the in-memory backend.
-        self._working = WorkingMemoryBackend()
-
-        # Semantic
-        from src.framework.storage.backends.semantic_store import SemanticStoreBackend
-
-        self._semantic = SemanticStoreBackend(
-            persist_dir=os.path.join(data_dir, "chroma"),
-        )
 
         # Episodic
         from src.framework.storage.backends.episodic_store import EpisodicStoreBackend
@@ -109,64 +96,6 @@ class UnifiedStore(MemoryStoreProtocol):
     async def end_run(self, run_id: str) -> None:
         self._current_run_id = None
         logger.info("Run ended: %s", run_id)
-
-    async def save_checkpoint(self, run_id: str, path: str) -> None:
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        self._working.save_checkpoint(path)
-
-    async def load_checkpoint(self, run_id: str, path: str) -> None:
-        self._working.load_checkpoint(path)
-
-    # ------------------------------------------------------------------
-    # Working Memory - delegates to in-memory backend
-    # ------------------------------------------------------------------
-
-    async def wm_put(self, item: WorkingMemoryItem) -> str:
-        if self._current_run_id and not item.run_id:
-            item.run_id = self._current_run_id
-        return self._working.put(item)
-
-    async def wm_get(self, agent_id: str, entity_id: str) -> Optional[WorkingMemoryItem]:
-        return self._working.get(agent_id, entity_id)
-
-    async def wm_list(self, agent_id: str, item_type: Optional[ItemType] = None) -> List[WorkingMemoryItem]:
-        return self._working.list_items(agent_id, item_type)
-
-    async def wm_remove(self, agent_id: str, entity_id: str) -> bool:
-        return self._working.remove(agent_id, entity_id)
-
-    async def wm_clear(self, agent_id: str) -> int:
-        return self._working.clear(agent_id)
-
-    async def wm_get_context_for_prompt(self, agent_id: str, max_tokens: int = 4000) -> str:
-        return self._working.get_context_for_prompt(agent_id, max_tokens)
-
-    # ------------------------------------------------------------------
-    # Semantic Memory - delegates to backend
-    # ------------------------------------------------------------------
-
-    async def sem_add(self, doc: SemanticDocument) -> str:
-        if self._current_run_id and not doc.run_id:
-            doc.run_id = self._current_run_id
-        return await self._semantic.sem_add(doc)
-
-    async def sem_search(
-        self,
-        query: str,
-        collection: str = "semantic_default",
-        top_k: int = 5,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[SemanticDocument]:
-        return await self._semantic.sem_search(query, collection, top_k, filters)
-
-    async def sem_get(self, entity_id: str) -> Optional[SemanticDocument]:
-        return await self._semantic.sem_get(entity_id)
-
-    async def sem_delete(self, entity_id: str) -> bool:
-        return await self._semantic.sem_delete(entity_id)
-
-    async def sem_count(self, collection: str = "semantic_default") -> int:
-        return await self._semantic.sem_count(collection)
 
     # ------------------------------------------------------------------
     # Episodic Memory - delegates to backend

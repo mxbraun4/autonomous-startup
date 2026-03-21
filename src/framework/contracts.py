@@ -11,8 +11,6 @@ from src.framework.types import (
     EntryType,
     EpisodeType,
     ErrorCategory,
-    ItemType,
-    MemoryType,
     TaskStatus,
     ToolCallStatus,
 )
@@ -41,38 +39,6 @@ class BaseMemoryEntity(BaseModel):
     @classmethod
     def _serialize_dt(cls, v: datetime) -> str:
         return v.isoformat()
-
-
-# ---------------------------------------------------------------------------
-# Working Memory
-# ---------------------------------------------------------------------------
-
-
-class WorkingMemoryItem(BaseMemoryEntity):
-    """Per-agent active context kept in memory."""
-
-    agent_id: str
-    item_type: ItemType
-    content: Dict[str, Any] = Field(default_factory=dict)
-    relevance_score: float = 1.0
-    ttl_seconds: Optional[int] = None
-    source_memory_type: Optional[MemoryType] = None
-    source_entity_id: Optional[str] = None
-
-
-# ---------------------------------------------------------------------------
-# Semantic Memory
-# ---------------------------------------------------------------------------
-
-
-class SemanticDocument(BaseMemoryEntity):
-    """Document stored in vector store for similarity search."""
-
-    text: str
-    collection: str = "semantic_default"
-    document_type: str = "general"
-    tags: List[str] = Field(default_factory=list)
-    source: str = ""
 
 
 # ---------------------------------------------------------------------------

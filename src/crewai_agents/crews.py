@@ -76,15 +76,15 @@ def create_learn_phase_task(coordinator, build_results: str) -> Task:
 
     Args:
         coordinator: Master coordinator agent
-        build_results: Results from BUILD phase (includes QA gate output)
+        build_results: Results from BUILD phase (includes customer feedback)
 
     Returns:
         LEARN phase task
     """
     return Task(
-        description=f'''Analyze results from this Build-Evaluate-Learn iteration and extract learnings.
+        description=f'''Analyze results from this Build-Measure-Learn iteration and extract learnings.
 
-        BUILD Phase Results (including QA gate):
+        BUILD Phase Results (including customer feedback):
         {build_results}
 
         Identify what worked, what failed, and why. Extract actionable insights
@@ -235,8 +235,8 @@ def _create_coordinator_build_task(
     The tech stack is: Python Flask backend (app.py), Jinja2 HTML templates (templates/), static assets (static/css, static/js), and SQLite databases (.db files).
 
     Available agents to dispatch: {", ".join(available_roles)}.
-    1. Gather context: check workspace files and team insights (2-3 tool calls max).
-    2. Dispatch agents with specific tasks. Developer tasks must tell it what to BUILD or FIX — the developer reads files on its own, you don't need to ask it to read for you.
+    1. Call list_workspace_files, then read_workspace_file on key files (app.py, templates).
+    2. Call dispatch_task_to_agent to assign work. You MUST dispatch at least one agent — do NOT give a Final Answer without dispatching.
     3. Review dispatch results and dispatch follow-up tasks if needed.
     4. After fixing issues from user feedback, call mark_feedback_addressed with the resolved IDs.
     '''
@@ -278,7 +278,7 @@ class _FlowState(BaseModel):
     qa_result: Dict[str, Any] = Field(default_factory=dict)
     user_feedback: Dict[str, Any] = Field(default_factory=dict)
     learn_output: Optional[LearnPhaseOutput] = None
-    # Gate recommendation from the EVALUATE phase
+    # Gate recommendation from the MEASURE phase
     gate_recommendation: str = "continue"  # continue / pause / rollback / stop
 
     # Accumulated results across all iterations
@@ -303,9 +303,9 @@ class _FlowState(BaseModel):
 
 
 class BuildMeasureLearnFlow(Flow[_FlowState]):
-    """Event-driven Build-Evaluate-Learn cycle using CrewAI Flows.
+    """Event-driven Build-Measure-Learn cycle using CrewAI Flows.
 
-    Each call to :meth:`kickoff` runs one complete BUILD -> EVALUATE -> LEARN
+    Each call to :meth:`kickoff` runs one complete BUILD -> MEASURE -> LEARN
     pipeline.  :meth:`run` loops over multiple iterations, feeding learnings
     from one iteration into the next.
     """
@@ -367,20 +367,20 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         return str(overrides.get(key, "")).strip()
 
     def _run_quality_gate(self) -> Dict[str, Any]:
-        """Run informational QA checks and return parsed JSON output.
+        """Run a minimal syntax check and let customer feedback drive QA.
 
-        Collects signals (syntax, workspace content, HTTP) but does NOT
-        make a blocking pass/fail decision — that is left to the evaluate
-        phase so agents retain control over iteration flow.
+        Only checks Python syntax (if syntax is broken the app won't
+        start and customer testing can't run).  All other quality
+        signals come from the LLM-powered customer personas.
         """
         from src.crewai_agents.tools import run_quality_checks_tool
 
         result: Dict[str, Any] = {}
 
-        # 1. Python syntax check
+        # Python syntax check only
         try:
             raw = run_quality_checks_tool.run(
-                paths_csv="src,scripts,workspace",
+                paths_csv="workspace",
                 pytest_targets_csv="",
                 run_pytest=False,
                 timeout_seconds=60,
@@ -393,116 +393,21 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         except Exception as exc:
             result = {"status": "error", "error": str(exc)}
 
-        # 2. Workspace content inventory
-        workspace_info: Dict[str, Any] = {}
-        try:
-            from src.workspace_tools.file_tools import _read_impl, _list_impl
-
-            listing = _list_impl()
-            files = listing.get("files", [])
-            py_files = [f for f in files if f.endswith(".py")]
-            html_files = [f for f in files if f.endswith(".html")]
-            workspace_info["file_count"] = len(files)
-            workspace_info["py_files"] = py_files
-            workspace_info["html_files"] = html_files
-            workspace_info["has_flask_app"] = "app.py" in py_files
-
-            # Check for non-placeholder source files (app.py or templates)
-            non_placeholder_count = 0
-
-            # Check app.py
-            app_result = _read_impl("app.py")
-            if app_result.get("status") == "ok":
-                content = (app_result.get("content") or "").lower()
-                is_placeholder = "waiting for agents to build" in content
-                if not is_placeholder and len(content.strip()) > 100:
-                    non_placeholder_count += 1
-
-            # Check HTML templates
-            for html_file in html_files:
-                content_result = _read_impl(html_file)
-                if content_result.get("status") == "ok":
-                    content = (content_result.get("content") or "").lower()
-                    is_placeholder = "waiting for agents to build" in content
-                    if not is_placeholder and len(content.strip()) > 100:
-                        non_placeholder_count += 1
-
-            workspace_info["non_placeholder_count"] = non_placeholder_count
-        except Exception as ws_exc:
-            workspace_info["error"] = str(ws_exc)
-
-        result["workspace"] = workspace_info
-
-        # 3. HTTP checks
-        http_info: Dict[str, Any] = {}
-        try:
-            from src.workspace_tools.file_tools import _check_http_impl
-
-            http_result = _check_http_impl()
-            if http_result.get("status") == "ok":
-                http_info = http_result
-            else:
-                http_info = http_result
-        except Exception as http_exc:
-            http_info["error"] = str(http_exc)
-
-        result["http_checks"] = http_info
-
-        # 4. Architecture quality checks (DRY, broken links, shared assets)
-        arch_info: Dict[str, Any] = {}
-        try:
-            from src.workspace_tools.file_tools import _read_impl, _list_impl
-            import re as _re
-
-            listing_arch = _list_impl()
-            all_files_arch = listing_arch.get("files", [])
-            html_files_arch = [f for f in all_files_arch if f.endswith(".html")]
-            has_shared_css = any(f.endswith(".css") for f in all_files_arch)
-            arch_info["has_shared_css"] = has_shared_css
-
-            # Detect inline CSS duplication
-            style_block_sizes = {}
-            placeholder_links = []
-            for html_file in html_files_arch:
-                content_result = _read_impl(html_file)
-                if content_result.get("status") != "ok":
-                    continue
-                content = content_result.get("content", "")
-                # Measure inline <style> block size
-                style_matches = _re.findall(r"<style[^>]*>(.*?)</style>", content, _re.DOTALL)
-                total_style_chars = sum(len(s) for s in style_matches)
-                if total_style_chars > 500:
-                    style_block_sizes[html_file] = total_style_chars
-                # Detect placeholder href="#" links (excluding anchor-only links)
-                href_hash = _re.findall(r'href=["\']#["\']', content)
-                if href_hash:
-                    placeholder_links.append({"file": html_file, "count": len(href_hash)})
-
-            # Flag DRY violation if 2+ files have large inline style blocks
-            # and no shared CSS file exists
-            duplicated_css = len(style_block_sizes) >= 2 and not has_shared_css
-            arch_info["inline_css_files"] = style_block_sizes
-            arch_info["duplicated_css"] = duplicated_css
-            arch_info["placeholder_links"] = placeholder_links
-            arch_info["placeholder_link_count"] = sum(p["count"] for p in placeholder_links)
-        except Exception as arch_exc:
-            arch_info["error"] = str(arch_exc)
-
-        result["architecture"] = arch_info
-
-        # Derived boolean flags for each check category
         syntax_ok = bool((result.get("syntax") or {}).get("syntax_ok", True))
-        has_content = workspace_info.get("non_placeholder_count", 0) > 0
-        landing_score = float(http_info.get("http_landing_score", 0.0))
-        nav_score = float(http_info.get("http_navigation_score", 0.0))
-
         result["syntax_ok"] = syntax_ok
-        result["workspace_ok"] = has_content
-        result["http_ok"] = landing_score >= 1.0 and nav_score >= 1.0
 
-        gate_passed = syntax_ok and has_content and landing_score >= 1.0
+        # Count open customer bugs to determine pass/fail
+        bug_count = 0
+        try:
+            from src.workspace_tools.file_tools import _get_open_feedback
+            open_items = _get_open_feedback(exclude_cycle=0)
+            bug_count = sum(1 for it in open_items if it.get("feedback_type") == "bug")
+        except Exception:
+            pass
+
+        result["open_bug_count"] = bug_count
+        gate_passed = syntax_ok and bug_count == 0
         result["qa_gate_passed"] = gate_passed
-        # Overwrite the syntax-check "status" so there is no contradiction
         result["status"] = "passed" if gate_passed else "failed"
 
         return result
@@ -546,13 +451,10 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             logger.warning("Customer testing skipped: %s", exc)
 
     def _take_workspace_snapshot(self) -> str:
-        """Build a structural summary of the workspace.
+        """Build a lightweight workspace overview (file names + structure).
 
-        Instead of dumping full file contents (which can be 20K+ chars
-        and overwhelm the LLM), this produces a compact overview:
-        file listing with sizes, Flask routes, DB tables, and template
-        names.  Agents can use ``read_workspace_file`` to get full
-        contents when they need them.
+        Never includes full file contents — agents use
+        ``read_workspace_file`` to inspect specific files on demand.
         """
         try:
             import re as _re_snap
@@ -571,28 +473,13 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 and "__pycache__" not in f
             ]
 
-            # --- File listing with sizes ---
-            file_lines = []
-            for fpath in sorted(readable_files):
-                result = _read_impl(fpath)
-                if result.get("status") != "ok":
-                    file_lines.append(f"  {fpath} (unreadable)")
-                    continue
-                content = result.get("content", "")
-                size = len(content)
-                file_lines.append(f"  {fpath} ({size:,} chars)")
+            sections = [f"Files ({len(readable_files)}):"]
+            sections.append("\n".join(f"  {f}" for f in sorted(readable_files)))
 
-            sections = [
-                f"Files ({len(readable_files)}):",
-                "\n".join(file_lines),
-            ]
-
-            # --- Flask routes from app.py ---
+            # Extract routes from app.py if it exists
             app_result = _read_impl("app.py")
             if app_result.get("status") == "ok":
                 app_source = app_result.get("content", "")
-
-                # Extract routes with methods
                 route_matches = _re_snap.findall(
                     r"@app\.route\(\s*['\"]([^'\"]+)['\"]"
                     r"(?:\s*,\s*methods\s*=\s*\[([^\]]*)\])?\s*\)",
@@ -603,59 +490,11 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                     for path, methods in route_matches:
                         methods_str = methods.strip().replace("'", "").replace('"', '') if methods else "GET"
                         route_lines.append(f"  {path} [{methods_str}]")
-                    sections.append(f"\nFlask routes ({len(route_matches)}):")
+                    sections.append(f"\nRoutes ({len(route_matches)}):")
                     sections.append("\n".join(route_lines))
 
-                # Extract DB tables from CREATE TABLE statements
-                tables = _re_snap.findall(
-                    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\(([^)]+)\)",
-                    app_source, _re_snap.IGNORECASE,
-                )
-                if tables:
-                    table_lines = []
-                    for tname, cols_str in tables:
-                        # Extract column names
-                        col_names = []
-                        for col_def in cols_str.split(","):
-                            col_def = col_def.strip()
-                            if col_def:
-                                col_name = col_def.split()[0]
-                                if col_name.upper() not in ("PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "CONSTRAINT"):
-                                    col_names.append(col_name)
-                        table_lines.append(f"  {tname}: {', '.join(col_names)}")
-                    sections.append(f"\nDB tables ({len(tables)}):")
-                    sections.append("\n".join(table_lines))
-
-                # Extract key features: decorators, imports, auth patterns
-                features = []
-                if "login_required" in app_source:
-                    features.append("auth (login_required)")
-                if "session[" in app_source or "session.get(" in app_source:
-                    features.append("session management")
-                if "check_password_hash" in app_source or "generate_password_hash" in app_source:
-                    features.append("password hashing")
-                if "flash(" in app_source:
-                    features.append("flash messages")
-                if "render_template" in app_source:
-                    features.append("Jinja2 templates")
-                if features:
-                    sections.append(f"\nFeatures: {', '.join(features)}")
-
-            # --- Template list ---
-            template_files = [f for f in readable_files if "template" in f.lower() or f.endswith(".html")]
-            if template_files:
-                sections.append(f"\nTemplates ({len(template_files)}):")
-                sections.append("\n".join(f"  {t}" for t in sorted(template_files)))
-
-            # --- CSS/JS files ---
-            static_files = [f for f in readable_files if any(f.endswith(ext) for ext in (".css", ".js"))]
-            if static_files:
-                sections.append(f"\nStatic assets ({len(static_files)}):")
-                sections.append("\n".join(f"  {s}" for s in sorted(static_files)))
-
-            snapshot = "\n".join(sections)
-            snapshot += "\n\nNOTE: Use read_workspace_file to view full file contents when needed."
-            return snapshot
+            sections.append("\nUse read_workspace_file to view file contents.")
+            return "\n".join(sections)
         except Exception as exc:
             logger.warning("Workspace snapshot failed: %s", exc)
             return "[Workspace snapshot unavailable]"
@@ -848,14 +687,17 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         return bool((self.state.qa_result or {}).get("qa_gate_passed"))
 
     def _format_qa_failures(self, qa_result: dict) -> str:
-        """Decompose QA result into a numbered, human-readable failure report."""
+        """Format QA failures into a human-readable report.
+
+        Only two failure sources: syntax errors and customer-reported bugs.
+        """
         if not qa_result:
             return "No QA results available."
 
         sections: List[str] = []
         failure_num = 0
 
-        # 1. Syntax failures (highest priority)
+        # 1. Syntax failures
         syntax = qa_result.get("syntax") or {}
         if not syntax.get("syntax_ok", True):
             failure_num += 1
@@ -864,56 +706,20 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 f_path = entry.get("file", "unknown")
                 error = entry.get("error", "unknown error")
                 lines.append(f"   - {f_path}: {error}")
-            lines.append("   Fix: correct the Python syntax errors above and re-check.")
+            lines.append("   Fix: correct the Python syntax errors above.")
             sections.append("\n".join(lines))
 
-        # 2. Workspace validation failures
-        if not qa_result.get("workspace_ok", True):
-            failure_num += 1
-            ws = qa_result.get("workspace") or {}
-            py_count = len(ws.get("py_files", []))
-            html_count = len(ws.get("html_files", []))
-            non_placeholder = ws.get("non_placeholder_count", 0)
-            lines = [f"{failure_num}. WORKSPACE CONTENT MISSING"]
-            lines.append(f"   Python files found: {py_count}")
-            lines.append(f"   HTML template files found: {html_count}")
-            lines.append(f"   Non-placeholder source files: {non_placeholder}")
-            lines.append("   Fix: create or update app.py with Flask routes and templates/ with real content.")
-            sections.append("\n".join(lines))
-
-        # 3. HTTP check failures
-        if not qa_result.get("http_ok", True):
-            failure_num += 1
-            http = qa_result.get("http_checks") or {}
-            lines = [f"{failure_num}. HTTP CHECK FAILURES"]
-            for key in ("http_landing_score", "http_navigation_score"):
-                if key in http:
-                    lines.append(f"   - {key}: {http[key]}")
-            # Show which routes failed and which succeeded
-            page_results = http.get("page_results") or {}
-            failed_routes = [p for p, r in page_results.items() if not r.get("loaded")]
-            ok_routes = [p for p, r in page_results.items() if r.get("loaded")]
-            if ok_routes:
-                lines.append(f"   Routes OK ({len(ok_routes)}): {', '.join(ok_routes)}")
-            if failed_routes:
-                lines.append(f"   Routes FAILED ({len(failed_routes)}): {', '.join(failed_routes)}")
-            broken = http.get("broken_links") or []
-            if broken:
-                lines.append(f"   Broken navigation links: {', '.join(broken[:10])}")
-            lines.append("   Fix: ensure ALL routes return HTTP 200. Check that parameterized routes (e.g. /startup/<int:id>) work with real database IDs. Seed data if needed.")
-            sections.append("\n".join(lines))
-
-        # 4. Unresolved customer feedback from prior cycles
+        # 2. Customer-reported bugs
         try:
             from src.workspace_tools.file_tools import _get_open_feedback
 
-            open_items = _get_open_feedback(exclude_cycle=self.state.iteration)
+            open_items = _get_open_feedback(exclude_cycle=0)
             bug_items = [it for it in open_items if it.get("feedback_type") == "bug"]
             friction_items = [it for it in open_items if it.get("feedback_type") == "friction"]
             actionable = bug_items + friction_items
             if actionable:
                 failure_num += 1
-                lines = [f"{failure_num}. UNRESOLVED CUSTOMER FEEDBACK ({len(actionable)} bugs/friction items)"]
+                lines = [f"{failure_num}. CUSTOMER FEEDBACK ({len(actionable)} bugs/friction items)"]
                 for item in actionable[:8]:
                     fid = item.get("id", "?")
                     ftype = item.get("feedback_type", "?")
@@ -959,32 +765,21 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             if hasattr(product_llm, "base_url") and product_llm.base_url:
                 kwargs["api_base"] = product_llm.base_url
 
-            # Build a progress snapshot so the summarizer knows where we are
-            qa = self.state.qa_result or {}
-            qa_passed = self.state.qa_passed
             iteration = self.state.iteration
             total_iters = self.state.max_iterations
-            pass_count = sum(
-                1 for m in self.state.metrics_evolution
-                if m.get("qa_passed")
-            ) if self.state.metrics_evolution else 0
-            fail_count = len(self.state.metrics_evolution) - pass_count if self.state.metrics_evolution else 0
+            completed = len(self.state.metrics_evolution) if self.state.metrics_evolution else 0
 
             prompt = f"""You are the product strategist for an autonomous startup-VC matching platform.
 The platform is built with Flask + SQLite + Jinja templates by AI agents in a Build-Measure-Learn loop.
 
 CURRENT STATUS:
-- We are about to start iteration {iteration} of {total_iters}
-- QA pass rate so far: {pass_count} passed, {fail_count} failed out of {iteration - 1} completed iterations
-- Last QA gate: {"PASSED" if qa_passed else "FAILED"}
-- QA checks: syntax correctness, workspace has real content (not placeholders), all HTTP routes return 200, navigation links work, customer personas can use the app
+- About to start iteration {iteration} of {total_iters} ({completed} completed so far)
 
 HOW THE SYSTEM WORKS:
 - BUILD phase: coordinator dispatches developer, product_strategist, and reviewer agents
-- MEASURE phase: automated QA checks (syntax, HTTP, navigation) + LLM-powered customer testing with 3 personas (founder, VC partner, journalist) who visit the live app and report bugs/friction
+- Customer testing: 3 LLM personas (founder, VC partner, journalist) visit the live app and report bugs/friction
 - LEARN phase: insights and recommendations are stored for the next iteration
-- QA gate passes when: no syntax errors, non-placeholder content exists, all routes load (landing_score >= 1.0)
-- Customer feedback is stored in feedback.db with status open/addressed
+- Customer feedback is stored in feedback.db and fed back to the build coordinator
 
 Below is the RAW ACCUMULATED CONTEXT from all memory stores (prior learnings, episodic history, team knowledge board, customer feedback, procedural memory). Much of it may be stale, redundant, or already resolved.
 
@@ -1088,14 +883,13 @@ RAW CONTEXT:
                         else:
                             m = _ep.outcome or {}
                             it = _ep.iteration or "?"
-                            qa = "PASS" if m.get("qa_passed") else "FAIL"
                             dispatches = m.get("dispatches", [])
-                            qa_issues = m.get("qa_issues", [])
-                            line = f"- Cycle {it}: QA={qa}"
+                            bugs = m.get("open_bugs", 0)
+                            line = f"- Cycle {it}"
                             if dispatches:
-                                line += f", tried: {'; '.join(dispatches[:3])}"
-                            if qa_issues:
-                                line += f", failed: {', '.join(qa_issues)}"
+                                line += f": {'; '.join(dispatches[:3])}"
+                            if bugs:
+                                line += f" (bugs: {bugs})"
                             ep_lines.append(line)
                     extra_context += (
                         "\n\n[Episodic Memory — recent cycle history]\n"
@@ -1162,26 +956,7 @@ RAW CONTEXT:
                 f"{self.state.user_feedback_summary}\n"
             )
 
-        # Inject architecture issues from previous QA gate
-        arch = (self.state.qa_result or {}).get("architecture", {})
-        if arch:
-            arch_issues = []
-            if arch.get("duplicated_css"):
-                files = list(arch.get("inline_css_files", {}).keys())
-                arch_issues.append(
-                    f"DRY: {len(files)} files have large inline CSS with no shared stylesheet"
-                )
-            pl_count = arch.get("placeholder_link_count", 0)
-            if pl_count > 0:
-                arch_issues.append(
-                    f"BROKEN LINKS: {pl_count} href=\"#\" placeholder links found"
-                )
-            if arch_issues:
-                extra_context += (
-                    "\n\n[Architecture Issues to Fix]\n"
-                    + "\n".join(f"- {i}" for i in arch_issues)
-                    + "\n"
-                )
+        # Architecture issues are now caught by customer personas, not hardcoded checks.
 
         return extra_context
 
@@ -1319,7 +1094,6 @@ RAW CONTEXT:
         developer_llm = shared_llm or get_llm("developer")
         reviewer_llm = shared_llm or get_llm("reviewer")
         product_llm = shared_llm or get_llm("product")
-        self.state.qa_passed = True
         self.state.qa_result = {}
         # NOTE: user_feedback_summary is NOT cleared here — it carries
         # forward from the previous iteration so _build_extra_context can
@@ -1336,49 +1110,27 @@ RAW CONTEXT:
         ws_dev_tools, ws_product_tools, ws_ro_tools = self._build_workspace_tools()
 
         # Collect learning context from prior iterations (memory stores).
-        # This is the part that accumulates and gets stale — it will be
-        # summarized on iteration 2+.
         memory_context = self._build_extra_context()
-
-        # Workspace snapshot: actual file contents the coordinator needs
-        snapshot = ""
-        if self.state.workspace_enabled:
-            snapshot = self._take_workspace_snapshot()
 
         # Unresolved feedback from prior cycles
         unresolved = self._get_unresolved_feedback()
 
         # Smart context curation: on iteration 2+, the strategist LLM
-        # summarizes the accumulated memory context (episodic history,
-        # consensus board, procedural memory, learnings, feedback) into
-        # a focused action brief.  The workspace snapshot is kept raw
-        # since the coordinator needs actual file contents to dispatch
-        # agents with specific code instructions.
+        # summarizes accumulated memory + feedback into a focused brief.
         if i > 1 and len(memory_context) > 4000:
-            # Feed summarizer the memory context + feedback + a compact
-            # file listing (not full source) so it knows what exists
-            file_listing = ""
-            if snapshot:
-                # Extract just filenames from the snapshot for awareness
-                import re as _re_snap
-                file_names = _re_snap.findall(r"^--- (.+?) ---$", snapshot, _re_snap.MULTILINE)
-                if file_names:
-                    file_listing = f"\n\n[Workspace files]: {', '.join(file_names)}"
-
             summarizer_input = memory_context
             if unresolved:
                 summarizer_input += f"\n\n{unresolved}"
-            if file_listing:
-                summarizer_input += file_listing
-
             memory_context = self._summarize_context(summarizer_input)
-            # Unresolved feedback is now baked into the brief
             unresolved = ""
 
-        # Assemble final context: summarized brief + raw workspace snapshot
+        # Assemble final context with a lightweight workspace overview
+        # (file names + structure only — agents use read_workspace_file
+        # to see actual contents when they need them).
         extra_context = memory_context
-        if snapshot:
-            extra_context += f"\n\n[Current workspace snapshot]\n{snapshot}\n"
+        if self.state.workspace_enabled:
+            snapshot = self._take_workspace_snapshot()
+            extra_context += f"\n\n[Workspace overview]\n{snapshot}\n"
         if unresolved:
             extra_context += f"\n\n{unresolved}\n"
 
@@ -1499,41 +1251,9 @@ RAW CONTEXT:
             )
             logger.info("POST-BUILD snapshot captured (%d chars)", len(post_build_snapshot))
 
-        # Deterministic QA gate
-        self.state.qa_result = self._run_quality_gate()
-        self.state.qa_passed = self._qa_passed()
-
-        # Surface architecture findings in build result so learn phase sees them
-        arch = self.state.qa_result.get("architecture", {})
-        if arch:
-            arch_lines = []
-            if arch.get("duplicated_css"):
-                files = list(arch.get("inline_css_files", {}).keys())
-                arch_lines.append(
-                    f"DRY VIOLATION: {len(files)} files have large inline <style> blocks "
-                    f"with no shared CSS file. Files: {', '.join(files)}. "
-                    f"Extract common styles into styles.css."
-                )
-            if arch.get("placeholder_link_count", 0) > 0:
-                for p in arch.get("placeholder_links", []):
-                    arch_lines.append(
-                        f"BROKEN LINKS: {p['file']} has {p['count']} href=\"#\" placeholder links."
-                    )
-            if arch_lines:
-                self.state.build_result_text = (
-                    f"{self.state.build_result_text}\n\n"
-                    f"[ARCHITECTURE ISSUES]\n" + "\n".join(arch_lines)
-                )
-
-        # Run remediation BEFORE customer testing so personas see the best
-        # content this iteration can produce (not a placeholder page).
-        if not self.state.qa_passed:
-            logger.warning("QA gate failed; running coordinator remediation")
-            self._run_coordinator_remediation(i, coordinator_llm, ws_product_tools)
-            self.state.qa_result = self._run_quality_gate()
-            self.state.qa_passed = self._qa_passed()
-
-        # LLM-powered customer testing (after remediation, so personas see real content)
+        # LLM-powered customer testing — personas visit the live app
+        # and report bugs/friction.  Their feedback flows to the next
+        # iteration's build coordinator via the strategist brief.
         if self.state.workspace_enabled:
             self._run_customer_testing()
 
@@ -1548,92 +1268,31 @@ RAW CONTEXT:
         self.state.build_failure_count = failure_count
         if not self.state.build_result_text:
             self.state.build_result_text = str(crew_output) if crew_output else ""
-        qa_summary = json.dumps(self.state.qa_result or {}, indent=2, ensure_ascii=True)
-        self.state.build_result_text = (
-            f"{self.state.build_result_text}\n\n[QA_GATE]\n{qa_summary}"
-            if self.state.build_result_text
-            else f"[QA_GATE]\n{qa_summary}"
-        )
         if crew_output and hasattr(crew_output, "pydantic") and crew_output.pydantic is not None:
             self.state.build_output = crew_output.pydantic
         else:
             self.state.build_output = None
 
-    # -- EVALUATE gate ----------------------------------------------------
+    # -- MEASURE phase -----------------------------------------------------
 
     @listen(build)
-    def evaluate(self):
-        """Run framework evaluation gates against QA and build metrics."""
-        logger.info("EVALUATE: Checking gates...")
+    def measure(self):
+        """Measure phase — customer feedback was already collected in build().
 
+        This step exists to maintain the BUILD -> MEASURE -> LEARN flow
+        structure required by the CrewAI Flow listener chain.
+        """
+        logger.info("MEASURE: Customer feedback collected, proceeding to learn...")
         self.state.gate_recommendation = "continue"
-
-        try:
-            from src.framework.contracts import CycleMetrics
-            procedure_score = self.state.build_success_count / max(1, self.state.build_task_count)
-            metrics = CycleMetrics(
-                cycle_id=self.state.iteration,
-                task_count=self.state.build_task_count,
-                success_count=self.state.build_success_count,
-                failure_count=self.state.build_failure_count,
-                domain_metrics={
-                    "qa_gate_passed": bool(self.state.qa_passed),
-                    "determinism_variance": 0.0,
-                    "procedure_score": procedure_score,
-                },
-            )
-
-            # Reconstruct previous CycleMetrics for trend analysis
-            previous_metrics = None
-            if self.state.previous_cycle_metrics:
-                previous_metrics = CycleMetrics(**self.state.previous_cycle_metrics)
-
-            evaluator = self._get_evaluator()
-            result = evaluator.evaluate(metrics, previous_metrics=previous_metrics)
-            self.state.gate_recommendation = result.recommended_action
-            logger.info(
-                f"  Gate result: {result.overall_status} -> {result.recommended_action}"
-            )
-
-            # Run policy updater on gate failures
-            if result.overall_status != "pass":
-                try:
-                    pu = self._get_policy_updater()
-                    patches = pu.propose_patches(result, self.state.active_policies)
-                    if patches:
-                        version = pu.apply_patches(self.state.active_policies, patches)
-                        self.state.active_policies = dict(version.policies)
-                        logger.info(f"  PolicyUpdater applied {len(patches)} patches")
-                except Exception as exc:
-                    logger.warning(f"  PolicyUpdater skipped: {exc}")
-
-            # Save current metrics for next iteration's trend analysis
-            self.state.previous_cycle_metrics = metrics.model_dump()
-
-        except Exception as exc:
-            logger.warning(f"  Evaluation skipped: {exc}")
-
-        # Collect user feedback if not already collected in build()
-        if self.state.workspace_enabled and not self.state.user_feedback_summary:
-            feedback_summary = self._collect_user_feedback()
-            if feedback_summary and "No user feedback" not in feedback_summary:
-                self.state.user_feedback_summary = feedback_summary
 
     # -- LEARN phase ------------------------------------------------------
 
-    @listen(evaluate)
+    @listen(measure)
     def learn(self):
         """Execute the LEARN phase and feed results back into next iteration."""
         logger.info("LEARN PHASE: Extracting insights...")
 
-        # Append QA status to build results so the LEARN coordinator can reflect on it
-        if not self.state.qa_passed:
-            qa_report = self._format_qa_failures(self.state.qa_result)
-            self.state.build_result_text = (
-                f"{self.state.build_result_text}\n\n[QA_STATUS: FAILED]\n{qa_report}"
-            )
-
-        # Collect real user feedback (simulation feedback available from cycle 1)
+        # Collect user feedback (customer personas' feedback from this cycle)
         feedback_summary = self._collect_user_feedback()
         if feedback_summary and "No user feedback" not in feedback_summary:
             self.state.build_result_text = (
@@ -1673,18 +1332,11 @@ RAW CONTEXT:
                 recommendations=recommendations,
             )
 
-        # Derive a real score from QA metrics when the LLM doesn't provide one
+        # Derive a score from dispatch success when the LLM doesn't provide one
         if self.state.learn_output.predicted_improvement == 0.0:
-            qa = self.state.qa_result or {}
-            http = qa.get("http_checks") or {}
-            landing = float(http.get("http_landing_score", 0.0))
-            nav = float(http.get("http_navigation_score", 0.0))
-            syntax_ok = float(bool((qa.get("syntax") or {}).get("syntax_ok", True)))
-            has_content = float(qa.get("workspace_ok", False))
-            # Weighted score: landing 50%, syntax 20%, navigation 20%, content 10%
-            self.state.learn_output.predicted_improvement = (
-                landing * 0.5 + syntax_ok * 0.2 + nav * 0.2 + has_content * 0.1
-            )
+            dispatched = self.state.build_success_count
+            total = max(1, self.state.build_task_count)
+            self.state.learn_output.predicted_improvement = dispatched / total
 
         self._apply_learning_feedback()
         self._record_iteration()
@@ -1694,7 +1346,6 @@ RAW CONTEXT:
     def _record_iteration(self) -> None:
         """Store iteration results in the accumulated state."""
         qa_metrics: Dict[str, Any] = {
-            "qa_passed": bool(self.state.qa_passed),
             "task_count": self.state.build_task_count,
             "success_count": self.state.build_success_count,
             "failure_count": self.state.build_failure_count,
@@ -1704,10 +1355,6 @@ RAW CONTEXT:
             "iteration": self.state.iteration,
             "build": self.state.build_result_text,
             "learn": self.state.learn_output.model_dump() if self.state.learn_output else {},
-            "quality_assurance": {
-                "qa_passed": bool(self.state.qa_passed),
-                "qa_result": dict(self.state.qa_result or {}),
-            },
             "user_feedback": dict(self.state.user_feedback or {}),
             "autonomy": {
                 "prompt_overrides": dict(self.state.prompt_overrides),
@@ -1722,7 +1369,7 @@ RAW CONTEXT:
             "total_tasks": self.state.build_task_count,
             "completed_count": self.state.build_success_count,
             "failed_count": self.state.build_failure_count,
-            "evaluation_status": "pass" if self.state.qa_passed else "fail",
+            "evaluation_status": "continue",
             "termination_action": self.state.gate_recommendation,
         })
 
@@ -1752,45 +1399,38 @@ RAW CONTEXT:
                     task = d.get("task_summary", "?")
                     dispatch_summary.append(f"{role}: {task}")
 
-                # Extract QA failure reasons
-                qa = self.state.qa_result or {}
-                qa_issues = []
-                if not qa.get("syntax_ok", True):
-                    qa_issues.append("syntax errors")
-                if not qa.get("workspace_ok", True):
-                    qa_issues.append("missing workspace content")
-                if not qa.get("http_ok", True):
-                    broken = (qa.get("http_checks") or {}).get("broken_links", [])
-                    score = (qa.get("http_checks") or {}).get("http_landing_score", "?")
-                    qa_issues.append(f"HTTP issues (landing_score={score}, broken={broken[:3]})")
+                # Count open customer bugs for the summary
+                bug_count = 0
+                try:
+                    from src.workspace_tools.file_tools import _get_open_feedback
+                    bug_count = sum(1 for it in _get_open_feedback(exclude_cycle=0)
+                                    if it.get("feedback_type") == "bug")
+                except Exception:
+                    pass
 
                 # Build a rich summary
                 parts = [
-                    f"Iteration {self.state.iteration}: QA={'PASS' if self.state.qa_passed else 'FAIL'}",
+                    f"Iteration {self.state.iteration}",
                     f"Dispatched {dispatch_count} agents",
                 ]
                 if dispatch_summary:
                     parts.append("Actions: " + "; ".join(dispatch_summary))
-                if qa_issues:
-                    parts.append("QA failures: " + ", ".join(qa_issues))
-                elif not self.state.qa_passed:
-                    parts.append("QA failed but no specific check failures detected")
+                if bug_count:
+                    parts.append(f"Customer bugs open: {bug_count}")
 
                 _rec_store.ep_record(Episode(
                     agent_id="bml_flow",
                     episode_type=_EpType.LEARNING,
                     action=f"bml_cycle_iteration_{self.state.iteration}",
                     iteration=self.state.iteration,
-                    success=bool(self.state.qa_passed),
+                    success=dispatch_count > 0,
                     outcome={
-                        "qa_passed": bool(self.state.qa_passed),
                         "task_count": self.state.build_task_count,
                         "success_count": self.state.build_success_count,
                         "failure_count": self.state.build_failure_count,
-                        "gate_recommendation": self.state.gate_recommendation,
                         "dispatch_count": dispatch_count,
                         "dispatches": dispatch_summary[:4],
-                        "qa_issues": qa_issues,
+                        "open_bugs": bug_count,
                     },
                     summary_text=". ".join(parts),
                 ))
@@ -1800,7 +1440,6 @@ RAW CONTEXT:
 
         logger.info(
             f"\nIteration {self.state.iteration} complete: "
-            f"QA={'PASS' if self.state.qa_passed else 'FAIL'}, "
             f"{self.state.build_success_count}/{self.state.build_task_count} tasks succeeded"
         )
 
@@ -1911,7 +1550,7 @@ RAW CONTEXT:
     def run(self) -> Dict[str, Any]:
         """Execute the full multi-iteration BML flow.
 
-        Each call to ``kickoff()`` runs one BUILD -> EVALUATE -> LEARN
+        Each call to ``kickoff()`` runs one BUILD -> MEASURE -> LEARN
         pipeline.  We loop externally so that learnings from iteration *N*
         feed into iteration *N+1* via ``procedure_hints``.
 

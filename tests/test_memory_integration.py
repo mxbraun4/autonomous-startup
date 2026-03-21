@@ -1,4 +1,4 @@
-"""End-to-end integration tests exercising all 5 memory types through UnifiedStore.
+"""End-to-end integration tests exercising episodic, procedural, and consensus memory through UnifiedStore.
 
 These tests use the new backends (not legacy), hitting real ChromaDB and SQLite.
 """
@@ -10,15 +10,12 @@ import pytest
 from src.framework.contracts import (
     ConsensusEntry,
     Episode,
-    SemanticDocument,
-    WorkingMemoryItem,
 )
 from src.framework.storage.unified_store import UnifiedStore
 from src.framework.storage.sync_wrapper import SyncUnifiedStore
 from src.framework.types import (
     EntryType,
     EpisodeType,
-    ItemType,
 )
 
 
@@ -27,46 +24,6 @@ def store(tmp_path):
     """Create a UnifiedStore in a temp directory."""
     s = UnifiedStore(data_dir=str(tmp_path))
     return SyncUnifiedStore(s)
-
-
-# -----------------------------------------------------------------------
-# Semantic (ChromaDB)
-# -----------------------------------------------------------------------
-
-class TestSemanticIntegration:
-    def test_add_search_delete(self, store):
-        store.sem_add(SemanticDocument(
-            text="Stripe is a fintech company providing payment infrastructure",
-            collection="semantic_startups",
-            tags=["fintech", "payments"],
-            source="web",
-        ))
-        store.sem_add(SemanticDocument(
-            text="Moderna develops mRNA vaccines for infectious diseases",
-            collection="semantic_startups",
-            tags=["healthtech", "biotech"],
-            source="web",
-        ))
-
-        results = store.sem_search("payment processing fintech", collection="semantic_startups", top_k=2)
-        assert len(results) >= 1
-        # The fintech doc should rank higher
-        assert "fintech" in results[0].tags or "payment" in results[0].text.lower()
-
-    def test_count_by_collection(self, store):
-        store.sem_add(SemanticDocument(text="doc1", collection="col_a"))
-        store.sem_add(SemanticDocument(text="doc2", collection="col_a"))
-        store.sem_add(SemanticDocument(text="doc3", collection="col_b"))
-
-        assert store.sem_count("col_a") == 2
-        assert store.sem_count("col_b") == 1
-
-    def test_get_by_id(self, store):
-        doc = SemanticDocument(text="identifiable document", collection="semantic_default")
-        eid = store.sem_add(doc)
-        result = store.sem_get(eid)
-        assert result is not None
-        assert result.text == "identifiable document"
 
 
 # -----------------------------------------------------------------------
@@ -233,19 +190,12 @@ class TestConsensusIntegration:
 
 
 # -----------------------------------------------------------------------
-# Cross-tier: Working + Episodic + Consensus
+# Cross-tier: Episodic + Procedural + Consensus
 # -----------------------------------------------------------------------
 
 class TestCrossTierIntegration:
     def test_run_lifecycle_with_all_tiers(self, store):
         store.start_run("run_001")
-
-        # Working memory
-        store.wm_put(WorkingMemoryItem(
-            agent_id="coordinator",
-            item_type=ItemType.TASK_STATE,
-            content={"phase": "build", "iteration": 1},
-        ))
 
         # Record episode
         store.ep_record(Episode(
@@ -256,13 +206,6 @@ class TestCrossTierIntegration:
             outcome={"found": 3},
             success=True,
             summary_text="Found 3 fintech startups",
-        ))
-
-        # Store semantic knowledge
-        store.sem_add(SemanticDocument(
-            text="Fintech sector is growing 15% YoY in 2024",
-            collection="semantic_default",
-            tags=["fintech", "market_data"],
         ))
 
         # Record a procedure
@@ -283,29 +226,6 @@ class TestCrossTierIntegration:
         store.end_run("run_001")
 
         # Verify everything persisted
-        assert len(store.wm_list("coordinator")) == 1
         assert store.ep_get_success_rate("data_expert") == 1.0
-        assert store.sem_count() >= 1
         assert store.proc_get("data_collection") is not None
         assert store.cons_get("strategy.target_sector").value == "fintech"
-
-    def test_working_memory_from_semantic(self, store):
-        """Simulate pulling a fact from semantic into working memory."""
-        store.sem_add(SemanticDocument(
-            entity_id="sem_doc_1",
-            text="Stripe processes $1T in payments annually",
-            tags=["fintech"],
-        ))
-
-        # Agent pulls this into working memory
-        store.wm_put(WorkingMemoryItem(
-            agent_id="developer",
-            item_type=ItemType.RETRIEVED_FACT,
-            content={"fact": "Stripe processes $1T in payments annually"},
-            source_memory_type="semantic",
-            source_entity_id="sem_doc_1",
-        ))
-
-        items = store.wm_list("developer", item_type=ItemType.RETRIEVED_FACT)
-        assert len(items) == 1
-        assert items[0].source_entity_id == "sem_doc_1"

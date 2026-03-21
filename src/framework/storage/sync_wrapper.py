@@ -15,11 +15,9 @@ from src.framework.contracts import (
     ConsensusEntry,
     Episode,
     Procedure,
-    SemanticDocument,
-    WorkingMemoryItem,
 )
 from src.framework.storage.unified_store import UnifiedStore
-from src.framework.types import EntryType, EpisodeType, ItemType
+from src.framework.types import EntryType, EpisodeType
 
 # Module-level pool reused across all _run() calls when an event loop is
 # already running.  Lazily initialised; cleaned up via atexit.
@@ -98,59 +96,6 @@ class SyncUnifiedStore:
 
     def end_run(self, run_id: str) -> None:
         _run(self._store.end_run(run_id))
-
-    def save_checkpoint(self, run_id: str, path: str) -> None:
-        _run(self._store.save_checkpoint(run_id, path))
-
-    def load_checkpoint(self, run_id: str, path: str) -> None:
-        _run(self._store.load_checkpoint(run_id, path))
-
-    # ------------------------------------------------------------------
-    # Working Memory
-    # ------------------------------------------------------------------
-
-    def wm_put(self, item: WorkingMemoryItem) -> str:
-        return _run(self._store.wm_put(item))
-
-    def wm_get(self, agent_id: str, entity_id: str) -> Optional[WorkingMemoryItem]:
-        return _run(self._store.wm_get(agent_id, entity_id))
-
-    def wm_list(self, agent_id: str, item_type: Optional[ItemType] = None) -> List[WorkingMemoryItem]:
-        return _run(self._store.wm_list(agent_id, item_type))
-
-    def wm_remove(self, agent_id: str, entity_id: str) -> bool:
-        return _run(self._store.wm_remove(agent_id, entity_id))
-
-    def wm_clear(self, agent_id: str) -> int:
-        return _run(self._store.wm_clear(agent_id))
-
-    def wm_get_context_for_prompt(self, agent_id: str, max_tokens: int = 4000) -> str:
-        return _run(self._store.wm_get_context_for_prompt(agent_id, max_tokens))
-
-    # ------------------------------------------------------------------
-    # Semantic Memory
-    # ------------------------------------------------------------------
-
-    def sem_add(self, doc: SemanticDocument) -> str:
-        return _run(self._store.sem_add(doc))
-
-    def sem_search(
-        self,
-        query: str,
-        collection: str = "semantic_default",
-        top_k: int = 5,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[SemanticDocument]:
-        return _run(self._store.sem_search(query, collection, top_k, filters))
-
-    def sem_get(self, entity_id: str) -> Optional[SemanticDocument]:
-        return _run(self._store.sem_get(entity_id))
-
-    def sem_delete(self, entity_id: str) -> bool:
-        return _run(self._store.sem_delete(entity_id))
-
-    def sem_count(self, collection: str = "semantic_default") -> int:
-        return _run(self._store.sem_count(collection))
 
     # ------------------------------------------------------------------
     # Episodic Memory
