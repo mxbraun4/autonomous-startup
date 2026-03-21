@@ -584,11 +584,11 @@ def make_dispatch_task_tool(
 
     _ROLE_INSTRUCTIONS = {
         "developer": (
-            "You own the workspace. Your job is to WRITE code, not just read it.\n"
+            "You own the workspace. Your job is to WRITE and MODIFY production code (app.py, templates, CSS).\n"
             "Tech stack: Flask (app.py), Jinja2 templates (templates/), static files (static/), SQLite (.db).\n"
-            "You can also pull in any CDN-hosted libraries (CSS frameworks, JS libraries, icon sets, etc.) via script/link tags — no installation required.\n"
-            "Call ONE tool at a time. After reading context, start writing files immediately.\n"
-            "Do NOT loop on reading — if the workspace is empty, start building from scratch.\n"
+            "You can pull in CDN-hosted libraries via script/link tags — no installation required.\n"
+            "IMPORTANT: Do NOT write test scripts, debug scripts, or diagnostic files. Only modify the actual app files.\n"
+            "If something is broken, fix it directly in app.py or the relevant template — do not create test_*.py or debug_*.py files.\n"
             "Use run_workspace_sql to create/seed SQLite tables. app.py must read host/port from env vars.\n"
         ),
         "reviewer": (

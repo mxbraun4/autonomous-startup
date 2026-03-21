@@ -965,7 +965,9 @@ RAW CONTEXT:
             try:
                 from src.workspace_tools.file_tools import (
                     read_workspace_file,
+                    edit_workspace_file,
                     write_workspace_file,
+                    delete_workspace_file,
                     list_workspace_files,
                     review_workspace_files,
                     check_workspace_http,
@@ -973,7 +975,8 @@ RAW CONTEXT:
                 )
                 from src.crewai_agents.tools import list_installed_packages
                 ws_dev_tools = [
-                    read_workspace_file, write_workspace_file,
+                    read_workspace_file, edit_workspace_file,
+                    write_workspace_file, delete_workspace_file,
                     list_workspace_files,
                     check_workspace_http,
                     run_workspace_sql,
