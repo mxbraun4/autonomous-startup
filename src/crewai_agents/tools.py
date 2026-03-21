@@ -629,17 +629,15 @@ def make_dispatch_task_tool(
         except Exception:
             pass
 
-        # Prepend role context + extra_context
+        # Prepend role-specific instructions + context from prior iterations.
+        # The extra_context has already been summarized by the strategist LLM
+        # at the coordinator level, so we pass it through as-is.
         original_task_description = task_description
-        preamble = "Act through tool calls, not text-only responses.\n\n"
         role_instructions = _ROLE_INSTRUCTIONS.get(agent_role, "")
         if role_instructions:
-            preamble += role_instructions + "\n"
+            task_description = role_instructions + "\n" + task_description
         if extra_context:
-            # Cap extra_context to avoid prompt bloat
-            ctx = extra_context[:1500]
-            preamble += f"[Prior context]\n{ctx}\n\n"
-        task_description = preamble + task_description
+            task_description += f"\n\n[Context from prior iterations]\n{extra_context}"
 
         # Create temporary agent from registry
         entry = agent_registry[agent_role]
@@ -931,13 +929,8 @@ def _execute_dispatch_fallback(
             "Call ONE tool at a time. After reading context, start writing files immediately.\n"
         ),
     }
-    preamble = "Act through tool calls, not text-only responses.\n\n"
     role_instructions = _ROLE_INSTRUCTIONS.get(agent_role, "")
-    if role_instructions:
-        preamble += role_instructions + "\n"
-    if extra_context:
-        preamble += f"[Prior context]\n{extra_context[:1500]}\n\n"
-    full_desc = preamble + task_description
+    full_desc = (role_instructions + "\n" + task_description) if role_instructions else task_description
 
     single_task = _Task(
         description=full_desc,

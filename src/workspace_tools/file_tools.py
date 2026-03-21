@@ -105,6 +105,7 @@ def _write_impl(file_path: str, content: str) -> dict:
     try:
         resolved.parent.mkdir(parents=True, exist_ok=True)
         resolved.write_text(content, encoding="utf-8")
+        _invalidate_cache_entry(file_path)
         return {"status": "ok", "path": str(resolved), "bytes_written": len(content.encode("utf-8"))}
     except Exception as exc:
         return {"status": "error", "reason": str(exc)}
@@ -437,13 +438,11 @@ def _mark_feedback_addressed(feedback_ids: list, addressed_in_cycle: int) -> int
 
 @tool
 def read_workspace_file(file_path: str) -> str:
-    """Read a file from the workspace directory.
+    """Read a single file from the workspace. You MUST provide a file path.
 
     Args:
-        file_path: Relative path to the file, e.g. "index.html" or "css/styles.css"
-
-    Returns:
-        JSON with the file content
+        file_path: Required. Relative path like "app.py" or "templates/index.html".
+            Call list_workspace_files first to see available files.
     """
     global _read_cache_hits
     # Per-cycle cache: return cached result if this file was already read
@@ -463,14 +462,11 @@ def read_workspace_file(file_path: str) -> str:
 
 @tool
 def write_workspace_file(file_path: str, content: str) -> str:
-    """Write or overwrite a file inside the workspace directory.
+    """Write or overwrite a file in the workspace. Both arguments are required.
 
     Args:
-        file_path: Relative path to write, e.g. "index.html" or "styles.css"
-        content: The full file content to write
-
-    Returns:
-        JSON confirmation with the written path
+        file_path: Required. Relative path like "app.py" or "templates/index.html".
+        content: Required. The complete file content as a single string (not a list).
     """
     result = _write_impl(file_path, content)
     # Invalidate the read cache for this file so subsequent reads see

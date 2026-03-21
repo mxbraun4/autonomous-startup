@@ -353,24 +353,24 @@ def create_master_coordinator(
         Master Coordinator agent
     """
     backstory = _with_prompt_override(
-        '''You are a startup ecosystem coordinator. You analyze build results, extract learnings, and formulate recommendations for the next iteration. Use your tools to gather context and share your findings. Always act through tool calls, not text-only responses. Call ONE tool at a time, never multiple tools in parallel.''',
+        '''You are a startup ecosystem coordinator. You analyze build results, extract learnings, and formulate recommendations for the next iteration. Respond with a structured text analysis — do NOT call tools.''',
         prompt_override,
     )
 
-    tools = [make_share_insight("coordinator"), get_team_insights]
+    tools = []
     if extra_tools:
         tools.extend(extra_tools)
 
     return Agent(
         role='Strategic Coordinator',
-        goal='Execute Build-Evaluate-Learn cycles to continuously improve the startup-VC matching platform',
+        goal='Analyze iteration results and produce actionable insights for the next Build-Measure-Learn cycle',
         backstory=backstory,
         llm=llm or get_llm("coordinator"),
         tools=tools,
         verbose=True,
-        allow_delegation=True,
-        memory=True,
-        max_iter=15,
+        allow_delegation=False,
+        memory=False,
+        max_iter=5,
     )
 
 
@@ -470,9 +470,7 @@ Tech stack: Python Flask backend (app.py), Jinja2 HTML templates (templates/), s
 
 DEPENDENCY RULE: You CANNOT install new packages. Do NOT create requirements.txt or install_deps.py. Use list_installed_packages to check what's available.
 
-Always act through tool calls. When something needs fixing, fix it — don't just report it.
-BEFORE finishing, run check_workspace_http to verify your changes actually work. If any routes fail, fix them immediately — do not declare "done" with broken routes.
-IMPORTANT: Call ONE tool at a time, never multiple tools in parallel. After each tool result, decide your next step.''',
+When something needs fixing, fix it — don't just report it. Call ONE tool at a time.''',
         prompt_override,
     )
 

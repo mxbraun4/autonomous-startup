@@ -114,40 +114,24 @@ def _start_dashboard(port: int = 8765, open_browser: bool = True) -> str | None:
 
 
 def _start_preview_server(port: int = 8080, open_browser: bool = True) -> str | None:
-    """Start the workspace preview server on a daemon thread.
+    """Start a preview server that auto-restarts the Flask app when files change.
 
-    If the workspace contains ``app.py``, launches it as a Flask subprocess.
-    Otherwise falls back to the static preview server.
+    Polls workspace files for changes and restarts the Flask subprocess
+    so the browser always shows the latest version of the app.
 
     Returns the preview URL, or None if the server fails to start.
     """
-    from scripts.serve_workspace import PreviewServer, PreviewHandler
+    import time
+
+    from src.workspace_tools.server import FlaskAppServer
 
     workspace = Path(__file__).resolve().parent.parent / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
 
-    # Write Flask app placeholder so the server has something to show immediately
-    app_py = workspace / "app.py"
-    templates_dir = workspace / "templates"
-    if not app_py.exists():
-        templates_dir.mkdir(parents=True, exist_ok=True)
-        app_py.write_text(
-            'import os\n'
-            'from flask import Flask, render_template\n'
-            '\n'
-            'app = Flask(__name__)\n'
-            '\n'
-            "@app.route('/')\n"
-            'def index():\n'
-            "    return render_template('index.html')\n"
-            '\n'
-            "if __name__ == '__main__':\n"
-            "    host = os.environ.get('FLASK_RUN_HOST', '127.0.0.1')\n"
-            "    port = int(os.environ.get('FLASK_RUN_PORT', '5000'))\n"
-            '    app.run(host=host, port=port, debug=False)\n',
-            encoding="utf-8",
-        )
-        (templates_dir / "index.html").write_text(
+    # Write placeholder so there's something to show before agents build
+    index_html = workspace / "index.html"
+    if not index_html.exists():
+        index_html.write_text(
             '<!DOCTYPE html>\n'
             '<html>\n'
             '<head><title>Startup-VC Matching Platform</title></head>\n'
@@ -159,21 +143,54 @@ def _start_preview_server(port: int = 8080, open_browser: bool = True) -> str | 
             encoding="utf-8",
         )
 
-    try:
-        server = PreviewServer(
-            ("127.0.0.1", port),
-            PreviewHandler,
-            workspace=workspace,
-        )
-    except OSError as exc:
-        logger.warning("Preview server failed to bind port %s: %s", port, exc)
-        return None
-
     url = f"http://127.0.0.1:{port}"
-    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.5}, daemon=True)
+
+    def _watch_and_restart():
+        """Background thread: start Flask app and restart on file changes."""
+        import hashlib
+
+        server = None
+        last_hash = ""
+
+        while True:
+            # Compute hash of workspace files
+            parts = []
+            for p in sorted(workspace.rglob("*")):
+                if p.is_file() and not p.name.startswith(".") and "__pycache__" not in str(p):
+                    try:
+                        stat = p.stat()
+                        parts.append(f"{p.name}:{stat.st_mtime_ns}:{stat.st_size}")
+                    except OSError:
+                        continue
+            current_hash = hashlib.md5("|".join(parts).encode()).hexdigest()
+
+            # Restart if files changed and app.py exists
+            if current_hash != last_hash:
+                last_hash = current_hash
+                app_py = workspace / "app.py"
+                if app_py.is_file():
+                    # Stop old server
+                    if server is not None:
+                        try:
+                            server.stop()
+                        except Exception:
+                            pass
+
+                    # Start new server
+                    try:
+                        server = FlaskAppServer(str(workspace), port=port)
+                        server.start(timeout=30)
+                        logger.info("Preview server (re)started at %s", url)
+                    except Exception as exc:
+                        logger.debug("Preview Flask start failed: %s", exc)
+                        server = None
+
+            time.sleep(3)
+
+    thread = threading.Thread(target=_watch_and_restart, daemon=True)
     thread.start()
 
-    logger.info("Workspace preview started at %s", url)
+    logger.info("Workspace preview watcher started (port %s)", port)
     print(f"  Preview: {url}")
 
     if open_browser:

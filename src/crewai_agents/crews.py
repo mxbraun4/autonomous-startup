@@ -749,8 +749,8 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         Uses the same model as the product strategist agent (via
         ``get_llm("product")``).  Falls back to hard cap on error.
         """
-        if len(raw_context) < 4000:
-            return raw_context  # short enough, no summarization needed
+        if not raw_context.strip():
+            return raw_context
 
         try:
             import litellm
@@ -783,25 +783,21 @@ HOW THE SYSTEM WORKS:
 
 Below is the RAW ACCUMULATED CONTEXT from all memory stores (prior learnings, episodic history, team knowledge board, customer feedback, procedural memory). Much of it may be stale, redundant, or already resolved.
 
-YOUR JOB: Produce a concise ACTION BRIEF (max 2000 chars) for the BUILD coordinator containing:
-1. CURRENT STATE: What has been built so far and what's working
-2. TOP PRIORITIES: The 3-5 most critical unresolved issues (specific routes, errors, feedback)
-3. DO NOT REPEAT: What was tried before and failed (so agents try something different)
-4. KEEP DOING: What worked and should be continued
-5. NEXT STEPS: Concrete actions for the developer to take this iteration
+YOUR JOB: Produce an ACTION BRIEF (max 1200 chars) containing:
+1. What exists now and what's working
+2. Top 3-5 unresolved issues (specific: route names, errors, customer feedback)
+3. What was tried before and failed (so agents try something different)
 
-DO NOT include resolved issues, praise, or vague observations.
-DO NOT repeat the same issue multiple times.
-Be specific — use route names, error messages, field names, concrete fixes.
+No resolved issues, no praise, no repetition. Be specific.
 
 RAW CONTEXT:
-{raw_context[:16000]}"""
+{raw_context[:12000]}"""
 
             response = litellm.completion(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=1500,
+                max_tokens=800,
                 **kwargs,
             )
             summary = response.choices[0].message.content or ""
@@ -1116,8 +1112,8 @@ RAW CONTEXT:
         unresolved = self._get_unresolved_feedback()
 
         # Smart context curation: on iteration 2+, the strategist LLM
-        # summarizes accumulated memory + feedback into a focused brief.
-        if i > 1 and len(memory_context) > 4000:
+        # always summarizes accumulated memory + feedback into a focused brief.
+        if i > 1 and memory_context.strip():
             summarizer_input = memory_context
             if unresolved:
                 summarizer_input += f"\n\n{unresolved}"
