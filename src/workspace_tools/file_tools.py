@@ -251,7 +251,7 @@ def _check_http_impl(pages: str = "") -> dict:
 
     # Lazy imports to avoid circular dependencies
     from src.workspace_tools.server import FlaskAppServer, WorkspaceServer
-    from src.simulation.http_checks import WorkspaceHTTPChecker
+    from src.simulation.http_checks import WorkspaceHTTPChecker, create_authenticated_opener
 
     # Prefer Flask app if workspace/app.py exists
     flask_server = FlaskAppServer(str(_workspace_root), port=0)
@@ -260,7 +260,12 @@ def _check_http_impl(pages: str = "") -> dict:
     server = flask_server if use_flask else WorkspaceServer(str(_workspace_root), port=0)
     try:
         base_url = server.start()
-        checker = WorkspaceHTTPChecker(base_url)
+
+        # Establish authenticated session so protected routes return real content
+        opener, _auth_ok = create_authenticated_opener(
+            base_url, str(_workspace_root),
+        )
+        checker = WorkspaceHTTPChecker(base_url, opener=opener if _auth_ok else None)
 
         if pages.strip():
             # Check specific pages/routes

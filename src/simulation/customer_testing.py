@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, List, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
+from src.simulation.http_checks import create_authenticated_opener
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -68,17 +69,29 @@ _MAX_PAGE_CHARS = 16_000
 # ---------------------------------------------------------------------------
 
 
-def _fetch_page(base_url: str, path: str, timeout: int = 10) -> Optional[str]:
+def _fetch_page(
+    base_url: str,
+    path: str,
+    timeout: int = 10,
+    opener: Any = None,
+) -> Optional[str]:
     """Fetch a page and return its body text, or None on error."""
     url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
     try:
+        if opener is not None:
+            resp = opener.open(url, timeout=timeout)
+            return resp.read().decode("utf-8", errors="replace")
         with urlopen(url, timeout=timeout) as resp:
             return resp.read().decode("utf-8", errors="replace")
     except (HTTPError, URLError, OSError):
         return None
 
 
-def _discover_pages(base_url: str, workspace_root: str = "") -> Dict[str, str]:
+def _discover_pages(
+    base_url: str,
+    workspace_root: str = "",
+    opener: Any = None,
+) -> Dict[str, str]:
     """Discover pages dynamically from the workspace.
 
     If ``app.py`` exists (Flask app), extracts routes from ``@app.route``
@@ -97,7 +110,7 @@ def _discover_pages(base_url: str, workspace_root: str = "") -> Dict[str, str]:
         if (ws / "app.py").is_file():
             routes = _discover_flask_routes(workspace_root)
             for route in routes:
-                body = _fetch_page(base_url, route)
+                body = _fetch_page(base_url, route, opener=opener)
                 if body is not None:
                     pages[route] = body
         else:
@@ -106,13 +119,13 @@ def _discover_pages(base_url: str, workspace_root: str = "") -> Dict[str, str]:
                 for html_file in sorted(ws.rglob("*.html")):
                     rel_path = str(html_file.relative_to(ws)).replace("\\", "/")
                     if rel_path not in pages:
-                        body = _fetch_page(base_url, rel_path)
+                        body = _fetch_page(base_url, rel_path, opener=opener)
                         if body is not None:
                             pages[rel_path] = body
 
     # Fallback: at least try the root
     if not pages:
-        index_body = _fetch_page(base_url, "/")
+        index_body = _fetch_page(base_url, "/", opener=opener)
         if index_body is not None:
             pages["/"] = index_body
 
@@ -375,8 +388,16 @@ def run_customer_testing(
         _emit("customer_testing_end", {"feedback_count": submitted, "mock": True})
         return {"status": "ok", "feedback_count": submitted, "personas_tested": 3}
 
+    # Establish an authenticated session so protected routes show real content
+    opener, auth_ok = create_authenticated_opener(base_url, workspace_root)
+    if auth_ok:
+        logger.info("Customer testing: authenticated session established")
+    else:
+        logger.info("Customer testing: proceeding without authentication")
+        opener = None  # fall back to plain urlopen
+
     # Discover pages dynamically from workspace directory
-    pages = _discover_pages(base_url, workspace_root)
+    pages = _discover_pages(base_url, workspace_root, opener=opener)
     if not pages:
         logger.info("Customer testing: no pages discovered, skipping.")
         _emit("customer_testing_end", {"feedback_count": 0, "reason": "no_pages"})

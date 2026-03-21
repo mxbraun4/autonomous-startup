@@ -261,7 +261,7 @@ class _FlowState(BaseModel):
     id: str = Field(default_factory=lambda: __import__("uuid").uuid4().hex[:16])
 
     iteration: int = 0
-    max_iterations: int = 10
+    max_iterations: int = 400
     verbose: int = 2
     llm: Any = None
     enable_dynamic_agent_factory: bool = True
@@ -312,7 +312,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
 
     def __init__(
         self,
-        max_iterations: int = 10,
+        max_iterations: int = 400,
         verbose: int = 2,
         enable_dynamic_agent_factory: bool = True,
         max_agents_per_cycle: int = 6,
@@ -490,11 +490,20 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
 
         result["architecture"] = arch_info
 
-        # Informational flag — the evaluate phase decides what to do with it
+        # Derived boolean flags for each check category
         syntax_ok = bool((result.get("syntax") or {}).get("syntax_ok", True))
         has_content = workspace_info.get("non_placeholder_count", 0) > 0
         landing_score = float(http_info.get("http_landing_score", 0.0))
-        result["qa_gate_passed"] = syntax_ok and has_content and landing_score >= 1.0
+        nav_score = float(http_info.get("http_navigation_score", 0.0))
+
+        result["syntax_ok"] = syntax_ok
+        result["workspace_ok"] = has_content
+        result["http_ok"] = landing_score >= 1.0 and nav_score >= 1.0
+
+        gate_passed = syntax_ok and has_content and landing_score >= 1.0
+        result["qa_gate_passed"] = gate_passed
+        # Overwrite the syntax-check "status" so there is no contradiction
+        result["status"] = "passed" if gate_passed else "failed"
 
         return result
 
@@ -583,15 +592,40 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             logger.warning("Workspace snapshot failed: %s", exc)
             return "[Workspace snapshot unavailable]"
 
+    # Feedback older than this many cycles is auto-addressed to keep
+    # the backlog manageable and prevent prompt bloat.
+    _FEEDBACK_STALE_CYCLES = 5
+
     def _get_unresolved_feedback(self) -> str:
         """Collect open feedback from prior cycles as a formatted summary.
 
         Returns a string listing unresolved feedback items with their IDs
         so the BUILD coordinator can address them and mark them resolved
         via the mark_feedback_addressed tool.
+
+        Feedback older than ``_FEEDBACK_STALE_CYCLES`` iterations is
+        automatically marked as addressed to prevent infinite accumulation.
         """
         try:
-            from src.workspace_tools.file_tools import _get_open_feedback
+            from src.workspace_tools.file_tools import (
+                _get_open_feedback,
+                _mark_feedback_addressed,
+            )
+
+            # Auto-expire stale feedback
+            cutoff = self.state.iteration - self._FEEDBACK_STALE_CYCLES
+            if cutoff > 0:
+                all_open = _get_open_feedback(exclude_cycle=0)  # get everything
+                stale_ids = [
+                    it["id"] for it in all_open
+                    if (it.get("cycle_id") or 0) < cutoff
+                ]
+                if stale_ids:
+                    _mark_feedback_addressed(stale_ids, addressed_in_cycle=self.state.iteration)
+                    logger.info(
+                        "Auto-expired %d stale feedback items (older than %d cycles)",
+                        len(stale_ids), self._FEEDBACK_STALE_CYCLES,
+                    )
 
             open_items = _get_open_feedback(exclude_cycle=self.state.iteration)
             if not open_items:
@@ -801,6 +835,29 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             lines.append("   Fix: ensure ALL routes return HTTP 200. Check that parameterized routes (e.g. /startup/<int:id>) work with real database IDs. Seed data if needed.")
             sections.append("\n".join(lines))
 
+        # 4. Unresolved customer feedback from prior cycles
+        try:
+            from src.workspace_tools.file_tools import _get_open_feedback
+
+            open_items = _get_open_feedback(exclude_cycle=self.state.iteration)
+            bug_items = [it for it in open_items if it.get("feedback_type") == "bug"]
+            friction_items = [it for it in open_items if it.get("feedback_type") == "friction"]
+            actionable = bug_items + friction_items
+            if actionable:
+                failure_num += 1
+                lines = [f"{failure_num}. UNRESOLVED CUSTOMER FEEDBACK ({len(actionable)} bugs/friction items)"]
+                for item in actionable[:8]:
+                    fid = item.get("id", "?")
+                    ftype = item.get("feedback_type", "?")
+                    msg = item.get("message", "")
+                    lines.append(f"   [{fid}][{ftype}] {msg}")
+                if len(actionable) > 8:
+                    lines.append(f"   ... and {len(actionable) - 8} more")
+                lines.append("   Fix: dispatch developer to address these issues, then call mark_feedback_addressed with the resolved IDs.")
+                sections.append("\n".join(lines))
+        except Exception:
+            pass
+
         if not sections:
             return "QA gate passed - no failures detected."
 
@@ -808,13 +865,106 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
 
     # -- BUILD phase ------------------------------------------------------
 
+    def _summarize_context(self, raw_context: str) -> str:
+        """Use a single LLM call to compress raw accumulated context.
+
+        Replaces blind truncation with intelligent curation: the LLM
+        identifies the most actionable items, discards stale/resolved
+        issues, and produces a focused brief for the next BUILD phase.
+
+        Uses the same model as the product strategist agent (via
+        ``get_llm("product")``).  Falls back to hard cap on error.
+        """
+        if len(raw_context) < 4000:
+            return raw_context  # short enough, no summarization needed
+
+        try:
+            import litellm
+
+            # Resolve model the same way CrewAI agents do
+            product_llm = self.state.llm or get_llm("product")
+            model = product_llm.model
+            # Build kwargs from the LLM config
+            kwargs: dict = {}
+            if hasattr(product_llm, "api_key") and product_llm.api_key:
+                kwargs["api_key"] = product_llm.api_key
+            if hasattr(product_llm, "base_url") and product_llm.base_url:
+                kwargs["api_base"] = product_llm.base_url
+
+            # Build a progress snapshot so the summarizer knows where we are
+            qa = self.state.qa_result or {}
+            qa_passed = self.state.qa_passed
+            iteration = self.state.iteration
+            total_iters = self.state.max_iterations
+            pass_count = sum(
+                1 for m in self.state.metrics_evolution
+                if m.get("qa_passed")
+            ) if self.state.metrics_evolution else 0
+            fail_count = len(self.state.metrics_evolution) - pass_count if self.state.metrics_evolution else 0
+
+            prompt = f"""You are the product strategist for an autonomous startup-VC matching platform.
+The platform is built with Flask + SQLite + Jinja templates by AI agents in a Build-Measure-Learn loop.
+
+CURRENT STATUS:
+- We are about to start iteration {iteration} of {total_iters}
+- QA pass rate so far: {pass_count} passed, {fail_count} failed out of {iteration - 1} completed iterations
+- Last QA gate: {"PASSED" if qa_passed else "FAILED"}
+- QA checks: syntax correctness, workspace has real content (not placeholders), all HTTP routes return 200, navigation links work, customer personas can use the app
+
+HOW THE SYSTEM WORKS:
+- BUILD phase: coordinator dispatches developer, product_strategist, and reviewer agents
+- MEASURE phase: automated QA checks (syntax, HTTP, navigation) + LLM-powered customer testing with 3 personas (founder, VC partner, journalist) who visit the live app and report bugs/friction
+- LEARN phase: insights and recommendations are stored for the next iteration
+- QA gate passes when: no syntax errors, non-placeholder content exists, all routes load (landing_score >= 1.0)
+- Customer feedback is stored in feedback.db with status open/addressed
+
+Below is the RAW ACCUMULATED CONTEXT from all memory stores (prior learnings, episodic history, team knowledge board, customer feedback, procedural memory). Much of it may be stale, redundant, or already resolved.
+
+YOUR JOB: Produce a concise ACTION BRIEF (max 2000 chars) for the BUILD coordinator containing:
+1. CURRENT STATE: What has been built so far and what's working
+2. TOP PRIORITIES: The 3-5 most critical unresolved issues (specific routes, errors, feedback)
+3. DO NOT REPEAT: What was tried before and failed (so agents try something different)
+4. KEEP DOING: What worked and should be continued
+5. NEXT STEPS: Concrete actions for the developer to take this iteration
+
+DO NOT include resolved issues, praise, or vague observations.
+DO NOT repeat the same issue multiple times.
+Be specific — use route names, error messages, field names, concrete fixes.
+
+RAW CONTEXT:
+{raw_context[:16000]}"""
+
+            response = litellm.completion(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=1500,
+                **kwargs,
+            )
+            summary = response.choices[0].message.content or ""
+            if summary and len(summary) > 100:
+                logger.info(
+                    "Context summarized: %d -> %d chars",
+                    len(raw_context), len(summary),
+                )
+                return f"\n\n[Strategist Brief — iteration {self.state.iteration}]\n{summary}\n"
+        except Exception as exc:
+            logger.warning("Context summarization failed: %s", exc)
+
+        # Fallback: hard cap
+        _MAX = 12_000
+        if len(raw_context) > _MAX:
+            return raw_context[:_MAX] + "\n\n[... context truncated]\n"
+        return raw_context
+
     def _build_extra_context(self) -> str:
         """Collect learning context from prior iterations and memory stores.
 
         Gathers procedure hints, procedural memory, episodic memory, and
         consensus memory into a single string appended to BUILD task
-        descriptions.  Pure extraction from what was previously inline in
-        ``build()``.
+        descriptions.  On iteration 2+, the accumulated raw context is
+        compressed by a lightweight LLM summarization call to keep the
+        coordinator focused and prevent context window saturation.
         """
         extra_context = ""
 
@@ -851,7 +1001,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         except Exception as _proc_exc:
             logger.debug(f"Procedural memory read skipped: {_proc_exc}")
 
-        # Inject episodic memory (metrics history from prior cycles/runs)
+        # Inject episodic memory (enriched history from prior cycles/runs)
         try:
             from src.crewai_agents.tools import get_memory_store as _get_store_ep
             from src.framework.types import EpisodeType as _EpType
@@ -864,15 +1014,21 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                 if _episodes:
                     ep_lines = []
                     for _ep in _episodes:
-                        m = _ep.outcome or {}
-                        it = _ep.iteration or "?"
-                        qa = "PASS" if m.get("qa_passed") else "FAIL"
-                        ep_lines.append(
-                            f"- Cycle {it}: QA={qa}, "
-                            f"tasks={m.get('task_count', '?')}, "
-                            f"successes={m.get('success_count', '?')}, "
-                            f"failures={m.get('failure_count', '?')}"
-                        )
+                        # Use the enriched summary_text if available
+                        if _ep.summary_text and len(_ep.summary_text) > 30:
+                            ep_lines.append(f"- {_ep.summary_text}")
+                        else:
+                            m = _ep.outcome or {}
+                            it = _ep.iteration or "?"
+                            qa = "PASS" if m.get("qa_passed") else "FAIL"
+                            dispatches = m.get("dispatches", [])
+                            qa_issues = m.get("qa_issues", [])
+                            line = f"- Cycle {it}: QA={qa}"
+                            if dispatches:
+                                line += f", tried: {'; '.join(dispatches[:3])}"
+                            if qa_issues:
+                                line += f", failed: {', '.join(qa_issues)}"
+                            ep_lines.append(line)
                     extra_context += (
                         "\n\n[Episodic Memory — recent cycle history]\n"
                         + "\n".join(ep_lines)
@@ -882,13 +1038,40 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             logger.debug(f"Episodic memory read skipped: {_ep_exc}")
 
         # Inject consensus memory (team knowledge board)
+        # Auto-expire stale per-iteration insights and deduplicate values.
         try:
             from src.crewai_agents.tools import get_memory_store
             _cons_store = get_memory_store()
             if _cons_store is not None:
                 _cons_entries = _cons_store.cons_list()
-                # Cap to most recent 20 entries to prevent prompt bloat
-                _cons_entries = _cons_entries[-20:] if len(_cons_entries) > 20 else _cons_entries
+
+                # --- Auto-expire old per-iteration insights ---
+                # Keys like "learn.insight.iter3.0" pile up; keep only
+                # recent iterations (last _CONSENSUS_STALE_CYCLES).
+                import re as _re_cons
+                _CONSENSUS_STALE_CYCLES = 5
+                cutoff_iter = self.state.iteration - _CONSENSUS_STALE_CYCLES
+                fresh_entries = []
+                for _ce in _cons_entries:
+                    m = _re_cons.match(r"learn\.insight\.iter(\d+)\.", _ce.key)
+                    if m and int(m.group(1)) < cutoff_iter:
+                        continue  # skip stale per-iteration insight
+                    fresh_entries.append(_ce)
+
+                # --- Deduplicate by value ---
+                # Different keys can hold the same insight text (e.g.
+                # route X shows login form repeated across iterations).
+                seen_values: set = set()
+                deduped_entries = []
+                for _ce in fresh_entries:
+                    val_norm = str(_ce.value or "").strip().lower()[:150]
+                    if val_norm in seen_values:
+                        continue
+                    seen_values.add(val_norm)
+                    deduped_entries.append(_ce)
+
+                # Cap to most recent 15 entries
+                _cons_entries = deduped_entries[-15:] if len(deduped_entries) > 15 else deduped_entries
                 if _cons_entries:
                     board_lines = []
                     for _ce in _cons_entries:
@@ -1084,16 +1267,50 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         # Build workspace tool lists per role
         ws_dev_tools, ws_product_tools, ws_ro_tools = self._build_workspace_tools()
 
-        # Collect learning context from prior iterations
-        extra_context = self._build_extra_context()
+        # Collect learning context from prior iterations (memory stores).
+        # This is the part that accumulates and gets stale — it will be
+        # summarized on iteration 2+.
+        memory_context = self._build_extra_context()
 
-        # Workspace snapshot: read all files once to avoid redundant reads
+        # Workspace snapshot: actual file contents the coordinator needs
+        snapshot = ""
         if self.state.workspace_enabled:
             snapshot = self._take_workspace_snapshot()
-            extra_context += f"\n\n[Current workspace snapshot]\n{snapshot}\n"
 
         # Unresolved feedback from prior cycles
         unresolved = self._get_unresolved_feedback()
+
+        # Smart context curation: on iteration 2+, the strategist LLM
+        # summarizes the accumulated memory context (episodic history,
+        # consensus board, procedural memory, learnings, feedback) into
+        # a focused action brief.  The workspace snapshot is kept raw
+        # since the coordinator needs actual file contents to dispatch
+        # agents with specific code instructions.
+        if i > 1 and len(memory_context) > 4000:
+            # Feed summarizer the memory context + feedback + a compact
+            # file listing (not full source) so it knows what exists
+            file_listing = ""
+            if snapshot:
+                # Extract just filenames from the snapshot for awareness
+                import re as _re_snap
+                file_names = _re_snap.findall(r"^--- (.+?) ---$", snapshot, _re_snap.MULTILINE)
+                if file_names:
+                    file_listing = f"\n\n[Workspace files]: {', '.join(file_names)}"
+
+            summarizer_input = memory_context
+            if unresolved:
+                summarizer_input += f"\n\n{unresolved}"
+            if file_listing:
+                summarizer_input += file_listing
+
+            memory_context = self._summarize_context(summarizer_input)
+            # Unresolved feedback is now baked into the brief
+            unresolved = ""
+
+        # Assemble final context: summarized brief + raw workspace snapshot
+        extra_context = memory_context
+        if snapshot:
+            extra_context += f"\n\n[Current workspace snapshot]\n{snapshot}\n"
         if unresolved:
             extra_context += f"\n\n{unresolved}\n"
 
@@ -1126,6 +1343,9 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             agent_registry, self._emit, max_dispatches=max_dispatches, result_truncation=4000,
             extra_context=extra_context,
         )
+        # Store dispatch accessors so _record_iteration can enrich episodic memory
+        self._get_dispatch_count = _get_dispatch_count
+        self._get_dispatch_history = _get_dispatch_history
         build_coordinator = create_build_coordinator(
             coordinator_llm,
             prompt_override=self._prompt_override("coordinator"),
@@ -1195,6 +1415,21 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             "success_count": success_count,
             "failure_count": failure_count,
         })
+
+        # Refresh workspace snapshot AFTER build so QA, remediation, and
+        # learn phases all see the actual files the developer produced.
+        if self.state.workspace_enabled:
+            try:
+                from src.workspace_tools.file_tools import reset_read_cache
+                reset_read_cache()
+            except Exception:
+                pass
+            post_build_snapshot = self._take_workspace_snapshot()
+            self.state.build_result_text = (
+                f"{self.state.build_result_text}\n\n"
+                f"[Post-build workspace snapshot]\n{post_build_snapshot}"
+            )
+            logger.info("POST-BUILD snapshot captured (%d chars)", len(post_build_snapshot))
 
         # Deterministic QA gate
         self.state.qa_result = self._run_quality_gate()
@@ -1423,7 +1658,9 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             "termination_action": self.state.gate_recommendation,
         })
 
-        # Write cycle metrics to episodic memory for cross-run history
+        # Write enriched cycle record to episodic memory for cross-run history.
+        # Include what was dispatched, what was tried, and why QA failed —
+        # not just "QA=FAIL" — so future iterations have real signal.
         try:
             from src.crewai_agents.tools import get_memory_store as _get_store_rec
             from src.framework.contracts import Episode
@@ -1431,6 +1668,46 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
 
             _rec_store = _get_store_rec()
             if _rec_store is not None:
+                # Collect dispatch history if available
+                dispatch_hist = []
+                dispatch_count = 0
+                try:
+                    dispatch_hist = self._get_dispatch_history()
+                    dispatch_count = self._get_dispatch_count()
+                except Exception:
+                    pass
+
+                # Summarise what agents did this cycle
+                dispatch_summary = []
+                for d in dispatch_hist[:6]:
+                    role = d.get("agent_role", "?")
+                    task = d.get("task_summary", "?")
+                    dispatch_summary.append(f"{role}: {task}")
+
+                # Extract QA failure reasons
+                qa = self.state.qa_result or {}
+                qa_issues = []
+                if not qa.get("syntax_ok", True):
+                    qa_issues.append("syntax errors")
+                if not qa.get("workspace_ok", True):
+                    qa_issues.append("missing workspace content")
+                if not qa.get("http_ok", True):
+                    broken = (qa.get("http_checks") or {}).get("broken_links", [])
+                    score = (qa.get("http_checks") or {}).get("http_landing_score", "?")
+                    qa_issues.append(f"HTTP issues (landing_score={score}, broken={broken[:3]})")
+
+                # Build a rich summary
+                parts = [
+                    f"Iteration {self.state.iteration}: QA={'PASS' if self.state.qa_passed else 'FAIL'}",
+                    f"Dispatched {dispatch_count} agents",
+                ]
+                if dispatch_summary:
+                    parts.append("Actions: " + "; ".join(dispatch_summary))
+                if qa_issues:
+                    parts.append("QA failures: " + ", ".join(qa_issues))
+                elif not self.state.qa_passed:
+                    parts.append("QA failed but no specific check failures detected")
+
                 _rec_store.ep_record(Episode(
                     agent_id="bml_flow",
                     episode_type=_EpType.LEARNING,
@@ -1443,14 +1720,13 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                         "success_count": self.state.build_success_count,
                         "failure_count": self.state.build_failure_count,
                         "gate_recommendation": self.state.gate_recommendation,
+                        "dispatch_count": dispatch_count,
+                        "dispatches": dispatch_summary[:4],
+                        "qa_issues": qa_issues,
                     },
-                    summary_text=(
-                        f"Iteration {self.state.iteration}: "
-                        f"QA={'PASS' if self.state.qa_passed else 'FAIL'}, "
-                        f"{self.state.build_success_count}/{self.state.build_task_count} tasks succeeded"
-                    ),
+                    summary_text=". ".join(parts),
                 ))
-                logger.info("  Episodic memory: recorded cycle metrics")
+                logger.info("  Episodic memory: recorded enriched cycle metrics")
         except Exception as _ep_rec_exc:
             logger.warning(f"  Episodic memory write skipped: {_ep_rec_exc}")
 
