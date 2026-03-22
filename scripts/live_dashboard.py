@@ -403,8 +403,8 @@ HTML_TEMPLATE = """<!doctype html>
         <div class="meta" id="progressMeta">&nbsp;</div>
       </article>
       <article class="card">
-        <div class="label">QA Gate</div>
-        <div class="value" id="qaValue">-</div>
+        <div class="label">Customer Feedback</div>
+        <div class="value" id="qaValue">0</div>
         <div class="meta" id="qaMeta">&nbsp;</div>
       </article>
       <article class="card">
@@ -694,11 +694,11 @@ HTML_TEMPLATE = """<!doctype html>
       setText("progressValue", `${tasks.completed || 0}/${tasks.started || 0}`);
       setText("progressMeta", `failed: ${tasks.failed || 0}  in-progress: ${tasks.in_progress || 0}`);
 
-      // QA Gate card
-      const evalStatus = run.evaluation_status || snapshot.latest_gate?.overall_status || "-";
-      const qaNode = document.getElementById("qaValue");
-      qaNode.innerHTML = toStatusBadge(evalStatus);
-      setText("qaMeta", run.evaluation_action || snapshot.latest_gate?.recommended_action || "-");
+      // Customer Feedback card
+      const feedbackCount = run.customer_feedback_count || snapshot.customer_feedback_count || 0;
+      setText("qaValue", feedbackCount);
+      const feedbackBugs = run.customer_feedback_bugs || snapshot.customer_feedback_bugs || 0;
+      setText("qaMeta", feedbackBugs > 0 ? `${feedbackBugs} bug(s) open` : "no bugs");
 
       // Hero subtitle — iteration count and status
       setText("heroMeta", `Iteration ${iterCount} — ${statusText}`);
