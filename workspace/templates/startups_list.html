@@ -1,0 +1,74 @@
+{% extends "layout.html" %}
+
+{% block title %}Browse Startups - Startup-VC Match{% endblock %}
+
+{% block content %}
+<h1 class="mb-4">Browse Startups</h1>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" class="row g-3">
+            <div class="col-md-3">
+                <label for="industry" class="form-label">Industry</label>
+                <select class="form-select" id="industry" name="industry">
+                    <option value="">All Industries</option>
+                    <option value="AI/ML">AI/ML</option>
+                    <option value="Fintech">Fintech</option>
+                    <option value="Healthcare">Healthcare</option>
+                    <option value="E-commerce">E-commerce</option>
+                    <option value="SaaS">SaaS</option>
+                    <option value="EdTech">EdTech</option>
+                    <option value="CleanTech">CleanTech</option>
+                    <option value="Other">Other</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label for="stage" class="form-label">Stage</label>
+                <select class="form-select" id="stage" name="stage">
+                    <option value="">All Stages</option>
+                    <option value="Pre-seed">Pre-seed</option>
+                    <option value="Seed">Seed</option>
+                    <option value="Series A">Series A</option>
+                    <option value="Series B+">Series B+</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label for="location" class="form-label">Location</label>
+                <input type="text" class="form-control" id="location" name="location" placeholder="City or Country">
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary w-100">Search</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if startups %}
+<div class="row">
+    {% for startup in startups %}
+    <div class="col-md-6 mb-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">{{ startup.company_name }}</h5>
+                <p class="text-muted mb-2">{{ startup.industry }} | {{ startup.stage }}</p>
+                <p class="card-text">{{ startup.description[:150] }}{% if startup.description and startup.description|length > 150 %}...{% endif %}</p>
+                <p class="mb-1"><strong>Location:</strong> {{ startup.location or 'Not specified' }}</p>
+                {% if startup.funding_needed %}
+                <p class="mb-1"><strong>Funding Needed:</strong> {{ startup.funding_needed }}</p>
+                {% endif %}
+                {% if startup.website %}
+                <a href="{{ startup.website }}" target="_blank" class="btn btn-sm btn-outline-primary">Website</a>
+                {% endif %}
+                <form action="{{ url_for('connect', user_id=startup.user_id) }}" method="POST" class="d-inline">
+                    <input type="hidden" name="message" value="Interested in your startup!">
+                    <button type="submit" class="btn btn-sm btn-primary">Connect</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="alert alert-info">No startups found matching your criteria.</div>
+{% endif %}
+{% endblock %}

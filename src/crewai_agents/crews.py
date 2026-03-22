@@ -1272,18 +1272,6 @@ RAW CONTEXT:
             )
             logger.info("POST-BUILD snapshot captured (%d chars)", len(post_build_snapshot))
 
-        # LLM-powered customer testing — personas visit the live app
-        # and report bugs/friction.  Their feedback flows to the next
-        # iteration's build coordinator via the strategist brief.
-        if self.state.workspace_enabled:
-            self._run_customer_testing()
-
-        # Collect current cycle's feedback from feedback.db
-        if self.state.workspace_enabled:
-            feedback_summary = self._collect_user_feedback()
-            if feedback_summary and "No user feedback" not in feedback_summary:
-                self.state.user_feedback_summary = feedback_summary
-
         self.state.build_task_count = task_count
         self.state.build_success_count = success_count
         self.state.build_failure_count = failure_count
@@ -1298,12 +1286,24 @@ RAW CONTEXT:
 
     @listen(build)
     def measure(self):
-        """Measure phase — customer feedback was already collected in build().
+        """Run customer testing against the live app and collect feedback.
 
-        This step exists to maintain the BUILD -> MEASURE -> LEARN flow
-        structure required by the CrewAI Flow listener chain.
+        3 LLM personas (founder, VC partner, journalist) visit the running
+        Flask app, interact with it, and report bugs/friction/praise.
+        Their feedback is stored in feedback.db and flows to the next
+        iteration's build coordinator via the strategist brief.
         """
-        logger.info("MEASURE: Customer feedback collected, proceeding to learn...")
+        logger.info("MEASURE: Running customer testing...")
+
+        if self.state.workspace_enabled:
+            self._run_customer_testing()
+
+        # Collect feedback from feedback.db
+        if self.state.workspace_enabled:
+            feedback_summary = self._collect_user_feedback()
+            if feedback_summary and "No user feedback" not in feedback_summary:
+                self.state.user_feedback_summary = feedback_summary
+
         self.state.gate_recommendation = "continue"
 
     # -- LEARN phase ------------------------------------------------------
@@ -1313,7 +1313,7 @@ RAW CONTEXT:
         """Execute the LEARN phase and feed results back into next iteration."""
         logger.info("LEARN PHASE: Extracting insights...")
 
-        # Collect user feedback (customer personas' feedback from this cycle)
+        # Append customer feedback to build results so the learn coordinator sees it
         feedback_summary = self._collect_user_feedback()
         if feedback_summary and "No user feedback" not in feedback_summary:
             self.state.build_result_text = (
