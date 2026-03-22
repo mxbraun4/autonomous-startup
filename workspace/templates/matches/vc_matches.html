@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}VC Matches{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <h2 class="mb-4"><i class="bi bi-hand-thumbs-up"></i> My Matches</h2>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-12">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                {% if matches %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Startup</th>
+                                <th>Industry</th>
+                                <th>Stage</th>
+                                <th>Funding Needed</th>
+                                <th>Status</th>
+                                <th>Date</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for match in matches %}
+                            <tr>
+                                <td><strong>{{ match.company_name }}</strong></td>
+                                <td>{{ match.industry or 'N/A' }}</td>
+                                <td>{{ match.stage or 'N/A' }}</td>
+                                <td>{% if match.funding_needed %}${{ "{:,.0f}".format(match.funding_needed) }}{% else %}N/A{% endif %}</td>
+                                <td>
+                                    <span class="badge bg-{{ 'success' if match.status == 'accepted' else 'warning' if match.status == 'pending' else 'danger' }}">
+                                        {{ match.status }}
+                                    </span>
+                                </td>
+                                <td>{{ match.created_at[:10] }}</td>
+                                <td>
+                                    <a href="{{ url_for('view_profile', user_id=match.startup_id) }}" class="btn btn-sm btn-outline-primary">View Profile</a>
+                                    {% if match.status == 'pending' %}
+                                    <form method="POST" action="{{ url_for('match_accept', match_id=match.id) }}" style="display:inline;">
+                                        <button type="submit" class="btn btn-sm btn-success">Accept</button>
+                                    </form>
+                                    <form method="POST" action="{{ url_for('match_reject', match_id=match.id) }}" style="display:inline;">
+                                        <button type="submit" class="btn btn-sm btn-danger">Reject</button>
+                                    </form>
+                                    {% elif match.status == 'accepted' %}
+                                    <a href="{{ url_for('compose_message', receiver_id=match.startup_id) }}" class="btn btn-sm btn-outline-success">Message</a>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-4">
+                    <i class="bi bi-hand-thumbs-up display-1 text-muted"></i>
+                    <h4 class="mt-3">No Matches Yet</h4>
+                    <p class="text-muted">Start exploring startups to find investment opportunities!</p>
+                    <a href="{{ url_for('explore_startups') }}" class="btn btn-primary">Explore Startups</a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-12">
+        <a href="{{ url_for('vc_dashboard') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back to Dashboard</a>
+    </div>
+</div>
+{% endblock %}

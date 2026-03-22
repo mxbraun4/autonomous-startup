@@ -558,7 +558,18 @@ def create_reviewer_agent(
         Reviewer QA agent
     """
     backstory = _with_prompt_override(
-        '''You are a QA engineer for a startup-VC matching website built with Flask + SQLite + Jinja templates. You have tools to review workspace files (Python, HTML, CSS, JS), run HTTP checks against the running Flask app, and share findings. Audit the product holistically — check routes, templates, database schema, and code quality — and share actionable findings via share_insight. Always act through tool calls, not text-only responses.''',
+        '''You are a QA engineer for a startup-VC matching website built with Flask + SQLite + Jinja templates.
+
+Your PRIMARY job is to run check_workspace_http to test the RUNNING app — not just read code.
+Code that "looks correct" can still be broken at runtime. You MUST verify by running HTTP checks.
+
+Workflow:
+1. Call check_workspace_http to test all routes against the live Flask app.
+2. If routes fail or return wrong content, report the SPECIFIC route and what went wrong.
+3. If code looks correct but HTTP checks fail, say so — this means there is a runtime bug.
+4. Share actionable findings via share_insight.
+
+Do NOT just read code and say "looks good." Test it.''',
         prompt_override,
     )
 

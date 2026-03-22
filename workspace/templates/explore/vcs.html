@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+
+{% block title %}Explore VCs{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <h2 class="mb-4"><i class="bi bi-bank"></i> Explore VCs</h2>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="btn-group" role="group" aria-label="Entity toggle">
+            <a href="{{ url_for('explore_startups') }}" class="btn {{ 'btn-primary' if active_entity == 'startups' else 'btn-outline-primary' }}">
+                <i class="bi bi-rocket"></i> Startups
+            </a>
+            <a href="{{ url_for('explore_vcs') }}" class="btn {{ 'btn-primary' if active_entity == 'vcs' else 'btn-outline-primary' }}">
+                <i class="bi bi-bank"></i> VCs
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Filter Form -->
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-funnel"></i> Filter VCs</h5>
+                <form method="GET" action="{{ url_for('explore_vcs') }}" class="row g-3">
+                    <div class="col-md-3">
+                        <label for="focus" class="form-label">Investment Focus</label>
+                        <select class="form-select" id="focus" name="focus">
+                            <option value="">All Focus Areas</option>
+                            <option value="Technology" {{ 'selected' if focus == 'Technology' }}>Technology</option>
+                            <option value="AI/ML" {{ 'selected' if focus == 'AI/ML' }}>AI/ML</option>
+                            <option value="CleanTech" {{ 'selected' if focus == 'CleanTech' }}>CleanTech</option>
+                            <option value="HealthTech" {{ 'selected' if focus == 'HealthTech' }}>HealthTech</option>
+                            <option value="FinTech" {{ 'selected' if focus == 'FinTech' }}>FinTech</option>
+                            <option value="SaaS" {{ 'selected' if focus == 'SaaS' }}>SaaS</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="stage" class="form-label">Stage Preference</label>
+                        <select class="form-select" id="stage" name="stage">
+                            <option value="">All Stages</option>
+                            <option value="Seed" {{ 'selected' if stage == 'Seed' }}>Seed</option>
+                            <option value="Series A" {{ 'selected' if stage == 'Series A' }}>Series A</option>
+                            <option value="Series B" {{ 'selected' if stage == 'Series B' }}>Series B</option>
+                            <option value="Series C" {{ 'selected' if stage == 'Series C' }}>Series C</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="min_investment" class="form-label">Min Investment ($)</label>
+                        <input type="number" class="form-control" id="min_investment" name="min_investment" 
+                               placeholder="0" value="{{ min_investment or '' }}">
+                    </div>
+                    <div class="col-md-3">
+                        <label for="max_investment" class="form-label">Max Investment ($)</label>
+                        <input type="number" class="form-control" id="max_investment" name="max_investment" 
+                               placeholder="10000000" value="{{ max_investment or '' }}">
+                    </div>
+                    <div class="col-12">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-search"></i> Apply Filters
+                        </button>
+                        <a href="{{ url_for('explore_vcs') }}" class="btn btn-outline-secondary">
+                            <i class="bi bi-x-circle"></i> Clear Filters
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    {% if vcs %}
+        {% for vc in vcs %}
+        <div class="col-md-6 col-lg-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <h5 class="card-title">{{ vc.firm_name }}</h5>
+                    <h6 class="card-subtitle mb-2 text-muted">{{ vc.name }}</h6>
+                    <p class="card-text">
+                        {% if vc.description %}
+                            {{ vc.description[:100] }}{% if vc.description|length > 100 %}...{% endif %}
+                        {% else %}
+                            No description available.
+                        {% endif %}
+                    </p>
+                </div>
+                <div class="card-footer bg-transparent">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            {% if vc.investment_focus %}
+                            <span class="badge bg-primary">{{ vc.investment_focus }}</span>
+                            {% endif %}
+                            {% if vc.stage_preference %}
+                            <span class="badge bg-secondary">{{ vc.stage_preference }}</span>
+                            {% endif %}
+                        </div>
+                        <div>
+                            <a href="{{ url_for('view_profile', user_id=vc.id) }}" class="btn btn-sm btn-outline-primary">View</a>
+                            {% if session.get('user_id') and session.get('user_type') == 'startup' %}
+                            <form method="POST" action="{{ url_for('match_request', user_id=vc.id) }}" style="display:inline;">
+                                <button type="submit" class="btn btn-sm btn-primary">Match</button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% if vc.min_investment or vc.max_investment %}
+                    <div class="mt-2">
+                        <small class="text-muted">
+                            Investment Range: 
+                            {% if vc.min_investment %}${{ "{:,.0f}".format(vc.min_investment) }}{% else %}$0{% endif %}
+                            - 
+                            {% if vc.max_investment %}${{ "{:,.0f}".format(vc.max_investment) }}{% else %}Unlimited{% endif %}
+                        </small>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="col-md-12">
+            <div class="alert alert-info">
+                <h4>No VCs Found</h4>
+                <p>There are no VCs matching your filters. Try adjusting your search criteria.</p>
+                <a href="{{ url_for('explore_vcs') }}" class="btn btn-primary">Clear Filters</a>
+            </div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
