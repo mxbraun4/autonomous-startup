@@ -265,13 +265,11 @@ class FlaskAppServer:
         if not app_py.exists():
             raise FileNotFoundError(f"No app.py in {self._workspace_root}")
 
-        # Pre-flight: check that app.py can be imported without errors.
-        # This catches syntax errors, missing imports, and other issues
-        # instantly instead of waiting 30s for a timeout.
+        # Pre-flight: syntax check only (fast, no execution).
+        # Catches syntax errors instantly instead of waiting 30s for a timeout.
         preflight = subprocess.run(
-            [sys.executable, "-c", f"import ast; ast.parse(open({str(app_py)!r}).read()); "
-             f"exec(compile(open({str(app_py)!r}).read(), {str(app_py)!r}, 'exec'), "
-             f"{{'__name__': '__preflight__'}})"],
+            [sys.executable, "-c",
+             f"import ast; ast.parse(open({str(app_py)!r}).read()); print('ok')"],
             cwd=str(self._workspace_root),
             capture_output=True,
             timeout=10,
