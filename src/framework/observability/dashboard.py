@@ -106,6 +106,8 @@ def build_run_snapshot(
                 row["tools_called"] += 1
             elif event.event_type == "policy_violation":
                 row["policy_violations"] += 1
+            elif event.event_type == "customer_testing_end":
+                row["customer_feedback_count"] = _safe_int(payload.get("feedback_count"))
             elif event.event_type == "cycle_end":
                 row["total_tasks"] = _safe_int(payload.get("total_tasks"))
                 row["completed_count"] = _safe_int(payload.get("completed_count"))
@@ -216,6 +218,9 @@ def build_run_snapshot(
                 )
             ),
             "last_checkpoint_path": str(last_cycle_end_payload.get("checkpoint_path", "")),
+            "customer_feedback_count": sum(
+                r.get("customer_feedback_count", 0) or 0 for r in cycle_rows.values()
+            ),
         },
         "tasks": {
             "started": event_counts.get("task_started", 0),
@@ -303,6 +308,7 @@ def _cycle_row(rows: Dict[int, Dict[str, Any]], cycle_id: int) -> Dict[str, Any]
             "evaluation_action": "",
             "termination_action": "",
             "termination_reason": "",
+            "customer_feedback_count": 0,
         }
     return rows[cycle_id]
 
