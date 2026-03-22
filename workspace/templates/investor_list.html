@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}Browse Investors - Startup-VC Matcher{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">Browse Investors</h1>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                {% if investors %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Firm</th>
+                                <th>Preferred Industries</th>
+                                <th>Preferred Stages</th>
+                                <th>Investment Range</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for inv in investors %}
+                            <tr>
+                                <td><strong>{{ inv.name }}</strong></td>
+                                <td>{{ inv.firm_name or 'N/A' }}</td>
+                                <td>{{ inv.preferred_industries or 'Not specified' }}</td>
+                                <td>{{ inv.preferred_stages or 'Not specified' }}</td>
+                                <td>
+                                    {% if inv.min_investment and inv.max_investment %}
+                                        ${{ "{:,}".format(inv.min_investment) }} - ${{ "{:,}".format(inv.max_investment) }}
+                                    {% else %}
+                                        Not specified
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#investorModal{{ inv.id }}">
+                                        View Details
+                                    </button>
+                                </td>
+                            </tr>
+                            
+                            <!-- Modal for investor details -->
+                            <div class="modal fade" id="investorModal{{ inv.id }}" tabindex="-1">
+                                <div class="modal-dialog modal-lg">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title">{{ inv.name }} - {{ inv.firm_name or 'Individual Investor' }}</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <div class="row mb-3">
+                                                <div class="col-md-6">
+                                                    <p><strong>Preferred Industries:</strong> {{ inv.preferred_industries or 'Not specified' }}</p>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <p><strong>Preferred Stages:</strong> {{ inv.preferred_stages or 'Not specified' }}</p>
+                                                </div>
+                                            </div>
+                                            <div class="row mb-3">
+                                                <div class="col-md-6">
+                                                    <p><strong>Minimum Investment:</strong> {{ '$' + '{:,}'.format(inv.min_investment) if inv.min_investment else 'Not specified' }}</p>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <p><strong>Maximum Investment:</strong> {{ '$' + '{:,}'.format(inv.max_investment) if inv.max_investment else 'Not specified' }}</p>
+                                                </div>
+                                            </div>
+                                            <div class="row mb-3">
+                                                <div class="col-md-12">
+                                                    <p><strong>Website:</strong> 
+                                                        {% if inv.website %}
+                                                        <a href="{{ inv.website }}" target="_blank">{{ inv.website }}</a>
+                                                        {% else %}
+                                                        N/A
+                                                        {% endif %}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <div class="mb-3">
+                                                <p><strong>Description:</strong></p>
+                                                <p>{{ inv.description or 'No description provided.' }}</p>
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-5">
+                    <i class="bi bi-inbox display-4 text-muted"></i>
+                    <p class="text-muted mt-2">No investors registered yet.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

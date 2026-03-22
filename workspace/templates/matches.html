@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block title %}Matches - Startup-VC Matcher{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">
+            {% if user_type == 'startup' %}
+            Your Investor Matches
+            {% else %}
+            Your Startup Matches
+            {% endif %}
+        </h1>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="bi bi-hand-thumbs-up"></i> 
+                    {% if matches|length > 0 %}
+                    Found {{ matches|length }} Match{% if matches|length != 1 %}es{% endif %}
+                    {% else %}
+                    No Matches Found
+                    {% endif %}
+                </h5>
+                <a href="{{ url_for('manual_generate_matches') }}" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-arrow-repeat"></i> Refresh Matches
+                </a>
+            </div>
+            <div class="card-body">
+                {% if matches %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                {% if user_type == 'startup' %}
+                                <th>Investor</th>
+                                <th>Firm</th>
+                                <th>Preferred Industries</th>
+                                <th>Investment Range</th>
+                                {% else %}
+                                <th>Startup</th>
+                                <th>Industry</th>
+                                <th>Funding Stage</th>
+                                <th>Funding Amount</th>
+                                {% endif %}
+                                <th>Match Score</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for match in matches %}
+                            <tr>
+                                {% if user_type == 'startup' %}
+                                <td><strong>{{ match.investor_name }}</strong></td>
+                                <td>{{ match.firm_name or 'N/A' }}</td>
+                                <td>{{ match.preferred_industries or 'Not specified' }}</td>
+                                <td>
+                                    {% if match.min_investment and match.max_investment %}
+                                        ${{ "{:,}".format(match.min_investment) }} - ${{ "{:,}".format(match.max_investment) }}
+                                    {% else %}
+                                        Not specified
+                                    {% endif %}
+                                </td>
+                                {% else %}
+                                <td><strong>{{ match.startup_name }}</strong></td>
+                                <td><span class="badge bg-primary">{{ match.industry }}</span></td>
+                                <td>{{ match.funding_stage }}</td>
+                                <td>{{ '$' + '{:,}'.format(match.funding_amount) if match.funding_amount else 'Not specified' }}</td>
+                                {% endif %}
+                                <td>
+                                    <div class="d-flex align-items-center">
+                                        <div class="progress flex-grow-1 me-2" style="height: 20px; width: 100px;">
+                                            <div class="progress-bar bg-{{ 'success' if match.score >= 70 else 'warning' if match.score >= 40 else 'secondary' }}" 
+                                                 role="progressbar" 
+                                                 style="width: {{ match.score }}%">
+                                            </div>
+                                        </div>
+                                        <span class="badge bg-{{ 'success' if match.score >= 70 else 'warning' if match.score >= 40 else 'secondary' }}">
+                                            {{ match.score }}%
+                                        </span>
+                                    </div>
+                                </td>
+                                <td>
+                                    <span class="badge bg-{{ 'success' if match.status == 'accepted' else 'warning' if match.status == 'pending' else 'secondary' }}">
+                                        {{ match.status|title }}
+                                    </span>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-5">
+                    <i class="bi bi-inbox display-4 text-muted"></i>
+                    <h4 class="mt-3">No Matches Yet</h4>
+                    <p class="text-muted">
+                        {% if user_type == 'startup' %}
+                        Complete your startup profile and browse investors to get matched.
+                        {% else %}
+                        Complete your investor profile and browse startups to get matched.
+                        {% endif %}
+                    </p>
+                    <div class="d-flex justify-content-center gap-3 mt-3">
+                        {% if user_type == 'startup' %}
+                        <a href="{{ url_for('startup_profile') }}" class="btn btn-primary">Complete Profile</a>
+                        <a href="{{ url_for('startup_browse_investors') }}" class="btn btn-outline-primary">Browse Investors</a>
+                        {% else %}
+                        <a href="{{ url_for('investor_profile') }}" class="btn btn-primary">Complete Profile</a>
+                        <a href="{{ url_for('investor_browse_startups') }}" class="btn btn-outline-primary">Browse Startups</a>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

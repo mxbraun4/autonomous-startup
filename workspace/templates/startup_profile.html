@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block title %}Startup Profile - Startup-VC Matcher{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">Startup Profile</h1>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-pencil-square"></i> Edit Your Profile</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('startup_profile') }}">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="name" class="form-label">Company Name *</label>
+                            <input type="text" class="form-control" id="name" name="name" value="{{ startup.name if startup else '' }}" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="industry" class="form-label">Industry *</label>
+                            <select class="form-select" id="industry" name="industry" required>
+                                <option value="Technology" {{ 'selected' if startup and startup.industry == 'Technology' }}>Technology</option>
+                                <option value="Healthcare" {{ 'selected' if startup and startup.industry == 'Healthcare' }}>Healthcare</option>
+                                <option value="Fintech" {{ 'selected' if startup and startup.industry == 'Fintech' }}>Fintech</option>
+                                <option value="E-commerce" {{ 'selected' if startup and startup.industry == 'E-commerce' }}>E-commerce</option>
+                                <option value="AI/ML" {{ 'selected' if startup and startup.industry == 'AI/ML' }}>AI/ML</option>
+                                <option value="SaaS" {{ 'selected' if startup and startup.industry == 'SaaS' }}>SaaS</option>
+                                <option value="Clean Energy" {{ 'selected' if startup and startup.industry == 'Clean Energy' }}>Clean Energy</option>
+                                <option value="Other" {{ 'selected' if startup and startup.industry == 'Other' }}>Other</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="description" class="form-label">Description</label>
+                        <textarea class="form-control" id="description" name="description" rows="4" placeholder="Describe your startup, mission, and value proposition...">{{ startup.description if startup and startup.description else '' }}</textarea>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="funding_stage" class="form-label">Funding Stage *</label>
+                            <select class="form-select" id="funding_stage" name="funding_stage" required>
+                                <option value="Pre-Seed" {{ 'selected' if startup and startup.funding_stage == 'Pre-Seed' }}>Pre-Seed</option>
+                                <option value="Seed" {{ 'selected' if startup and startup.funding_stage == 'Seed' }}>Seed</option>
+                                <option value="Series A" {{ 'selected' if startup and startup.funding_stage == 'Series A' }}>Series A</option>
+                                <option value="Series B" {{ 'selected' if startup and startup.funding_stage == 'Series B' }}>Series B</option>
+                                <option value="Series C+" {{ 'selected' if startup and startup.funding_stage == 'Series C+' }}>Series C+</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="funding_amount" class="form-label">Funding Amount Needed ($)</label>
+                            <input type="number" class="form-control" id="funding_amount" name="funding_amount" value="{{ startup.funding_amount if startup and startup.funding_amount else '' }}" placeholder="e.g., 500000">
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="website" class="form-label">Website</label>
+                        <input type="url" class="form-control" id="website" name="website" value="{{ startup.website if startup and startup.website else '' }}" placeholder="https://yourstartup.com">
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                        <a href="{{ url_for('startup_dashboard') }}" class="btn btn-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-info-circle"></i> Profile Tips</h5>
+            </div>
+            <div class="card-body">
+                <ul class="list-unstyled mb-0">
+                    <li class="mb-2"><i class="bi bi-check-circle text-success"></i> Complete all required fields</li>
+                    <li class="mb-2"><i class="bi bi-check-circle text-success"></i> Add a compelling description</li>
+                    <li class="mb-2"><i class="bi bi-check-circle text-success"></i> Include accurate funding needs</li>
+                    <li class="mb-2"><i class="bi bi-check-circle text-success"></i> Add your website link</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
