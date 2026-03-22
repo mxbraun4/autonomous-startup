@@ -95,9 +95,11 @@ def _read_impl(file_path: str) -> dict:
 
 def _write_impl(file_path: str, content) -> dict:
     """Return a dict with the result of writing *content* to *file_path*."""
-    # The model sometimes passes a list instead of a string
+    # The model sometimes passes wrong types
     if isinstance(content, list):
         content = "\n".join(str(item) for item in content)
+    elif isinstance(content, dict):
+        return {"status": "error", "reason": "content must be a string, not a dict. Pass the actual file text."}
     content = str(content)
 
     try:
@@ -514,6 +516,13 @@ def edit_workspace_file(file_path: str, start_line: int, end_line: int, new_cont
             "reason": f"Invalid line range {start_line}-{end_line}. File has {total} lines."
         })
     end_line = min(end_line, total)
+
+    # Coerce new_content to string
+    if isinstance(new_content, dict):
+        return json.dumps({"status": "error", "reason": "new_content must be a string, not a dict. Pass the actual replacement text."})
+    if isinstance(new_content, list):
+        new_content = "\n".join(str(item) for item in new_content)
+    new_content = str(new_content)
 
     # Ensure new_content ends with newline
     if new_content and not new_content.endswith("\n"):
