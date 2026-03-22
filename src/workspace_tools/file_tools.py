@@ -109,6 +109,15 @@ def _write_impl(file_path: str, content) -> dict:
 
     try:
         resolved.parent.mkdir(parents=True, exist_ok=True)
+        # Skip write if content is identical to what's already on disk
+        if resolved.is_file():
+            try:
+                existing = resolved.read_text(encoding="utf-8")
+                if existing == content:
+                    return {"status": "unchanged", "path": str(resolved),
+                            "message": "File already has this exact content. No write needed — move on to the next task."}
+            except Exception:
+                pass
         resolved.write_text(content, encoding="utf-8")
         _invalidate_cache_entry(file_path)
         return {"status": "ok", "path": str(resolved), "bytes_written": len(content.encode("utf-8"))}
@@ -198,13 +207,22 @@ def _run_sql_impl(db_name: str, query: str, params: str = "[]") -> dict:
     if _BLOCKED_PRAGMA_RE.search(query):
         return {"status": "denied", "reason": "blocked_sql: dangerous PRAGMA not allowed"}
 
-    # Parse params
+    # Parse params — coerce common model mistakes
     try:
-        param_list = json.loads(params)
-        if not isinstance(param_list, list):
-            return {"status": "error", "reason": "params must be a JSON list"}
-    except (json.JSONDecodeError, TypeError) as exc:
-        return {"status": "error", "reason": f"invalid params JSON: {exc}"}
+        if isinstance(params, list):
+            param_list = params
+        elif isinstance(params, dict):
+            param_list = list(params.values())
+        elif isinstance(params, str):
+            param_list = json.loads(params)
+            if isinstance(param_list, dict):
+                param_list = list(param_list.values())
+            if not isinstance(param_list, list):
+                param_list = [param_list]
+        else:
+            param_list = []
+    except (json.JSONDecodeError, TypeError):
+        param_list = []
 
     # Ensure parent directory exists
     try:

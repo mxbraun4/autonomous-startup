@@ -81,18 +81,25 @@ def create_learn_phase_task(coordinator, build_results: str) -> Task:
     Returns:
         LEARN phase task
     """
+    # Cap build results to prevent context overflow
+    capped_results = build_results[:8000] if len(build_results) > 8000 else build_results
+
     return Task(
         description=f'''Analyze results from this Build-Measure-Learn iteration and extract learnings.
 
         BUILD Phase Results (including customer feedback):
-        {build_results}
+        {capped_results}
 
-        Identify what worked, what failed, and why. Extract actionable insights
-        and formulate recommendations for each team. If USER_FEEDBACK is present,
-        factor usability issues and feature requests into your recommendations.
+        Produce a SHORT analysis (max 1500 chars) with:
+        1. What worked this iteration
+        2. What failed and why
+        3. Specific recommendations for the next iteration
+
+        Do NOT include source code, templates, or file contents in your response.
+        Only provide insights and recommendations as text.
         ''',
         agent=coordinator,
-        expected_output="Insights and recommendations for the next iteration.",
+        expected_output="Short text analysis with insights and recommendations. No code.",
     )
 
 
@@ -1032,7 +1039,7 @@ RAW CONTEXT:
             return
 
         remediation_dispatch, remediation_parallel, _get_remediation_count, _get_remediation_history = make_dispatch_task_tool(
-            registry, self._emit, max_dispatches=12, result_truncation=4000,
+            registry, self._emit, max_dispatches=4, result_truncation=4000,
             extra_context="",
         )
 
@@ -1179,7 +1186,7 @@ RAW CONTEXT:
         self._agent_registry = agent_registry
 
         # Create dispatch tool and coordinator
-        max_dispatches = int(self.state.active_policies.get("max_total_delegated_tasks", 12))
+        max_dispatches = int(self.state.active_policies.get("max_total_delegated_tasks", 5))
         dispatch_tool, dispatch_parallel_tool, _get_dispatch_count, _get_dispatch_history = make_dispatch_task_tool(
             agent_registry, self._emit, max_dispatches=max_dispatches, result_truncation=4000,
             extra_context=extra_context,
@@ -1281,6 +1288,59 @@ RAW CONTEXT:
             self.state.build_output = crew_output.pydantic
         else:
             self.state.build_output = None
+
+        # --- Feedback review step ---
+        # After the build, have the coordinator review open feedback and
+        # mark items that were addressed this iteration.
+        self._review_feedback(i, coordinator_llm)
+
+    def _review_feedback(self, iteration: int, coordinator_llm) -> None:
+        """Run a lightweight agent to review and mark addressed feedback."""
+        try:
+            from src.workspace_tools.file_tools import _get_open_feedback
+            open_items = _get_open_feedback(exclude_cycle=iteration)
+            if not open_items:
+                return
+
+            feedback_list = []
+            for item in open_items[:15]:
+                fid = item.get("id", "?")
+                ftype = item.get("feedback_type", "?")
+                msg = item.get("message", "")
+                feedback_list.append(f"  [{fid}][{ftype}] {msg}")
+            feedback_text = "\n".join(feedback_list)
+
+            from crewai import Crew as _Crew, Task as _Task, Process as _Process
+
+            agent = create_build_coordinator(
+                coordinator_llm,
+                extra_tools=[mark_feedback_addressed_tool],
+            )
+            task = _Task(
+                description=f"""Review the open customer feedback below and mark items that were fixed this iteration.
+
+Call mark_feedback_addressed with the IDs of items that have been addressed.
+If you're not sure whether an item was fixed, leave it open.
+
+OPEN FEEDBACK:
+{feedback_text}
+""",
+                agent=agent,
+                expected_output="List of feedback IDs marked as addressed.",
+            )
+            crew = _Crew(
+                agents=[agent],
+                tasks=[task],
+                process=_Process.sequential,
+                verbose=False,
+                memory=False,
+                cache=False,
+            )
+            ensure_litellm_tracing()
+            crew.kickoff()
+            logger.info("Feedback review completed for iteration %d", iteration)
+        except Exception as exc:
+            logger.debug("Feedback review skipped: %s", exc)
 
     # -- MEASURE phase -----------------------------------------------------
 

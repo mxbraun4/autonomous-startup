@@ -450,8 +450,9 @@ def create_authenticated_opener(
                                 post_data[name] = rv
                                 break
 
+            logger.debug("Auth session: login POST data: %s", list(post_data.keys()))
             resp = _post_form(url, post_data)
-            resp.read()
+            body = resp.read().decode("utf-8", errors="replace")
 
             has_cookies = len(jar) > 0
             final_url = (resp.url or "").lower()
@@ -462,10 +463,34 @@ def create_authenticated_opener(
                             login_route, len(jar))
                 return opener, True
 
-            logger.debug("Auth session: login via %s did not succeed", login_route)
+            # Log why login failed
+            error_hints = [kw for kw in ("invalid", "incorrect", "wrong", "error", "failed")
+                           if kw in body.lower()]
+            logger.info("Auth session: login via %s failed (cookies=%d, landed=%s, errors=%s)",
+                        login_route, len(jar), final_url, error_hints or "none detected")
         except Exception as exc:
             logger.debug("Auth session: login via %s failed: %s", login_route, exc)
             continue
+
+    # Last resort: try a simple POST with just the fixed credentials
+    # to every login route, in case the LLM filled extra fields that
+    # confused the app.
+    for login_route in login_routes:
+        for creds in [
+            {"email": _TEST_EMAIL, "password": _TEST_PASSWORD},
+            {"username": _TEST_USERNAME, "password": _TEST_PASSWORD},
+            {"email": _TEST_EMAIL, "password": _TEST_PASSWORD, "role": "startup"},
+        ]:
+            try:
+                url = f"{base}/{login_route.lstrip('/')}"
+                resp = _post_form(url, creds)
+                resp.read()
+                if len(jar) > 0 or login_route.lower() not in (resp.url or "").lower():
+                    logger.info("Auth session: logged in via %s (fallback, cookies: %d)",
+                                login_route, len(jar))
+                    return opener, True
+            except Exception:
+                continue
 
     logger.info("Auth session: could not establish authenticated session")
     return opener, False
