@@ -769,6 +769,27 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             total_iters = self.state.max_iterations
             completed = len(self.state.metrics_evolution) if self.state.metrics_evolution else 0
 
+            # Detect stale bugs: if feedback has been open for 3+ iterations,
+            # the agents are stuck in a loop and need to try a different approach.
+            stale_bug_warning = ""
+            try:
+                from src.workspace_tools.file_tools import _get_open_feedback
+                open_items = _get_open_feedback(exclude_cycle=iteration)
+                if open_items:
+                    oldest_cycle = min(it.get("cycle_id", iteration) for it in open_items)
+                    age = iteration - oldest_cycle
+                    if age >= 3:
+                        stale_bug_warning = (
+                            f"\n\nCRITICAL: The same bugs have persisted for {age} iterations. "
+                            f"Patching the same code has NOT worked. "
+                            f"The developer MUST take a completely different approach:\n"
+                            f"- REWRITE the broken feature from scratch instead of patching\n"
+                            f"- If auth/session is broken, delete all auth code and rebuild it simply\n"
+                            f"- Do NOT make small edits to the same code region that failed before\n"
+                        )
+            except Exception:
+                pass
+
             prompt = f"""You are the product strategist for an autonomous startup-VC matching platform.
 The platform is built with Flask + SQLite + Jinja templates by AI agents in a Build-Measure-Learn loop.
 
@@ -780,13 +801,14 @@ HOW THE SYSTEM WORKS:
 - Customer testing: 3 LLM personas (founder, VC partner, journalist) visit the live app and report bugs/friction
 - LEARN phase: insights and recommendations are stored for the next iteration
 - Customer feedback is stored in feedback.db and fed back to the build coordinator
-
+{stale_bug_warning}
 Below is the RAW ACCUMULATED CONTEXT from all memory stores (prior learnings, episodic history, team knowledge board, customer feedback, procedural memory). Much of it may be stale, redundant, or already resolved.
 
 YOUR JOB: Produce an ACTION BRIEF (max 1200 chars) containing:
 1. What exists now and what's working
 2. Top 3-5 unresolved issues (specific: route names, errors, customer feedback)
 3. What was tried before and failed (so agents try something different)
+4. If bugs have persisted for 3+ iterations: tell the developer to REWRITE the broken feature from scratch, not patch it
 
 No resolved issues, no praise, no repetition. Be specific.
 

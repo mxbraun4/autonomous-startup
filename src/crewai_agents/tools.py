@@ -592,8 +592,8 @@ def make_dispatch_task_tool(
             "Use run_workspace_sql to create/seed SQLite tables. app.py must read host/port from env vars.\n"
         ),
         "reviewer": (
-            "You have tools to review workspace files (Python, HTML, CSS, JS), run HTTP checks, and share findings.\n"
-            "The app is Flask-based: check app.py for routes, templates/ for HTML, static/ for assets.\n"
+            "You MUST call check_workspace_http to test the running app. Do NOT just read code.\n"
+            "Report which routes work and which are broken based on actual HTTP responses.\n"
         ),
         "product_strategist": (
             "You have tools to inspect workspace files, read team insights, and share your plan.\n"

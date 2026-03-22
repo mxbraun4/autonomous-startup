@@ -93,8 +93,13 @@ def _read_impl(file_path: str) -> dict:
         return {"status": "error", "reason": str(exc)}
 
 
-def _write_impl(file_path: str, content: str) -> dict:
+def _write_impl(file_path: str, content) -> dict:
     """Return a dict with the result of writing *content* to *file_path*."""
+    # The model sometimes passes a list instead of a string
+    if isinstance(content, list):
+        content = "\n".join(str(item) for item in content)
+    content = str(content)
+
     try:
         resolved = _resolve_safe_path(file_path)
     except ValueError:
