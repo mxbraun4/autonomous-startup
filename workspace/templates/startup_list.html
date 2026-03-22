@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}Browse Startups - Startup-VC Matcher{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">Browse Startups</h1>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                {% if startups %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Industry</th>
+                                <th>Funding Stage</th>
+                                <th>Funding Amount</th>
+                                <th>Description</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for s in startups %}
+                            <tr>
+                                <td><strong>{{ s.name }}</strong></td>
+                                <td><span class="badge bg-primary">{{ s.industry }}</span></td>
+                                <td>{{ s.funding_stage }}</td>
+                                <td>{{ '$' + '{:,}'.format(s.funding_amount) if s.funding_amount else 'Not specified' }}</td>
+                                <td>{{ s.description[:100] + '...' if s.description and s.description|length > 100 else s.description or 'N/A' }}</td>
+                                <td>
+                                    <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#startupModal{{ s.id }}">
+                                        View Details
+                                    </button>
+                                </td>
+                            </tr>
+                            
+                            <!-- Modal for startup details -->
+                            <div class="modal fade" id="startupModal{{ s.id }}" tabindex="-1">
+                                <div class="modal-dialog modal-lg">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title">{{ s.name }}</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <div class="row mb-3">
+                                                <div class="col-md-6">
+                                                    <p><strong>Industry:</strong> {{ s.industry }}</p>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <p><strong>Funding Stage:</strong> {{ s.funding_stage }}</p>
+                                                </div>
+                                            </div>
+                                            <div class="row mb-3">
+                                                <div class="col-md-6">
+                                                    <p><strong>Funding Amount:</strong> {{ '$' + '{:,}'.format(s.funding_amount) if s.funding_amount else 'Not specified' }}</p>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <p><strong>Website:</strong> 
+                                                        {% if s.website %}
+                                                        <a href="{{ s.website }}" target="_blank">{{ s.website }}</a>
+                                                        {% else %}
+                                                        N/A
+                                                        {% endif %}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <div class="mb-3">
+                                                <p><strong>Description:</strong></p>
+                                                <p>{{ s.description or 'No description provided.' }}</p>
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-5">
+                    <i class="bi bi-inbox display-4 text-muted"></i>
+                    <p class="text-muted mt-2">No startups registered yet.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
