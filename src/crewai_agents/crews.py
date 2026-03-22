@@ -436,10 +436,43 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             if _workspace_root is None:
                 return
 
-            flask_server = FlaskAppServer(str(_workspace_root), port=0)
-            server = flask_server if flask_server.has_flask_app() else WorkspaceServer(str(_workspace_root), port=0)
+            from src.workspace_tools.file_tools import _submit_feedback_impl
+
+            server = None
+            base_url = None
+            startup_error = None
+
+            # Try to start Flask app
+            if FlaskAppServer(str(_workspace_root), port=0).has_flask_app():
+                try:
+                    server = FlaskAppServer(str(_workspace_root), port=0)
+                    base_url = server.start(timeout=45)
+                except Exception as flask_exc:
+                    startup_error = str(flask_exc)
+                    logger.warning("Flask app failed to start: %s", flask_exc)
+                    if server:
+                        try:
+                            server.stop()
+                        except Exception:
+                            pass
+                        server = None
+
+            # If the app crashed, submit that as critical feedback
+            if startup_error:
+                _submit_feedback_impl(
+                    page="app.py",
+                    feedback_type="bug",
+                    message=f"[SYSTEM] CRITICAL: The Flask app failed to start. Error: {startup_error[:300]}. "
+                            f"The developer must fix app.py so it runs without errors.",
+                    cycle_id=self.state.iteration,
+                )
+                logger.info("Customer testing: submitted app crash feedback")
+                return
+
+            if base_url is None:
+                return
+
             try:
-                base_url = server.start()
                 result = run_customer_testing(
                     base_url=base_url,
                     workspace_root=str(_workspace_root),
@@ -453,7 +486,8 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
                     result.get("personas_tested", 0),
                 )
             finally:
-                server.stop()
+                if server:
+                    server.stop()
         except Exception as exc:
             logger.warning("Customer testing skipped: %s", exc)
 
