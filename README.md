@@ -6,8 +6,8 @@ A multi-agent system built with **CrewAI** that autonomously runs Build-Measure-
 - Product-building workspace (agents write a Flask app with SQLite backend and Jinja templates)
 - Parallel and sequential agent dispatch via native tool calls
 - LLM-powered customer testing (3 personas give structured feedback each cycle)
-- Consensus memory (agents share insights via a shared board)
-- Episodic and procedural memory for cross-cycle learning
+- Semantic episodic retrieval (ChromaDB) + targeted consensus + procedural failure patterns
+- Memory compaction (era summaries, stale pruning) for long-running sessions
 - CrewAI native function calling with monkey-patched text-response handling
 - Live observability dashboard and workspace preview server
 - Deterministic mock-mode execution
@@ -16,8 +16,7 @@ A multi-agent system built with **CrewAI** that autonomously runs Build-Measure-
 
 ```bash
 pip install -r requirements.txt
-python scripts/seed_memory.py
-python scripts/run_simulation.py
+python scripts/run.py
 ```
 
 Set `MOCK_MODE=true` to run without API keys — fully deterministic and fast.
@@ -62,6 +61,14 @@ BUILD Coordinator (build phase — dispatches to specialists via tool calls)
     |-> Reviewer (QA) Agent (syntax checks, HTTP route validation, code review)
 ```
 
+### Build-Measure-Learn Cycle
+
+Each iteration runs sequentially:
+
+1. **BUILD** — Coordinator dispatches product strategist (plan), developer (implement), reviewer (QA). Supports both sequential and parallel dispatch.
+2. **MEASURE** — 3 LLM personas (Founder, VC Partner, Journalist) visit the live app, interact with it, and submit structured feedback (bugs, friction, praise).
+3. **LEARN** — Insights extracted, procedural memory updated, prompt overrides refined for the next iteration. Memory compaction runs every 10 iterations.
+
 ### Agent Tools
 
 Agents interact with the system through CrewAI `@tool` decorated functions:
@@ -79,46 +86,25 @@ Agents interact with the system through CrewAI `@tool` decorated functions:
 | `read_workspace_file` | Read files from the workspace |
 | `write_workspace_file` | Write/create files in the workspace |
 | `list_workspace_files` | List workspace directory contents |
-| `workspace_file_diff` | Show diff of workspace file changes |
 | `run_workspace_sql` | Execute SQL against workspace SQLite databases |
 | `check_workspace_http` | Start Flask/static server and validate HTTP endpoints |
 | `submit_test_feedback` | Inject test feedback into the feedback database |
-
-### Tech Stack (Agent-Built Product)
-
-Agents build a Flask web application in `workspace/`:
-
-- **`app.py`** — Flask routes, database logic, form handling (reads `FLASK_RUN_HOST`/`FLASK_RUN_PORT` from env)
-- **`templates/`** — Jinja2 HTML templates with template inheritance (`base.html`)
-- **`static/`** — CSS and JS assets referenced from templates
-- **`.db` files** — SQLite databases for startups, investors, users, etc.
-
-### Build-Measure-Learn Cycle
-
-Each iteration runs:
-
-1. **BUILD** — Coordinator dispatches product strategist (plan), developer (implement), reviewer (QA). Supports both sequential and parallel dispatch.
-2. **Quality Gate** — Syntax check, workspace content inventory, Flask route HTTP validation.
-3. **Customer Testing** — 3 LLM personas (Founder, VC Partner, Journalist) review rendered pages and submit structured feedback.
-4. **EVALUATE** — Evaluator scores the cycle via reliability, stability, learning, safety, and efficiency gates.
-5. **LEARN** — Procedure and policy updaters extract insights; prompt overrides refine agent behavior for the next iteration.
 
 ### Memory System
 
 | Type | Purpose |
 |------|---------|
-| **Consensus** | Shared knowledge board — agents post and read insights |
-| **Episodic** | Per-cycle action/outcome records for cross-cycle learning |
-| **Procedural** | Versioned workflows that improve over iterations |
-| **Semantic** | Vector-backed document store for similarity search |
-| **Working** | Per-agent active context (short-lived) |
+| **Consensus** | Shared knowledge board — agents post and read insights. Recommendations self-replace; stale insights are compacted. |
+| **Episodic** | Per-cycle action/outcome records with ChromaDB semantic search for relevance-based retrieval. Old episodes are summarized into era summaries. |
+| **Procedural** | Versioned workflows that improve over iterations. Chronic failures (recurring across versions) are surfaced prominently. |
+| **Working** | In-process state (capped: last 5 iteration results, last 20 learnings). Full history lives in persistent stores. |
 
 ### CrewAI Patches
 
 Two monkey-patches address CrewAI 1.9.x limitations:
 
 - **`patch_crewai.py`** — Nudges short text responses (< 200 chars) back to tool usage for up to 50% of `max_iter`, preventing agents from exiting after "thinking aloud."
-- **Single tool call awareness** — All agent backstories instruct "call ONE tool at a time" since CrewAI's native handler only processes the first tool call.
+- **Event stack reset** — CrewAI's internal event bus leaks scope entries on exceptions; the stack is reset before each phase to prevent `StackDepthExceededError`.
 
 ## Project Structure
 
@@ -130,7 +116,7 @@ autonomous-startup/
 │   │   ├── eval/          # Evaluator, scorecard, gates
 │   │   ├── learning/      # Procedure/policy updaters
 │   │   ├── observability/ # Event logger, dashboard helpers
-│   │   └── storage/       # Unified store, episodic/semantic/procedural backends
+│   │   └── storage/       # Unified store, episodic/procedural/consensus backends
 │   ├── simulation/        # HTTP checks, customer testing (LLM personas)
 │   ├── workspace_tools/   # File tools, Flask/static HTTP server
 │   ├── database/          # Startup/VC database layer
@@ -138,9 +124,7 @@ autonomous-startup/
 │   └── utils/             # Config, logging
 ├── workspace/             # Agent-built Flask app (app.py, templates/, static/)
 ├── scripts/               # Entrypoints (run_simulation, clean, dashboard, etc.)
-├── tests/                 # Test suite
-├── data/seed/             # Seed data (templates)
-└── docs/                  # Product vision, next steps
+└── tests/                 # Test suite
 ```
 
 ## Configuration
@@ -171,14 +155,6 @@ MEMORY_DATA_DIR=data/memory
 CREWAI_LOCAL_APPDATA_DIR=data/crewai_local
 CREWAI_DB_STORAGE_DIR=data/crewai_storage
 ```
-
-## Documentation
-
-| File | Purpose |
-|------|---------|
-| `README.md` | This file |
-| `docs/PRODUCT_VISION.md` | Product direction and acquisition strategy |
-| `docs/next_steps.md` | Remaining work and priorities |
 
 ## Testing
 

@@ -2,8 +2,6 @@
 
 from src.framework.contracts import EvaluationResult, GateDecision, Procedure, ProcedureVersion
 from src.framework.learning import (
-    PolicyPatch,
-    PolicyUpdater,
     ProcedureUpdater,
 )
 
@@ -17,36 +15,6 @@ def _evaluation_with_gates(gates: list[GateDecision]) -> EvaluationResult:
         recommended_action="pause",
         summary="test",
     )
-
-
-def test_policy_updater_returns_no_deterministic_patches():
-    """Policy updater no longer applies deterministic tightening rules."""
-    evaluation = _evaluation_with_gates(
-        [
-            GateDecision(
-                gate_name="safety",
-                gate_status="warn",
-                recommended_action="continue",
-                evidence={"policy_violations": 1},
-            ),
-            GateDecision(
-                gate_name="reliability",
-                gate_status="fail",
-                recommended_action="continue",
-                evidence={"completion_rate": 0.5},
-            ),
-        ]
-    )
-    policies = {
-        "max_identical_tool_calls": 5,
-        "loop_window_size": 20,
-        "max_children_per_parent": 10,
-        "dedupe_delegated_objectives": False,
-    }
-
-    updater = PolicyUpdater()
-    patches = updater.propose_patches(evaluation, policies)
-    assert patches == []
 
 
 class _SyncStore:
