@@ -1,8 +1,8 @@
 """CrewAI Crews - Orchestration of agents and tasks.
 
-Provides both the public ``run_build_measure_learn_cycle`` function and the
-``BuildMeasureLearnFlow`` (CrewAI Flows) for typed, event-driven
-Build -> Evaluate -> Learn execution with evaluation gates and learning feedback.
+Provides the public ``run_build_measure_learn_cycle`` function and the
+``BuildMeasureLearnFlow`` class for sequential Build -> Measure -> Learn
+execution with evaluation gates and learning feedback.
 """
 
 import json
@@ -17,7 +17,7 @@ from src.crewai_agents.runtime_env import (
 
 configure_runtime_environment()
 from crewai import Crew, Task, Process, LLM
-from crewai.flow.flow import Flow, start, listen, router
+from crewai import Crew as _Crew_import  # noqa: F401 — keep crewai import chain intact
 
 patch_crewai_storage_paths()
 
@@ -281,7 +281,6 @@ class _FlowState(BaseModel):
     build_task_count: int = 0
     build_success_count: int = 0
     build_failure_count: int = 0
-    qa_passed: bool = True
     qa_result: Dict[str, Any] = Field(default_factory=dict)
     user_feedback: Dict[str, Any] = Field(default_factory=dict)
     learn_output: Optional[LearnPhaseOutput] = None
@@ -309,11 +308,11 @@ class _FlowState(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
 
-class BuildMeasureLearnFlow(Flow[_FlowState]):
-    """Event-driven Build-Measure-Learn cycle using CrewAI Flows.
+class BuildMeasureLearnFlow:
+    """Sequential Build-Measure-Learn cycle using CrewAI Crews.
 
-    Each call to :meth:`kickoff` runs one complete BUILD -> MEASURE -> LEARN
-    pipeline.  :meth:`run` loops over multiple iterations, feeding learnings
+    Each iteration runs BUILD -> MEASURE -> LEARN in sequence.
+    :meth:`run` loops over multiple iterations, feeding learnings
     from one iteration into the next.
     """
 
@@ -324,15 +323,29 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         enable_dynamic_agent_factory: bool = True,
         max_agents_per_cycle: int = 6,
     ) -> None:
-        super().__init__(
+        self.state = _FlowState(
             max_iterations=max_iterations,
             verbose=verbose,
-            llm=None,
             enable_dynamic_agent_factory=enable_dynamic_agent_factory,
             max_agents_per_cycle=max_agents_per_cycle,
         )
 
     # -- helpers ----------------------------------------------------------
+
+    @staticmethod
+    def _reset_crewai_event_stack() -> None:
+        """Reset CrewAI's internal event scope stack.
+
+        Events leak when crew exceptions prevent proper ``pop_event_scope``
+        calls.  After enough leaked events the 100-depth limit is hit.
+        Resetting between phases is safe — the stack is purely internal
+        bookkeeping and holds no data.
+        """
+        try:
+            from crewai.events.event_context import _event_id_stack
+            _event_id_stack.set([])
+        except Exception:
+            pass
 
     def _emit(self, event_type: str, payload: dict) -> None:
         """Emit an observability event if the event logger is available."""
@@ -347,11 +360,6 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
         except Exception:
             pass
 
-    def _get_evaluator(self):
-        """Lazy import of the framework Evaluator."""
-        from src.framework.eval import Evaluator
-        return Evaluator()
-
     def _get_procedure_updater(self):
         """Lazy import of ProcedureUpdater with the active memory store."""
         from src.framework.learning import ProcedureUpdater
@@ -362,62 +370,9 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             return None
         return ProcedureUpdater(store)
 
-    def _get_policy_updater(self):
-        """Lazy import of PolicyUpdater, reused across iterations."""
-        if getattr(self, "_policy_updater", None) is None:
-            from src.framework.learning import PolicyUpdater
-            self._policy_updater = PolicyUpdater()
-        return self._policy_updater
-
     def _prompt_override(self, key: str) -> str:
         overrides = dict(self.state.prompt_overrides or {})
         return str(overrides.get(key, "")).strip()
-
-    def _run_quality_gate(self) -> Dict[str, Any]:
-        """Run a minimal syntax check and let customer feedback drive QA.
-
-        Only checks Python syntax (if syntax is broken the app won't
-        start and customer testing can't run).  All other quality
-        signals come from the LLM-powered customer personas.
-        """
-        from src.crewai_agents.tools import run_quality_checks_tool
-
-        result: Dict[str, Any] = {}
-
-        # Python syntax check only
-        try:
-            raw = run_quality_checks_tool.run(
-                paths_csv="workspace",
-                pytest_targets_csv="",
-                run_pytest=False,
-                timeout_seconds=60,
-            )
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                result = parsed
-            else:
-                result = {"status": "unknown", "raw": raw}
-        except Exception as exc:
-            result = {"status": "error", "error": str(exc)}
-
-        syntax_ok = bool((result.get("syntax") or {}).get("syntax_ok", True))
-        result["syntax_ok"] = syntax_ok
-
-        # Count open customer bugs to determine pass/fail
-        bug_count = 0
-        try:
-            from src.workspace_tools.file_tools import _get_open_feedback
-            open_items = _get_open_feedback(exclude_cycle=0)
-            bug_count = sum(1 for it in open_items if it.get("feedback_type") == "bug")
-        except Exception:
-            pass
-
-        result["open_bug_count"] = bug_count
-        gate_passed = syntax_ok and bug_count == 0
-        result["qa_gate_passed"] = gate_passed
-        result["status"] = "passed" if gate_passed else "failed"
-
-        return result
 
     def _run_customer_testing(self) -> None:
         """Run LLM-powered customer testing against the workspace.
@@ -724,60 +679,6 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
             self.state.user_feedback = {}
             return f"  Failed to collect user feedback: {exc}"
 
-    def _qa_passed(self) -> bool:
-        return bool((self.state.qa_result or {}).get("qa_gate_passed"))
-
-    def _format_qa_failures(self, qa_result: dict) -> str:
-        """Format QA failures into a human-readable report.
-
-        Only two failure sources: syntax errors and customer-reported bugs.
-        """
-        if not qa_result:
-            return "No QA results available."
-
-        sections: List[str] = []
-        failure_num = 0
-
-        # 1. Syntax failures
-        syntax = qa_result.get("syntax") or {}
-        if not syntax.get("syntax_ok", True):
-            failure_num += 1
-            lines = [f"{failure_num}. SYNTAX ERRORS"]
-            for entry in syntax.get("syntax_failures", []):
-                f_path = entry.get("file", "unknown")
-                error = entry.get("error", "unknown error")
-                lines.append(f"   - {f_path}: {error}")
-            lines.append("   Fix: correct the Python syntax errors above.")
-            sections.append("\n".join(lines))
-
-        # 2. Customer-reported bugs
-        try:
-            from src.workspace_tools.file_tools import _get_open_feedback
-
-            open_items = _get_open_feedback(exclude_cycle=0)
-            bug_items = [it for it in open_items if it.get("feedback_type") == "bug"]
-            friction_items = [it for it in open_items if it.get("feedback_type") == "friction"]
-            actionable = bug_items + friction_items
-            if actionable:
-                failure_num += 1
-                lines = [f"{failure_num}. CUSTOMER FEEDBACK ({len(actionable)} bugs/friction items)"]
-                for item in actionable[:8]:
-                    fid = item.get("id", "?")
-                    ftype = item.get("feedback_type", "?")
-                    msg = item.get("message", "")
-                    lines.append(f"   [{fid}][{ftype}] {msg}")
-                if len(actionable) > 8:
-                    lines.append(f"   ... and {len(actionable) - 8} more")
-                lines.append("   Fix: dispatch developer to address these issues, then call mark_feedback_addressed with the resolved IDs.")
-                sections.append("\n".join(lines))
-        except Exception:
-            pass
-
-        if not sections:
-            return "QA gate passed - no failures detected."
-
-        return f"QA FAILURE REPORT ({failure_num} issue(s)):\n\n" + "\n\n".join(sections)
-
     # -- BUILD phase ------------------------------------------------------
 
     def _summarize_context(self, raw_context: str) -> str:
@@ -808,7 +709,7 @@ class BuildMeasureLearnFlow(Flow[_FlowState]):
 
             iteration = self.state.iteration
             total_iters = self.state.max_iterations
-            completed = len(self.state.metrics_evolution) if self.state.metrics_evolution else 0
+            completed = self.state.iteration - 1  # iterations completed before this one
 
             # Detect stale bugs: if feedback has been open for 3+ iterations,
             # the agents are stuck in a loop and need to try a different approach.
@@ -843,7 +744,7 @@ HOW THE SYSTEM WORKS:
 - LEARN phase: insights and recommendations are stored for the next iteration
 - Customer feedback is stored in feedback.db and fed back to the build coordinator
 {stale_bug_warning}
-Below is the RAW ACCUMULATED CONTEXT from all memory stores (prior learnings, episodic history, team knowledge board, customer feedback, procedural memory). Much of it may be stale, redundant, or already resolved.
+Below is PRE-FILTERED CONTEXT from memory stores — already relevance-ranked and deduplicated. Your job is to synthesize, not discard.
 
 YOUR JOB: Produce an ACTION BRIEF (max 1200 chars) containing:
 1. What exists now and what's working
@@ -851,16 +752,16 @@ YOUR JOB: Produce an ACTION BRIEF (max 1200 chars) containing:
 3. What was tried before and failed (so agents try something different)
 4. If bugs have persisted for 3+ iterations: tell the developer to REWRITE the broken feature from scratch, not patch it
 
-No resolved issues, no praise, no repetition. Be specific.
+Prioritize contradictions (something marked as fixed but still appearing in bugs). Be specific.
 
-RAW CONTEXT:
-{raw_context[:12000]}"""
+CONTEXT:
+{raw_context[:8000]}"""
 
             response = litellm.completion(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=800,
+                max_tokens=600,
                 **kwargs,
             )
             summary = response.choices[0].message.content or ""
@@ -874,7 +775,7 @@ RAW CONTEXT:
             logger.warning("Context summarization failed: %s", exc)
 
         # Fallback: hard cap
-        _MAX = 12_000
+        _MAX = 8_000
         if len(raw_context) > _MAX:
             return raw_context[:_MAX] + "\n\n[... context truncated]\n"
         return raw_context
@@ -896,9 +797,11 @@ RAW CONTEXT:
                 f"\n\n[Previous iteration learnings]\n{self.state.procedure_hints}\n"
             )
 
-        # Inject procedural memory (best workflow from prior runs)
+        # Inject procedural memory: analyse multiple versions to detect
+        # chronic failure patterns, not just the latest snapshot.
         try:
             from src.crewai_agents.tools import get_memory_store as _get_store_proc
+            from collections import Counter as _Counter
             _proc_store = _get_store_proc()
             if _proc_store is not None:
                 _proc = _proc_store.proc_get("bml_cycle")
@@ -906,8 +809,42 @@ RAW CONTEXT:
                     _latest = _proc.versions[-1]
                     wf = _latest.workflow or {}
                     parts = []
-                    if wf.get("failures"):
-                        parts.append("AVOID (failed before): " + "; ".join(str(x) for x in wf["failures"]))
+
+                    # Scan last N versions to find chronic (recurring) failures
+                    _failure_counts = _Counter()
+                    for _ver in _proc.versions[-10:]:
+                        for f in (_ver.workflow or {}).get("failures", []):
+                            _failure_counts[str(f)] += 1
+                    chronic = [f for f, c in _failure_counts.most_common() if c >= 2]
+
+                    # Cross-reference chronic failures with current open bugs
+                    _current_bugs: list = []
+                    try:
+                        from src.workspace_tools.file_tools import _get_open_feedback
+                        _current_bugs = [
+                            it.get("message", "").lower()
+                            for it in _get_open_feedback(exclude_cycle=self.state.iteration)
+                        ]
+                    except Exception:
+                        pass
+
+                    if chronic:
+                        # Elevate chronic failures that match current bugs
+                        matched = []
+                        unmatched = []
+                        for f in chronic:
+                            f_lower = f.lower()
+                            if any(f_lower in bug or any(w in f_lower for w in bug.split() if len(w) > 3) for bug in _current_bugs):
+                                matched.append(f)
+                            else:
+                                unmatched.append(f)
+                        ordered = matched + unmatched
+                        parts.append("CHRONIC FAILURES (recurring across versions, try a different approach): " + "; ".join(ordered[:5]))
+
+                    # One-time failures from the latest version only
+                    one_time = [str(f) for f in wf.get("failures", []) if str(f) not in chronic]
+                    if one_time:
+                        parts.append("AVOID (failed last time): " + "; ".join(one_time[:5]))
                     if wf.get("successes"):
                         parts.append("REPEAT (worked before): " + "; ".join(str(x) for x in wf["successes"]))
                     if wf.get("recommendations"):
@@ -923,20 +860,54 @@ RAW CONTEXT:
         except Exception as _proc_exc:
             logger.debug(f"Procedural memory read skipped: {_proc_exc}")
 
-        # Inject episodic memory (enriched history from prior cycles/runs)
+        # Inject episodic memory via semantic search + recency fallback.
+        # ChromaDB semantic search finds episodes relevant to current issues;
+        # recency ensures the latest cycles are always visible.
         try:
             from src.crewai_agents.tools import get_memory_store as _get_store_ep
             from src.framework.types import EpisodeType as _EpType
             _ep_store = _get_store_ep()
             if _ep_store is not None:
-                _episodes = _ep_store.ep_search_structured(
+                # Build a probe from current signals for semantic search
+                probe_parts = []
+                if self.state.user_feedback_summary:
+                    probe_parts.append(self.state.user_feedback_summary[:500])
+                try:
+                    from src.workspace_tools.file_tools import _get_open_feedback
+                    _open = _get_open_feedback(exclude_cycle=self.state.iteration)
+                    for _fb in _open[:5]:
+                        probe_parts.append(_fb.get("message", "")[:150])
+                except Exception:
+                    pass
+                if not probe_parts:
+                    probe_parts.append("build measure learn cycle bugs failures improvements")
+
+                probe_text = " ".join(probe_parts)
+
+                # Semantic: 5 most relevant episodes to current issues
+                _relevant = _ep_store.ep_search_similar(
+                    query=probe_text,
                     episode_type=_EpType.LEARNING,
-                    limit=10,
+                    top_k=5,
                 )
+                # Recency: 3 most recent episodes as baseline
+                _recent = _ep_store.ep_search_structured(
+                    episode_type=_EpType.LEARNING,
+                    limit=3,
+                )
+
+                # Merge and deduplicate, cap at 7
+                seen_ids: set = set()
+                _episodes = []
+                for _ep in _relevant + _recent:
+                    if _ep.entity_id not in seen_ids:
+                        seen_ids.add(_ep.entity_id)
+                        _episodes.append(_ep)
+                _episodes = _episodes[:7]
+
                 if _episodes:
                     ep_lines = []
                     for _ep in _episodes:
-                        # Use the enriched summary_text if available
                         if _ep.summary_text and len(_ep.summary_text) > 30:
                             ep_lines.append(f"- {_ep.summary_text}")
                         else:
@@ -951,7 +922,7 @@ RAW CONTEXT:
                                 line += f" (bugs: {bugs})"
                             ep_lines.append(line)
                     extra_context += (
-                        "\n\n[Episodic Memory — recent cycle history]\n"
+                        "\n\n[Episodic Memory — relevant + recent history]\n"
                         + "\n".join(ep_lines)
                         + "\n"
                     )
@@ -959,40 +930,62 @@ RAW CONTEXT:
             logger.debug(f"Episodic memory read skipped: {_ep_exc}")
 
         # Inject consensus memory (team knowledge board)
-        # Auto-expire stale per-iteration insights and deduplicate values.
+        # Query recommendations and insights separately via SQL-level prefix
+        # filtering, then rank by relevance to current open bugs.
         try:
             from src.crewai_agents.tools import get_memory_store
+            import re as _re_cons
+
             _cons_store = get_memory_store()
             if _cons_store is not None:
-                _cons_entries = _cons_store.cons_list()
+                # Targeted queries instead of full table scan
+                _recommendations = _cons_store.cons_list(prefix="learn.recommendation.")
+                _insights = _cons_store.cons_list(prefix="learn.insight.")
 
-                # --- Auto-expire old per-iteration insights ---
-                # Keys like "learn.insight.iter3.0" pile up; keep only
-                # recent iterations (last _CONSENSUS_STALE_CYCLES).
-                import re as _re_cons
+                # Filter stale per-iteration insights
                 _CONSENSUS_STALE_CYCLES = 5
                 cutoff_iter = self.state.iteration - _CONSENSUS_STALE_CYCLES
-                fresh_entries = []
-                for _ce in _cons_entries:
+                fresh_insights = []
+                for _ce in _insights:
                     m = _re_cons.match(r"learn\.insight\.iter(\d+)\.", _ce.key)
                     if m and int(m.group(1)) < cutoff_iter:
-                        continue  # skip stale per-iteration insight
-                    fresh_entries.append(_ce)
+                        continue
+                    fresh_insights.append(_ce)
 
-                # --- Deduplicate by value ---
-                # Different keys can hold the same insight text (e.g.
-                # route X shows login form repeated across iterations).
+                all_entries = _recommendations + fresh_insights
+
+                # Deduplicate by value
                 seen_values: set = set()
-                deduped_entries = []
-                for _ce in fresh_entries:
+                deduped: list = []
+                for _ce in all_entries:
                     val_norm = str(_ce.value or "").strip().lower()[:150]
                     if val_norm in seen_values:
                         continue
                     seen_values.add(val_norm)
-                    deduped_entries.append(_ce)
+                    deduped.append(_ce)
 
-                # Cap to most recent 15 entries
-                _cons_entries = deduped_entries[-15:] if len(deduped_entries) > 15 else deduped_entries
+                # Rank by relevance to current open bugs: entries matching
+                # bug keywords float to the top.
+                bug_keywords: set = set()
+                try:
+                    from src.workspace_tools.file_tools import _get_open_feedback
+                    for _fb in _get_open_feedback(exclude_cycle=self.state.iteration):
+                        msg = (_fb.get("message", "") + " " + _fb.get("page", "")).lower()
+                        for word in msg.split():
+                            if len(word) > 3:
+                                bug_keywords.add(word)
+                except Exception:
+                    pass
+
+                def _relevance_score(entry) -> int:
+                    val = str(entry.value or "").lower()
+                    return sum(1 for kw in bug_keywords if kw in val)
+
+                if bug_keywords:
+                    deduped.sort(key=_relevance_score, reverse=True)
+
+                # Cap at 10 high-quality entries
+                _cons_entries = deduped[:10]
                 if _cons_entries:
                     board_lines = []
                     for _ce in _cons_entries:
@@ -1053,85 +1046,6 @@ RAW CONTEXT:
                 logger.warning("Workspace tools unavailable: %s", _ws_exc)
         return ws_dev_tools, ws_product_tools, ws_ro_tools
 
-    def _run_coordinator_remediation(
-        self,
-        i: int,
-        coordinator_llm,
-        ws_product_tools: list,
-    ) -> None:
-        """Run coordinator-driven remediation after QA gate failure.
-
-        Creates a fresh dispatch tool (budget=4), a fresh build coordinator,
-        and a remediation task with QA findings.
-        """
-        qa_report = self._format_qa_failures(self.state.qa_result)
-
-        # Use stored registry from build(); fall back if unavailable
-        registry = getattr(self, "_agent_registry", None)
-        if not registry:
-            logger.warning("No agent registry for remediation; skipping coordinator remediation")
-            return
-
-        remediation_dispatch, remediation_parallel, _get_remediation_count, _get_remediation_history = make_dispatch_task_tool(
-            registry, self._emit, max_dispatches=4, result_truncation=4000,
-            extra_context="",
-        )
-
-        remediation_coordinator = create_build_coordinator(
-            coordinator_llm,
-            prompt_override=self._prompt_override("coordinator"),
-            extra_tools=[remediation_dispatch, remediation_parallel] + (ws_product_tools or []),
-        )
-
-        description = f'''[Iteration {i}] QA failed. Fix the issues below by dispatching agents.
-
-            {qa_report}
-
-            Available agents: {sorted(registry.keys())}
-            Act through tool calls, not text-only responses.
-            '''
-
-        if self.state.user_feedback_summary:
-            description += f"\n\n[USER FEEDBACK]\n{self.state.user_feedback_summary}"
-
-        remediation_task = Task(
-            description=description,
-            agent=remediation_coordinator,
-            expected_output='''QA remediation summary including:
-            - Root cause(s) identified
-            - Fixes applied
-            - Final QA status after remediation
-            '''
-        )
-
-        remediation_crew = Crew(
-            agents=[remediation_coordinator],
-            tasks=[remediation_task],
-            process=Process.sequential,
-            verbose=_verbose_flag(self.state.verbose),
-            memory=False,
-            cache=False,
-        )
-
-        try:
-            ensure_litellm_tracing()
-            remediation_output = remediation_crew.kickoff()
-
-            if _get_remediation_count() == 0:
-                logger.info("Remediation coordinator completed without dispatching any agents")
-
-            if remediation_output:
-                extra = str(remediation_output)
-                self.state.build_result_text = (
-                    f"{self.state.build_result_text}\n\n[QA_REMEDIATION]\n{extra}"
-                    if self.state.build_result_text
-                    else f"[QA_REMEDIATION]\n{extra}"
-                )
-
-        except Exception as exc:
-            logger.warning(f"Coordinator remediation failed: {exc}")
-
-    @start()
     def build(self):
         """Execute the BUILD phase via coordinator-driven dispatch loop.
 
@@ -1378,7 +1292,6 @@ OPEN FEEDBACK:
 
     # -- MEASURE phase -----------------------------------------------------
 
-    @listen(build)
     def measure(self):
         """Run customer testing against the live app and collect feedback.
 
@@ -1402,7 +1315,6 @@ OPEN FEEDBACK:
 
     # -- LEARN phase ------------------------------------------------------
 
-    @listen(measure)
     def learn(self):
         """Execute the LEARN phase and feed results back into next iteration."""
         logger.info("LEARN PHASE: Extracting insights...")
@@ -1477,6 +1389,10 @@ OPEN FEEDBACK:
         }
 
         self.state.iterations_results.append(iteration_result)
+        # Prune working memory — full history lives in episodic SQLite.
+        _MAX_RESULTS = 5
+        if len(self.state.iterations_results) > _MAX_RESULTS:
+            self.state.iterations_results = self.state.iterations_results[-_MAX_RESULTS:]
         self.state.metrics_evolution.append(qa_metrics)
 
         self._emit("cycle_end", {
@@ -1558,6 +1474,202 @@ OPEN FEEDBACK:
             f"{self.state.build_success_count}/{self.state.build_task_count} tasks succeeded"
         )
 
+        # Compact persistent stores periodically
+        if self.state.iteration % self._COMPACTION_INTERVAL == 0:
+            self._compact_memory()
+
+    # -- Memory compaction -------------------------------------------------
+
+    _COMPACTION_INTERVAL = 10  # run every N iterations
+    _COMPACTION_KEEP_EPISODES = 10  # keep this many recent episodes
+    _COMPACTION_KEEP_PROC_VERSIONS = 10  # keep this many recent proc versions
+
+    def _compact_memory(self) -> None:
+        """Compact persistent memory stores to prevent unbounded growth.
+
+        Runs every ``_COMPACTION_INTERVAL`` iterations.  For each store:
+        - **Episodic**: summarise old episodes into an era summary, delete originals.
+        - **Consensus**: purge stale per-iteration insight entries.
+        - **Procedural**: prune old versions beyond the keep window.
+        """
+        logger.info("COMPACTION: starting memory compaction (iteration %d)", self.state.iteration)
+
+        self._compact_episodic()
+        self._compact_consensus()
+        self._compact_procedural()
+
+        logger.info("COMPACTION: complete")
+
+    def _compact_episodic(self) -> None:
+        """Summarise old episodes into an era summary, delete originals."""
+        try:
+            from src.crewai_agents.tools import get_memory_store
+            from src.framework.contracts import Episode
+            from src.framework.types import EpisodeType as _EpType
+
+            store = get_memory_store()
+            if store is None:
+                return
+
+            # Get all LEARNING episodes ordered by recency
+            all_episodes = store.ep_search_structured(
+                episode_type=_EpType.LEARNING,
+                limit=500,
+            )
+            if len(all_episodes) <= self._COMPACTION_KEEP_EPISODES:
+                return
+
+            # Split: keep recent, compact old
+            recent = all_episodes[:self._COMPACTION_KEEP_EPISODES]
+            old = all_episodes[self._COMPACTION_KEEP_EPISODES:]
+            recent_ids = {ep.entity_id for ep in recent}
+
+            # Build summary of old episodes via LLM
+            old_summaries = []
+            for ep in old:
+                text = ep.summary_text or ep.action or ""
+                if text:
+                    old_summaries.append(text[:200])
+            if not old_summaries:
+                return
+
+            era_summary_text = self._summarize_old_episodes(old_summaries)
+            if not era_summary_text:
+                return
+
+            oldest_iter = min(ep.iteration or 0 for ep in old)
+            newest_iter = max(ep.iteration or 0 for ep in old)
+
+            # Write the era summary as a new episode
+            store.ep_record(Episode(
+                agent_id="compaction",
+                episode_type=_EpType.LEARNING,
+                action=f"era_summary_iterations_{oldest_iter}_to_{newest_iter}",
+                iteration=newest_iter,
+                success=True,
+                summary_text=f"[Era {oldest_iter}-{newest_iter}] {era_summary_text}",
+                tags=["era_summary", "compacted"],
+            ))
+
+            # Delete old episodes from SQLite and ChromaDB
+            old_ids = [ep.entity_id for ep in old if ep.entity_id not in recent_ids]
+            if old_ids:
+                backend = store.async_store._episodic
+                placeholders = ",".join("?" for _ in old_ids)
+                backend._conn.execute(
+                    f"DELETE FROM episodes_v2 WHERE entity_id IN ({placeholders})",
+                    old_ids,
+                )
+                backend._conn.commit()
+                # Remove from ChromaDB (ignore errors for missing IDs)
+                try:
+                    backend._collection.delete(ids=old_ids)
+                except Exception:
+                    pass
+
+            logger.info(
+                "COMPACTION: episodic — summarised %d old episodes into era summary "
+                "(iterations %d-%d), kept %d recent",
+                len(old_ids), oldest_iter, newest_iter, len(recent),
+            )
+        except Exception as exc:
+            logger.warning("COMPACTION: episodic compaction failed: %s", exc)
+
+    def _summarize_old_episodes(self, summaries: List[str]) -> str:
+        """Use an LLM call to compress old episode summaries into a single era summary."""
+        try:
+            import litellm
+
+            product_llm = self.state.llm or get_llm("product")
+            model = product_llm.model
+            kwargs: dict = {}
+            if hasattr(product_llm, "api_key") and product_llm.api_key:
+                kwargs["api_key"] = product_llm.api_key
+            if hasattr(product_llm, "base_url") and product_llm.base_url:
+                kwargs["api_base"] = product_llm.base_url
+
+            joined = "\n".join(f"- {s}" for s in summaries[:30])
+            response = litellm.completion(
+                model=model,
+                messages=[{"role": "user", "content": f"""Compress these old cycle summaries into a single paragraph (max 500 chars) capturing the key patterns, chronic failures, and what worked. Discard resolved issues.
+
+{joined}"""}],
+                temperature=0.2,
+                max_tokens=300,
+                **kwargs,
+            )
+            return (response.choices[0].message.content or "").strip()
+        except Exception as exc:
+            logger.warning("COMPACTION: era summarization failed: %s", exc)
+            # Fallback: concatenate truncated summaries
+            return "; ".join(s[:80] for s in summaries[:10])
+
+    def _compact_consensus(self) -> None:
+        """Purge stale per-iteration insight entries from the consensus DB."""
+        try:
+            from src.crewai_agents.tools import get_memory_store
+            import re as _re
+
+            store = get_memory_store()
+            if store is None:
+                return
+
+            cutoff = self.state.iteration - self._COMPACTION_KEEP_EPISODES
+            if cutoff <= 0:
+                return
+
+            # Get all insight entries and find stale ones
+            insights = store.cons_list(prefix="learn.insight.")
+            stale_ids = []
+            for entry in insights:
+                m = _re.match(r"learn\.insight\.iter(\d+)\.", entry.key)
+                if m and int(m.group(1)) < cutoff:
+                    stale_ids.append(entry.entity_id)
+
+            if stale_ids:
+                backend = store.async_store._consensus
+                placeholders = ",".join("?" for _ in stale_ids)
+                backend._conn.execute(
+                    f"DELETE FROM consensus_entries WHERE entity_id IN ({placeholders})",
+                    stale_ids,
+                )
+                backend._conn.commit()
+                logger.info("COMPACTION: consensus — purged %d stale insight entries", len(stale_ids))
+        except Exception as exc:
+            logger.warning("COMPACTION: consensus compaction failed: %s", exc)
+
+    def _compact_procedural(self) -> None:
+        """Prune old procedural versions beyond the keep window."""
+        try:
+            from src.crewai_agents.tools import get_memory_store
+
+            store = get_memory_store()
+            if store is None:
+                return
+
+            proc = store.proc_get("bml_cycle")
+            if proc is None or len(proc.versions) <= self._COMPACTION_KEEP_PROC_VERSIONS:
+                return
+
+            # Delete oldest versions beyond the keep window
+            versions_to_delete = proc.versions[:-self._COMPACTION_KEEP_PROC_VERSIONS]
+            if not versions_to_delete:
+                return
+
+            backend = store.async_store._procedural
+            for ver in versions_to_delete:
+                backend._conn.execute(
+                    "DELETE FROM procedures WHERE task_type = ? AND version = ?",
+                    ("bml_cycle", ver.version),
+                )
+            backend._conn.commit()
+            logger.info(
+                "COMPACTION: procedural — pruned %d old versions, kept last %d",
+                len(versions_to_delete), self._COMPACTION_KEEP_PROC_VERSIONS,
+            )
+        except Exception as exc:
+            logger.warning("COMPACTION: procedural compaction failed: %s", exc)
+
     def _apply_learning_feedback(self) -> None:
         """Use ProcedureUpdater to persist learnings and prepare hints."""
         lo = self.state.learn_output
@@ -1572,6 +1684,10 @@ OPEN FEEDBACK:
                 hints_parts.append(f"{team}: {rec}")
         self.state.procedure_hints = "\n".join(hints_parts) if hints_parts else ""
         self.state.learnings.extend(lo.insights)
+        # Prune — older insights are in consensus memory already.
+        _MAX_LEARNINGS = 20
+        if len(self.state.learnings) > _MAX_LEARNINGS:
+            self.state.learnings = self.state.learnings[-_MAX_LEARNINGS:]
         self._update_prompt_overrides(lo)
 
         # Write insights and recommendations to consensus memory so the
@@ -1663,22 +1779,28 @@ OPEN FEEDBACK:
     # -- Public entry point -----------------------------------------------
 
     def run(self) -> Dict[str, Any]:
-        """Execute the full multi-iteration BML flow.
+        """Execute the full multi-iteration BML loop.
 
-        Each call to ``kickoff()`` runs one BUILD -> MEASURE -> LEARN
-        pipeline.  We loop externally so that learnings from iteration *N*
-        feed into iteration *N+1* via ``procedure_hints``.
+        Each iteration runs BUILD -> MEASURE -> LEARN sequentially.
+        Learnings from iteration *N* feed into iteration *N+1* via
+        ``procedure_hints``.
 
         Returns:
             Aggregated results dict matching the existing public interface.
         """
+        self._reset_crewai_event_stack()  # clean slate at run start
         self._emit("run_start", {
             "run_id": self.state.id,
             "max_iterations": self.state.max_iterations,
         })
 
         for _ in range(self.state.max_iterations):
-            self.kickoff()
+            self._reset_crewai_event_stack()
+            self.build()
+            self._reset_crewai_event_stack()
+            self.measure()
+            self._reset_crewai_event_stack()
+            self.learn()
 
             # Respect gate recommendation: stop early if evaluation says to.
             rec = self.state.gate_recommendation

@@ -1,4 +1,4 @@
-"""Framework - Storage, evaluation, learning, and observability."""
+"""Framework - Storage, learning, and observability."""
 
 from src.framework.types import (
     ConsensusStatus,
@@ -23,10 +23,7 @@ from src.framework.contracts import (
     TaskSpec,
     ToolCall,
 )
-from src.framework.eval import Evaluator, GateThresholds, Scorecard, build_scorecard
 from src.framework.learning import (
-    PolicyPatch,
-    PolicyUpdater,
     ProcedureUpdateProposal,
     ProcedureUpdater,
 )
@@ -59,14 +56,7 @@ __all__ = [
     "TaskResult",
     "TaskSpec",
     "ToolCall",
-    # Eval
-    "Evaluator",
-    "GateThresholds",
-    "Scorecard",
-    "build_scorecard",
     # Learning
-    "PolicyPatch",
-    "PolicyUpdater",
     "ProcedureUpdateProposal",
     "ProcedureUpdater",
     # Observability
