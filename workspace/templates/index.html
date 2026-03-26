@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}Home - Startup-VC Matching Platform{% endblock %}
+
+{% block content %}
+<div class="hero-section text-center py-5">
+    <h1 class="display-4 mb-4">Connect Startups with Investors</h1>
+    <p class="lead mb-4">The intelligent platform that matches innovative startups with the right venture capital partners.</p>
+    
+    {% if not user %}
+    <div class="cta-buttons">
+        <a href="{{ url_for('register') }}" class="btn btn-primary btn-lg me-2">Get Started</a>
+        <a href="{{ url_for('login') }}" class="btn btn-outline-secondary btn-lg">Login</a>
+    </div>
+    {% else %}
+    <div class="welcome-message">
+        <h3>Welcome back!</h3>
+        {% if user.user_type == 'startup' %}
+            <p>Manage your startup profile and discover investors.</p>
+            <a href="{{ url_for('startup_dashboard') }}" class="btn btn-primary">Go to Dashboard</a>
+        {% else %}
+            <p>Manage your investor profile and discover startups.</p>
+            <a href="{{ url_for('investor_dashboard') }}" class="btn btn-primary">Go to Dashboard</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<div class="features-section mt-5">
+    <div class="row">
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-body text-center">
+                    <h5 class="card-title">Smart Matching</h5>
+                    <p class="card-text">Our algorithm matches startups and investors based on industry, stage, and funding compatibility.</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-body text-center">
+                    <h5 class="card-title">Verified Profiles</h5>
+                    <p class="card-text">Connect with verified startups and investors to ensure quality connections.</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-body text-center">
+                    <h5 class="card-title">Direct Engagement</h5>
+                    <p class="card-text">Send match requests and manage your connections all in one place.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="stats-section mt-5 py-4 bg-light rounded">
+    <div class="row text-center">
+        <div class="col-md-4">
+            <h3>500+</h3>
+            <p>Startups</p>
+        </div>
+        <div class="col-md-4">
+            <h3>200+</h3>
+            <p>Investors</p>
+        </div>
+        <div class="col-md-4">
+            <h3>1000+</h3>
+            <p>Matches Made</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
