@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+
+{% block title %}Discover Startups - Startup-VC Matching Platform{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <h2>Discover Startups</h2>
+        <p class="text-muted">Browse startups looking for investment and send match requests.</p>
+    </div>
+</div>
+
+<!-- Search and Filter -->
+<div class="row mt-3">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-body">
+                <form method="GET" action="{{ url_for('discover_startups') }}" class="row g-3">
+                    <div class="col-md-4">
+                        <label for="search" class="form-label">Search by Company Name</label>
+                        <input type="text" class="form-control" id="search" name="search" placeholder="Enter company name..." value="{{ request.args.get('search', '') }}">
+                    </div>
+                    <div class="col-md-4">
+                        <label for="industry" class="form-label">Filter by Industry</label>
+                        <select class="form-select" id="industry" name="industry">
+                            <option value="">All Industries</option>
+                            <option value="Technology" {% if request.args.get('industry') == 'Technology' %}selected{% endif %}>Technology</option>
+                            <option value="Healthcare" {% if request.args.get('industry') == 'Healthcare' %}selected{% endif %}>Healthcare</option>
+                            <option value="Fintech" {% if request.args.get('industry') == 'Fintech' %}selected{% endif %}>Fintech</option>
+                            <option value="E-commerce" {% if request.args.get('industry') == 'E-commerce' %}selected{% endif %}>E-commerce</option>
+                            <option value="AI/ML" {% if request.args.get('industry') == 'AI/ML' %}selected{% endif %}>AI/ML</option>
+                            <option value="SaaS" {% if request.args.get('industry') == 'SaaS' %}selected{% endif %}>SaaS</option>
+                            <option value="Clean Energy" {% if request.args.get('industry') == 'Clean Energy' %}selected{% endif %}>Clean Energy</option>
+                            <option value="EdTech" {% if request.args.get('industry') == 'EdTech' %}selected{% endif %}>EdTech</option>
+                            <option value="Other" {% if request.args.get('industry') == 'Other' %}selected{% endif %}>Other</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4 d-flex align-items-end">
+                        <button type="submit" class="btn btn-primary w-100">Apply Filters</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-3">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-body">
+                {% if startups and startups|length > 0 %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Company</th>
+                                <th>Tagline</th>
+                                <th>Industry</th>
+                                <th>Stage</th>
+                                <th>Funding Seeking</th>
+                                <th>Location</th>
+                                <th>Match Score</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in startups %}
+                            {% set startup = item.startup %}
+                            {% set match_score = item.match_score %}
+                            <tr>
+                                <td>
+                                    <strong>{{ startup.company_name }}</strong>
+                                    {% if startup.website_url %}
+                                    <br><a href="{{ startup.website_url }}" target="_blank" class="small">Website</a>
+                                    {% endif %}
+                                </td>
+                                <td>{{ startup.tagline or '-' }}</td>
+                                <td>{{ startup.industry or '-' }}</td>
+                                <td>{{ startup.stage or '-' }}</td>
+                                <td>{% if startup.funding_amount_seeking %}${{ "{:,.0f}".format(startup.funding_amount_seeking) }}{% else %}-{% endif %}</td>
+                                <td>{{ startup.location or '-' }}</td>
+                                <td>
+                                    <span class="badge bg-{% if match_score >= 70 %}success{% elif match_score >= 40 %}warning{% else %}secondary{% endif %}">
+                                        {{ match_score }}%
+                                    </span>
+                                </td>
+                                <td>
+                                    <button class="btn btn-sm btn-primary" onclick="viewStartupDetails({{ startup.id }})">View</button>
+                                    <button class="btn btn-sm btn-outline-primary" onclick="sendMatchRequest({{ startup.id }}, 'startup')">Connect</button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+{% else %}
+                <div class="text-center py-5">
+                    <div class="mb-3">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" fill="currentColor" class="text-muted" viewBox="0 0 16 16">
+                            <path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16zm.93-9.412-1 4.705c-.07.34.029.533.304.533.194 0 .487-.07.686-.246l-.088.416c-.287.346-.92.598-1.465.598-.703 0-1.002-.422-.808-1.319l.738-3.468c.064-.293.006-.399-.287-.47l-.451-.081.082-.381 2.29-.287zM8 5.5a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"/>
+                        </svg>
+                    </div>
+                    <h5 class="text-muted">No Startups Found</h5>
+                    <p class="text-muted">There are no startups looking for investment at the moment, or none match your current filters.</p>
+                    <p class="text-muted small">Try adjusting your search filters or check back later.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Pagination -->
+{% if total_pages and total_pages > 1 %}
+<div class="row mt-3">
+    <div class="col-md-12">
+        <nav aria-label="Startup pagination">
+            <ul class="pagination justify-content-center">
+                <li class="page-item {% if current_page <= 1 %}disabled{% endif %}">
+                    <a class="page-link" href="{{ url_for('discover_startups', page=current_page-1, search=request.args.get('search', ''), industry=request.args.get('industry', '')) }}">Previous</a>
+                </li>
+                {% for p in range(1, total_pages + 1) %}
+                    {% if p == 1 or p == total_pages or (p >= current_page - 1 and p <= current_page + 1) %}
+                    <li class="page-item {% if p == current_page %}active{% endif %}">
+                        <a class="page-link" href="{{ url_for('discover_startups', page=p, search=request.args.get('search', ''), industry=request.args.get('industry', '')) }}">{{ p }}</a>
+                    </li>
+                    {% elif p == current_page - 2 or p == current_page + 2 %}
+                    <li class="page-item disabled"><span class="page-link">...</span></li>
+                    {% endif %}
+                {% endfor %}
+                <li class="page-item {% if current_page >= total_pages %}disabled{% endif %}">
+                    <a class="page-link" href="{{ url_for('discover_startups', page=current_page+1, search=request.args.get('search', ''), industry=request.args.get('industry', '')) }}">Next</a>
+                </li>
+            </ul>
+        </nav>
+        <p class="text-center text-muted">Showing {{ ((current_page-1) * 10) + 1 }} - {{ [current_page * 10, total_items]|min }} of {{ total_items }} startups</p>
+    </div>
+</div>
+{% endif %}
+            <div class="modal-body" id="startupModalBody">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" id="modalConnectBtn">Send Match Request</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentStartupId = null;
+// Build startups data from the template variable
+const startupsData = {{ startups|tojson }};
+
+function viewStartupDetails(startupId) {
+    const item = startupsData.find(s => s.startup && s.startup.id === startupId);
+    if (!item) return;
+    
+    const startup = item.startup;
+    currentStartupId = startupId;
+    
+    document.getElementById('startupModalTitle').textContent = startup.company_name;
+    
+    document.getElementById('startupModalBody').innerHTML = `
+        <div class="row">
+            <div class="col-md-6">
+                <p><strong>Tagline:</strong> ${startup.tagline || 'N/A'}</p>
+                <p><strong>Industry:</strong> ${startup.industry || 'N/A'}</p>
+                <p><strong>Stage:</strong> ${startup.stage || 'N/A'}</p>
+                <p><strong>Funding Seeking:</strong> $${startup.funding_amount_seeking ? startup.funding_amount_seeking.toLocaleString() : 'N/A'}</p>
+            </div>
+            <div class="col-md-6">
+                <p><strong>Location:</strong> ${startup.location || 'N/A'}</p>
+                <p><strong>Team Size:</strong> ${startup.team_size || 1}</p>
+                <p><strong>Looking for Investment:</strong> ${startup.is_looking_for_investment ? 'Yes' : 'No'}</p>
+                ${startup.website_url ? `<p><strong>Website:</strong> <a href="${startup.website_url}" target="_blank">${startup.website_url}</a></p>` : ''}
+            </div>
+        </div>
+        <div class="row mt-3">
+            <div class="col-md-12">
+                <strong>Description:</strong>
+                <p>${startup.description || 'No description provided.'}</p>
+            </div>
+        </div>
+    `;
+    
+    document.getElementById('modalConnectBtn').onclick = function() {
+        sendMatchRequest(startupId, 'startup');
+        bootstrap.Modal.getInstance(document.getElementById('startupModal')).hide();
+    };
+    
+    new bootstrap.Modal(document.getElementById('startupModal')).show();
+}
+
+function sendMatchRequest(targetId, targetType) {
+    fetch('/api/match/request', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({target_id: targetId, target_type: targetType})
+    })
+    .then(response => response.json())
+    .then(data => {
+        alert(data.message);
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error sending match request');
+    });
+}
+</script>
+{% endblock %}

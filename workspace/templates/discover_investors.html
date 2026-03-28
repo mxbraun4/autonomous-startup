@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+
+{% block title %}Discover Investors - Startup-VC Matching Platform{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <h2>Discover Investors</h2>
+        <p class="text-muted">Browse venture capital investors and send match requests.</p>
+    </div>
+</div>
+
+<!-- Search and Filter -->
+<div class="row mt-3">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-body">
+                <form method="GET" action="{{ url_for('discover_investors') }}" class="row g-3">
+                    <div class="col-md-4">
+                        <label for="search" class="form-label">Search by Firm Name</label>
+                        <input type="text" class="form-control" id="search" name="search" placeholder="Enter firm name..." value="{{ request.args.get('search', '') }}">
+                    </div>
+                    <div class="col-md-4">
+                        <label for="fund_size" class="form-label">Filter by Fund Size</label>
+                        <select class="form-select" id="fund_size" name="fund_size">
+                            <option value="">All Fund Sizes</option>
+                            <option value="small" {% if request.args.get('fund_size') == 'small' %}selected{% endif %}>Small (under $10M)</option>
+                            <option value="medium" {% if request.args.get('fund_size') == 'medium' %}selected{% endif %}>Medium ($10M - $100M)</option>
+                            <option value="large" {% if request.args.get('fund_size') == 'large' %}selected{% endif %}>Large ($100M+)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4 d-flex align-items-end">
+                        <button type="submit" class="btn btn-primary w-100">Apply Filters</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-3">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-body">
+                {% if investors and investors|length > 0 %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Firm</th>
+                                <th>Fund Size</th>
+                                <th>Investment Range</th>
+                                <th>Preferred Stages</th>
+                                <th>Preferred Industries</th>
+                                <th>Location</th>
+                                <th>Match Score</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in investors %}
+                            {% set investor = item.investor %}
+                            {% set match_score = item.match_score %}
+                            <tr>
+                                <td>
+                                    <strong>{{ investor.firm_name }}</strong>
+                                    {% if investor.investment_thesis %}
+                                    <br><small class="text-muted">{{ investor.investment_thesis[:50] }}...</small>
+                                    {% endif %}
+                                </td>
+                                <td>{% if investor.fund_size %}${{ "{:,.0f}".format(investor.fund_size) }}{% else %}-{% endif %}</td>
+                                <td>{% if investor.min_investment %}${{ "{:,.0f}".format(investor.min_investment) }} - ${{ "{:,.0f}".format(investor.max_investment) if investor.max_investment else '-' }}{% else %}-{% endif %}</td>
+                                <td>{{ investor.preferred_stages or '-' }}</td>
+                                <td>{{ investor.preferred_industries or '-' }}</td>
+                                <td>{{ investor.location or '-' }}</td>
+                                <td>
+                                    <span class="badge bg-{% if match_score >= 70 %}success{% elif match_score >= 40 %}warning{% else %}secondary{% endif %}">
+                                        {{ match_score }}%
+                                    </span>
+                                </td>
+                                <td>
+                                    {% if investor.is_actively_investing %}
+                                    <span class="badge bg-success">Active</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">Inactive</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <button class="btn btn-sm btn-primary" onclick="viewInvestorDetails({{ investor.id }})">View</button>
+                                    <button class="btn btn-sm btn-outline-primary" onclick="sendMatchRequest({{ investor.id }}, 'investor')">Connect</button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-5">
+                    <div class="mb-3">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" fill="currentColor" class="text-muted" viewBox="0 0 16 16">
+                            <path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16zm.93-9.412-1 4.705c-.07.34.029.533.304.533.194 0 .487-.07.686-.246l-.088.416c-.287.346-.92.598-1.465.598-.703 0-1.002-.422-.808-1.319l.738-3.468c.064-.293.006-.399-.287-.47l-.451-.081.082-.381 2.29-.287zM8 5.5a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"/>
+                        </svg>
+</div>
+        </div>
+    </div>
+</div>
+
+<!-- Pagination -->
+{% if total_pages and total_pages > 1 %}
+<div class="row mt-3">
+    <div class="col-md-12">
+        <nav aria-label="Investor pagination">
+            <ul class="pagination justify-content-center">
+                <li class="page-item {% if current_page <= 1 %}disabled{% endif %}">
+                    <a class="page-link" href="{{ url_for('discover_investors', page=current_page-1, search=request.args.get('search', ''), fund_size=request.args.get('fund_size', '')) }}">Previous</a>
+                </li>
+                {% for p in range(1, total_pages + 1) %}
+                    {% if p == 1 or p == total_pages or (p >= current_page - 1 and p <= current_page + 1) %}
+                    <li class="page-item {% if p == current_page %}active{% endif %}">
+                        <a class="page-link" href="{{ url_for('discover_investors', page=p, search=request.args.get('search', ''), fund_size=request.args.get('fund_size', '')) }}">{{ p }}</a>
+                    </li>
+                    {% elif p == current_page - 2 or p == current_page + 2 %}
+                    <li class="page-item disabled"><span class="page-link">...</span></li>
+                    {% endif %}
+                {% endfor %}
+                <li class="page-item {% if current_page >= total_pages %}disabled{% endif %}">
+                    <a class="page-link" href="{{ url_for('discover_investors', page=current_page+1, search=request.args.get('search', ''), fund_size=request.args.get('fund_size', '')) }}">Next</a>
+                </li>
+            </ul>
+        </nav>
+        <p class="text-center text-muted">Showing {{ ((current_page-1) * 10) + 1 }} - {{ [current_page * 10, total_items]|min }} of {{ total_items }} investors</p>
+    </div>
+</div>
+{% endif %}
+
+<!-- Investor Details Modal -->
+                    <p class="text-muted small">Try adjusting your search filters or check back later.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Investor Details Modal -->
+<div class="modal fade" id="investorModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="investorModalTitle">Investor Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="investorModalBody">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" id="modalConnectBtn">Send Match Request</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentInvestorId = null;
+// Build investors data from the template variable
+const investorsData = {{ investors|tojson }};
+
+function viewInvestorDetails(investorId) {
+    const item = investorsData.find(i => i.investor && i.investor.id === investorId);
+    if (!item) return;
+    
+    const investor = item.investor;
+    currentInvestorId = investorId;
+    
+    document.getElementById('investorModalTitle').textContent = investor.firm_name;
+    
+    document.getElementById('investorModalBody').innerHTML = `
+        <div class="row">
+            <div class="col-md-6">
+                <p><strong>Fund Size:</strong> $${investor.fund_size ? investor.fund_size.toLocaleString() : 'N/A'}</p>
+                <p><strong>Min Investment:</strong> $${investor.min_investment ? investor.min_investment.toLocaleString() : 'N/A'}</p>
+                <p><strong>Max Investment:</strong> $${investor.max_investment ? investor.max_investment.toLocaleString() : 'N/A'}</p>
+                <p><strong>Preferred Stages:</strong> ${investor.preferred_stages || 'Any'}</p>
+            </div>
+            <div class="col-md-6">
+                <p><strong>Location:</strong> ${investor.location || 'N/A'}</p>
+                <p><strong>Preferred Industries:</strong> ${investor.preferred_industries || 'Any'}</p>
+                <p><strong>Status:</strong> ${investor.is_actively_investing ? 'Actively Investing' : 'Not Currently Investing'}</p>
+            </div>
+        </div>
+        <div class="row mt-3">
+            <div class="col-md-12">
+                <strong>Investment Thesis:</strong>
+                <p>${investor.investment_thesis || 'No thesis provided.'}</p>
+            </div>
+        </div>
+        ${investor.portfolio_companies ? `
+        <div class="row mt-3">
+            <div class="col-md-12">
+                <strong>Portfolio Companies:</strong>
+                <p>${investor.portfolio_companies}</p>
+            </div>
+        </div>
+        ` : ''}
+    `;
+    
+    document.getElementById('modalConnectBtn').onclick = function() {
+        sendMatchRequest(investorId, 'investor');
+        bootstrap.Modal.getInstance(document.getElementById('investorModal')).hide();
+    };
+    
+    new bootstrap.Modal(document.getElementById('investorModal')).show();
+}
+
+function sendMatchRequest(targetId, targetType) {
+    fetch('/api/match/request', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({target_id: targetId, target_type: targetType})
+    })
+    .then(response => response.json())
+    .then(data => {
+        alert(data.message);
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error sending match request');
+    });
+}
+</script>
+{% endblock %}

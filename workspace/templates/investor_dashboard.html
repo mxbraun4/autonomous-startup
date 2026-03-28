@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+
+{% block title %}Investor Dashboard - Startup-VC Matching Platform{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <h2>Investor Dashboard</h2>
+    </div>
+</div>
+
+<!-- Profile Completeness Indicator -->
+{% if investor %}
+<div class="row mt-3">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span><strong>Profile Completeness</strong></span>
+                    <span class="badge bg-{% if profile_completeness >= 70 %}success{% elif profile_completeness >= 40 %}warning{% else %}danger{% endif %}">{{ profile_completeness }}%</span>
+                </div>
+                <div class="progress" style="height: 10px;">
+                    <div class="progress-bar bg-{% if profile_completeness >= 70 %}success{% elif profile_completeness >= 40 %}warning{% else %}danger{% endif %}" role="progressbar" style="width: {{ profile_completeness }}%"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="row mt-4">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h4>{% if investor %}Edit Profile{% else %}Create Profile{% endif %}</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('investor_dashboard') }}">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="firm_name" class="form-label">Firm Name *</label>
+                            <input type="text" class="form-control" id="firm_name" name="firm_name" value="{{ investor.firm_name if investor else '' }}" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="fund_size" class="form-label">Fund Size ($)</label>
+                            <input type="number" class="form-control" id="fund_size" name="fund_size" value="{{ investor.fund_size if investor and investor.fund_size else '' }}">
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="min_investment" class="form-label">Min Investment ($)</label>
+                            <input type="number" class="form-control" id="min_investment" name="min_investment" value="{{ investor.min_investment if investor and investor.min_investment else '' }}">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="max_investment" class="form-label">Max Investment ($)</label>
+                            <input type="number" class="form-control" id="max_investment" name="max_investment" value="{{ investor.max_investment if investor and investor.max_investment else '' }}">
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="preferred_stages" class="form-label">Preferred Stages</label>
+                            <select class="form-select" id="preferred_stages" name="preferred_stages" multiple size="3">
+                                <option value="Pre-seed" {% if investor and investor.preferred_stages and 'Pre-seed' in investor.preferred_stages %}selected{% endif %}>Pre-seed</option>
+                                <option value="Seed" {% if investor and investor.preferred_stages and 'Seed' in investor.preferred_stages %}selected{% endif %}>Seed</option>
+                                <option value="Series A" {% if investor and investor.preferred_stages and 'Series A' in investor.preferred_stages %}selected{% endif %}>Series A</option>
+                                <option value="Series B" {% if investor and investor.preferred_stages and 'Series B' in investor.preferred_stages %}selected{% endif %}>Series B+</option>
+                            </select>
+                            <small class="text-muted">Hold Ctrl/Cmd to select multiple</small>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="preferred_industries" class="form-label">Preferred Industries</label>
+                            <select class="form-select" id="preferred_industries" name="preferred_industries" multiple size="3">
+                                <option value="Technology" {% if investor and investor.preferred_industries and 'Technology' in investor.preferred_industries %}selected{% endif %}>Technology</option>
+                                <option value="Healthcare" {% if investor and investor.preferred_industries and 'Healthcare' in investor.preferred_industries %}selected{% endif %}>Healthcare</option>
+                                <option value="Fintech" {% if investor and investor.preferred_industries and 'Fintech' in investor.preferred_industries %}selected{% endif %}>Fintech</option>
+                                <option value="E-commerce" {% if investor and investor.preferred_industries and 'E-commerce' in investor.preferred_industries %}selected{% endif %}>E-commerce</option>
+                                <option value="AI/ML" {% if investor and investor.preferred_industries and 'AI/ML' in investor.preferred_industries %}selected{% endif %}>AI/ML</option>
+                                <option value="SaaS" {% if investor and investor.preferred_industries and 'SaaS' in investor.preferred_industries %}selected{% endif %}>SaaS</option>
+                                <option value="Clean Energy" {% if investor and investor.preferred_industries and 'Clean Energy' in investor.preferred_industries %}selected{% endif %}>Clean Energy</option>
+                                <option value="EdTech" {% if investor and investor.preferred_industries and 'EdTech' in investor.preferred_industries %}selected{% endif %}>EdTech</option>
+                            </select>
+                            <small class="text-muted">Hold Ctrl/Cmd to select multiple</small>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="investment_thesis" class="form-label">Investment Thesis</label>
+                        <textarea class="form-control" id="investment_thesis" name="investment_thesis" rows="3">{{ investor.investment_thesis if investor else '' }}</textarea>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="portfolio_companies" class="form-label">Portfolio Companies</label>
+                        <textarea class="form-control" id="portfolio_companies" name="portfolio_companies" rows="2" placeholder="List your portfolio companies (comma separated)">{{ investor.portfolio_companies if investor else '' }}</textarea>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="location" class="form-label">Location</label>
+                            <input type="text" class="form-control" id="location" name="location" value="{{ investor.location if investor else '' }}">
+                        </div>
+                        <div class="col-md-6 mb-3 d-flex align-items-center">
+                            <div class="form-check mt-4">
+                                <input type="checkbox" class="form-check-input" id="is_actively_investing" name="is_actively_investing" {% if investor and investor.is_actively_investing %}checked{% endif %}>
+                                <label class="form-check-label" for="is_actively_investing">
+                                    Actively investing
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary">Save Profile</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h4>Quick Actions</h4>
+            </div>
+            <div class="card-body">
+                <a href="{{ url_for('discover_startups') }}" class="btn btn-outline-primary w-100 mb-2">Discover Startups</a>
+                <button onclick="loadStartupMatches()" class="btn btn-outline-secondary w-100">Refresh Match Suggestions</button>
+            </div>
+        </div>
+        
+        <div class="card mt-3">
+            <div class="card-header">
+                <h4>Startup Matches</h4>
+            </div>
+            <div class="card-body" id="startupMatchSuggestions">
+                <p class="text-muted">Click "Refresh Match Suggestions" to see startup matches.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h4>Your Match Requests</h4>
+            </div>
+            <div class="card-body">
+                {% if matches %}
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Startup</th>
+                            <th>Industry</th>
+                            <th>Stage</th>
+                            <th>Match Score</th>
+                            <th>Status</th>
+                            <th>Date</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for match in matches %}
+                        <tr>
+                            <td>{{ match.company_name }}</td>
+                            <td>{{ match.industry or '-' }}</td>
+                            <td>{{ match.stage or '-' }}</td>
+                            <td>{% if match.match_score %}{{ match.match_score }}%{% else %}N/A{% endif %}</td>
+                            <td>
+                                <span class="badge bg-{% if match.status == 'accepted' %}success{% elif match.status == 'rejected' %}danger{% else %}warning{% endif %}">
+                                    {{ match.status }}
+                                </span>
+                            </td>
+                            <td>{{ match.created_at }}</td>
+                            <td>
+                                {% if match.status == 'pending' %}
+                                <button class="btn btn-sm btn-success" onclick="respondMatch({{ match.id }}, 'accept')">Accept</button>
+                                <button class="btn btn-sm btn-danger" onclick="respondMatch({{ match.id }}, 'reject')">Reject</button>
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="text-muted">No match requests yet. Discover startups and send match requests!</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function loadStartupMatches() {
+    fetch('/api/match/startups')
+        .then(response => response.json())
+        .then(data => {
+            const container = document.getElementById('startupMatchSuggestions');
+            if (data.length === 0) {
+                container.innerHTML = '<p class="text-muted">No matching startups found. Complete your profile for better matches.</p>';
+                return;
+            }
+            
+            let html = '<ul class="list-group list-group-flush">';
+            data.forEach(match => {
+                const startup = match.startup;
+                html += `
+                    <li class="list-group-item">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>${startup.company_name}</strong><br>
+                                <small class="text-muted">${startup.industry || 'No industry'} | ${startup.stage || 'No stage'}</small>
+                            </div>
+                            <div class="text-end">
+                                <span class="badge bg-primary">${match.score}% Match</span>
+                                <button class="btn btn-sm btn-outline-primary mt-1" onclick="sendStartupMatchRequest(${startup.id}, 'startup')">Connect</button>
+                            </div>
+                        </div>
+                    </li>
+                `;
+            });
+            html += '</ul>';
+            container.innerHTML = html;
+        })
+        .catch(error => {
+            console.error('Error loading matches:', error);
+            document.getElementById('startupMatchSuggestions').innerHTML = '<p class="text-danger">Error loading matches.</p>';
+        });
+}
+
+function sendStartupMatchRequest(targetId, targetType) {
+    fetch('/api/match/request', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({target_id: targetId, target_type: targetType})
+    })
+    .then(response => response.json())
+    .then(data => {
+        alert(data.message);
+        if (data.success) {
+            loadStartupMatches();
+        }
+    });
+}
+
+function respondMatch(matchId, action) {
+    fetch('/api/match/respond', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({match_id: matchId, action: action})
+    })
+    .then(response => response.json())
+    .then(data => {
+        alert(data.message);
+        location.reload();
+    });
+}
+</script>
+{% endblock %}
