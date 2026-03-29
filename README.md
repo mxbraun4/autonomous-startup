@@ -1,11 +1,9 @@
 # The Autonomous Startup
 
-**Seminar Thesis** by Raphael Brandmuller and Maximilian Braun
+**Honors Seminar Thesis** by Raphael Brandmuller and Maximilian Braun
 
 University of Regensburg, Faculty of Business, Economics and Management Information Systems
 Chair of Machine Learning and Uncertainty Quantification
-
-Reviewer: Prof. Dr. Daniel Schnurr | Advisor: Andreas Schauer | March 2026
 
 ---
 

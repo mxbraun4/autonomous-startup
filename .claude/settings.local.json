@@ -12,7 +12,11 @@
       "Bash(tail:*)",
       "Bash(cd /c/Users/Maxi\\\\ Braun/Dropbox\\\\ \\\\\\(Old\\\\\\)/PC/Desktop/autonomous-startup && wc -l src/**/*.py | tail -1)",
       "WebFetch(domain:github.com)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(sqlite3 /d/autonomous-startup/data/memory/episodic_v2.db \".schema\")",
+      "Bash(sqlite3:*)",
+      "Bash(python3:*)",
+      "Bash(file:*)"
     ]
   }
 }
