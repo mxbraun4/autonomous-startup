@@ -296,7 +296,7 @@ class _FlowState(BaseModel):
     # Learning feedback: procedure hints injected into next BUILD
     procedure_hints: str = ""
 
-    # User feedback collected from workspace/feedback.db (before remediation)
+    # User feedback collected from workspace/feedback.db
     user_feedback_summary: str = ""
 
     # Active policies from PolicyUpdater, persisted across iterations
@@ -1212,8 +1212,8 @@ CONTEXT:
             "failure_count": failure_count,
         })
 
-        # Refresh workspace snapshot AFTER build so QA, remediation, and
-        # learn phases all see the actual files the developer produced.
+        # Refresh workspace snapshot AFTER build so the measure and
+        # learn phases see the actual files the developer produced.
         if self.state.workspace_enabled:
             try:
                 from src.workspace_tools.file_tools import reset_read_cache

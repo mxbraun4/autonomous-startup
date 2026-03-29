@@ -1,16 +1,28 @@
-# Autonomous Startup Multi-Agent System
+# The Autonomous Startup
 
-A multi-agent system built with **CrewAI** that autonomously runs Build-Measure-Learn cycles for a startup-VC marketplace. Agents build a real **Flask + SQLite + Jinja** web application, validate it via HTTP, collect LLM-powered customer feedback, and iterate.
+**Seminar Thesis** by Raphael Brandmuller and Maximilian Braun
+
+University of Regensburg, Faculty of Business, Economics and Management Information Systems
+Chair of Machine Learning and Uncertainty Quantification
+
+Reviewer: Prof. Dr. Daniel Schnurr | Advisor: Andreas Schauer | March 2026
+
+---
+
+This repository contains the prototype system developed as part of the seminar thesis *The Autonomous Startup*. The thesis investigates whether autonomous AI agents can collectively perform the core functions of a startup organization, operationalized through the iterative Build-Measure-Learn (BML) cycle. The prototype implements a multi-agent system that autonomously builds, tests, and iterates on a web application over repeated cycles without human intervention.
+
+The system is built with **CrewAI** and uses functionally specialized agents to run Build-Measure-Learn cycles for a startup-VC matching platform. Agents construct a real **Flask + SQLite + Jinja** web application, validate it via HTTP, collect LLM-powered customer feedback, and refine their approach across iterations through a multi-tier memory architecture.
+
+## Key Capabilities
 
 - Hierarchical multi-agent coordination (coordinator dispatches to specialists)
 - Product-building workspace (agents write a Flask app with SQLite backend and Jinja templates)
 - Parallel and sequential agent dispatch via native tool calls
 - LLM-powered customer testing (3 personas give structured feedback each cycle)
-- Semantic episodic retrieval (ChromaDB) + targeted consensus + procedural failure patterns
+- Multi-tier memory: episodic (ChromaDB + SQLite), procedural (versioned workflows), consensus (shared knowledge board)
 - Memory compaction (era summaries, stale pruning) for long-running sessions
-- CrewAI native function calling with monkey-patched text-response handling
 - Live observability dashboard and workspace preview server
-- Deterministic mock-mode execution
+- Deterministic mock-mode execution for testing without API keys
 
 ## Quick Start
 
@@ -58,16 +70,16 @@ Strategic Coordinator (learn phase — analyzes results, extracts insights)
 BUILD Coordinator (build phase — dispatches to specialists via tool calls)
     |-> Product Strategy Expert (inspects workspace, plans routes/features/tables)
     |-> Developer Agent (implements Flask app, Jinja templates, SQLite schemas)
-    |-> Reviewer (QA) Agent (syntax checks, HTTP route validation, code review)
+    |-> Reviewer Agent (syntax checks, HTTP route validation, code review)
 ```
 
 ### Build-Measure-Learn Cycle
 
 Each iteration runs sequentially:
 
-1. **BUILD** — Coordinator dispatches product strategist (plan), developer (implement), reviewer (QA). Supports both sequential and parallel dispatch.
-2. **MEASURE** — 3 LLM personas (Founder, VC Partner, Journalist) visit the live app, interact with it, and submit structured feedback (bugs, friction, praise).
-3. **LEARN** — Insights extracted, procedural memory updated, prompt overrides refined for the next iteration. Memory compaction runs every 10 iterations.
+1. **BUILD** — Coordinator assembles context from memory and prior feedback, then dispatches product strategist (plan), developer (implement), and reviewer (validate). An idle-cycle guardrail forces a fallback dispatch if the coordinator completes without delegating any agent.
+2. **MEASURE** — 3 LLM personas (Founder, VC Partner, Journalist) visit the live Flask app, interact with it, and submit structured feedback (bugs, friction, feature requests, praise) to a feedback database.
+3. **LEARN** — Coordinator extracts insights, updates procedural memory with versioned workflows, persists learnings to consensus and episodic memory, and generates role-specific prompt overrides for the next iteration.
 
 ### Agent Tools
 
@@ -81,7 +93,7 @@ Agents interact with the system through CrewAI `@tool` decorated functions:
 | `get_team_insights` | Read insights shared by other agents |
 | `get_cycle_history` | Access episodic memory from prior cycles |
 | `get_database_stats` | Query startup/VC database statistics |
-| `run_quality_checks_tool` | Run Python syntax checks and pytest |
+| `run_quality_checks_tool` | Run Python syntax checks and optional pytest |
 | `mark_feedback_addressed_tool` | Close addressed customer feedback items |
 | `read_workspace_file` | Read files from the workspace |
 | `write_workspace_file` | Write/create files in the workspace |
@@ -94,16 +106,15 @@ Agents interact with the system through CrewAI `@tool` decorated functions:
 
 | Type | Purpose |
 |------|---------|
-| **Consensus** | Shared knowledge board — agents post and read insights. Recommendations self-replace; stale insights are compacted. |
-| **Episodic** | Per-cycle action/outcome records with ChromaDB semantic search for relevance-based retrieval. Old episodes are summarized into era summaries. |
-| **Procedural** | Versioned workflows that improve over iterations. Chronic failures (recurring across versions) are surfaced prominently. |
-| **Working** | In-process state (capped: last 5 iteration results, last 20 learnings). Full history lives in persistent stores. |
+| **Episodic** | Per-cycle action/outcome records stored in SQLite with ChromaDB embeddings for semantic search. Old episodes are summarized into era summaries. |
+| **Procedural** | Versioned workflows that improve over iterations. Each Learn phase saves a new version with a performance score. |
+| **Consensus** | Shared knowledge board — agents post and read insights. Entries support supersession chains linking updated entries to predecessors. |
 
-### CrewAI Patches
+### CrewAI Adaptations
 
-Two monkey-patches address CrewAI 1.9.x limitations:
+Two runtime adaptations address CrewAI 1.9.x limitations:
 
-- **`patch_crewai.py`** — Nudges short text responses (< 200 chars) back to tool usage for up to 50% of `max_iter`, preventing agents from exiting after "thinking aloud."
+- **`patch_crewai.py`** — Intercepts LiteLLM completion responses and clears the content field when tool calls are present, preventing CrewAI from mistaking a spurious content fragment for a final answer.
 - **Event stack reset** — CrewAI's internal event bus leaks scope entries on exceptions; the stack is reset before each phase to prevent `StackDepthExceededError`.
 
 ## Project Structure
@@ -112,17 +123,16 @@ Two monkey-patches address CrewAI 1.9.x limitations:
 autonomous-startup/
 ├── src/
 │   ├── crewai_agents/     # Agent definitions, tools, crews, dispatch, CrewAI patches
-│   ├── framework/         # Storage, eval, learning, observability
-│   │   ├── eval/          # Evaluator, scorecard, gates
-│   │   ├── learning/      # Procedure/policy updaters
+│   ├── framework/         # Storage, learning, observability
+│   │   ├── learning/      # Procedure updater
 │   │   ├── observability/ # Event logger, dashboard helpers
 │   │   └── storage/       # Unified store, episodic/procedural/consensus backends
 │   ├── simulation/        # HTTP checks, customer testing (LLM personas)
 │   ├── workspace_tools/   # File tools, Flask/static HTTP server
 │   ├── database/          # Startup/VC database layer
-│   ├── llm/               # LLM client
 │   └── utils/             # Config, logging
 ├── workspace/             # Agent-built Flask app (app.py, templates/, static/)
+├── data/                  # Runtime memory stores and event logs
 ├── scripts/               # Entrypoints (run_simulation, clean, dashboard, etc.)
 └── tests/                 # Test suite
 ```

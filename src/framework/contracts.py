@@ -113,21 +113,6 @@ class ConsensusEntry(BaseMemoryEntity):
 # ---------------------------------------------------------------------------
 
 
-class RunConfig(BaseMemoryEntity):
-    """Immutable configuration for a single autonomous run."""
-
-    seed: int = 42
-    max_cycles: int = 10
-    max_steps_per_cycle: int = 100
-    budget_seconds: Optional[float] = None
-    budget_tokens: Optional[int] = None
-    domain_adapter: str = "default"
-    autonomy_level: int = 0
-    policies: Dict[str, Any] = Field(default_factory=dict)
-    schedules: List[Dict[str, Any]] = Field(default_factory=list)
-    max_delegation_depth: int = 3
-
-
 class TaskSpec(BaseMemoryEntity):
     """Typed description of work to be done by an agent."""
 
@@ -173,30 +158,6 @@ class ToolCall(BaseMemoryEntity):
     duration_ms: float = 0.0
     policy_check_passed: bool = True
     denied_reason: Optional[str] = None
-
-
-class AgentDecision(BaseMemoryEntity):
-    """Structured record of an agent's reasoning and choices."""
-
-    agent_id: str = ""
-    task_id: str = ""
-    decision_type: str = ""
-    reasoning: str = ""
-    chosen_action: str = ""
-    alternatives_considered: List[str] = Field(default_factory=list)
-    confidence: float = 0.0
-
-
-class CycleMetrics(BaseMemoryEntity):
-    """Domain-agnostic aggregated metrics for one complete BML cycle."""
-
-    cycle_id: int = 0
-    task_count: int = 0
-    success_count: int = 0
-    failure_count: int = 0
-    tokens_used: int = 0
-    duration_seconds: float = 0.0
-    domain_metrics: Dict[str, Any] = Field(default_factory=dict)
 
 
 class GateDecision(BaseMemoryEntity):
